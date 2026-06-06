@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+
+# 爬取的临时数据文件
+zol/json/
+zol/exception/
+pconline/json/
+pconline/exception/
+ai_search/
+
+# 生成的数据文件
+zol_phones_*.json
+zol_phones_*.csv
+pconline_phones_*.json
+pconline_phones_*.csv
+merged_phones_*.json
+merged_phones_*.csv
+diff_phones_*.csv
+phones_with_root_info.json
+
+# 日志
+*.log
+
+# IDE
+.vscode/
+.idea/

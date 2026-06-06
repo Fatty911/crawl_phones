@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>手机配置表</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand-block">
+          <h1>手机配置表</h1>
+          <p id="dataMeta">正在加载最新数据...</p>
+        </div>
+        <div class="toolbar" aria-label="表格工具栏">
+          <label class="search-control">
+            <span>搜索</span>
+            <input id="globalSearch" type="search" placeholder="品牌、型号、配置项...">
+          </label>
+          <button class="icon-button" id="resetFilters" type="button" title="清空筛选" aria-label="清空筛选">
+            <span aria-hidden="true">↺</span>
+          </button>
+          <button class="text-button" id="exportCsv" type="button">导出当前CSV</button>
+          <button class="text-button" id="exportJson" type="button">导出当前JSON</button>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <section class="table-region" aria-label="手机配置数据表">
+          <div class="summary-strip">
+            <div>
+              <span class="summary-label">当前结果</span>
+              <strong id="visibleCount">0</strong>
+            </div>
+            <div>
+              <span class="summary-label">全部记录</span>
+              <strong id="totalCount">0</strong>
+            </div>
+            <div>
+              <span class="summary-label">可见列</span>
+              <strong id="columnCount">0</strong>
+            </div>
+            <div>
+              <span class="summary-label">数据源</span>
+              <strong id="sourceCount">0</strong>
+            </div>
+          </div>
+
+          <div class="quick-filters" aria-label="快速筛选">
+            <label>
+              <span>数据来源</span>
+              <select id="sourceFilter"></select>
+            </label>
+            <label>
+              <span>品牌</span>
+              <select id="brandFilter"></select>
+            </label>
+            <label>
+              <span>是否可Root</span>
+              <select id="rootFilter">
+                <option value="">全部</option>
+                <option value="是">是</option>
+                <option value="否">否</option>
+                <option value="未知">未知</option>
+              </select>
+            </label>
+            <label>
+              <span>是否可解BL锁</span>
+              <select id="blFilter">
+                <option value="">全部</option>
+                <option value="是">是</option>
+                <option value="否">否</option>
+                <option value="免解锁">免解锁</option>
+                <option value="未知">未知</option>
+              </select>
+            </label>
+            <label>
+              <span>每页</span>
+              <select id="pageSize">
+                <option value="50">50</option>
+                <option value="100" selected>100</option>
+                <option value="200">200</option>
+                <option value="500">500</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="table-wrap" id="tableWrap">
+            <table id="phoneTable">
+              <thead id="tableHead"></thead>
+              <tbody id="tableBody"></tbody>
+            </table>
+            <div class="empty-state" id="emptyState" hidden>
+              <h2>没有匹配的数据</h2>
+              <p>清空筛选或等待合并工作流生成最新数据。</p>
+            </div>
+          </div>
+
+          <footer class="pager">
+            <button id="prevPage" type="button">上一页</button>
+            <span id="pageInfo">第 1 / 1 页</span>
+            <button id="nextPage" type="button">下一页</button>
+          </footer>
+        </section>
+
+        <aside class="side-panel" aria-label="筛选和列设置">
+          <section>
+            <h2>字段筛选</h2>
+            <div class="field-filter">
+              <select id="fieldSelect"></select>
+              <input id="fieldValue" placeholder="输入筛选值">
+              <button id="applyFieldFilter" type="button">应用</button>
+            </div>
+            <div id="activeFilters" class="active-filters"></div>
+          </section>
+
+          <section>
+            <h2>列显示</h2>
+            <div class="panel-title-row">
+              <button id="showCoreColumns" type="button" class="text-button">核心列</button>
+              <button id="showAllColumns" type="button" class="text-button">全部列</button>
+            </div>
+            <input id="columnSearch" type="search" placeholder="搜索列名...">
+            <div id="columnList" class="column-list"></div>
+          </section>
+
+          <section>
+            <h2>下载</h2>
+            <div id="downloadList" class="download-list"></div>
+          </section>
+        </aside>
+      </main>
+    </div>
+    <script src="app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,192 @@
+name: 太平洋电脑网手机爬虫
+on:
+  schedule:
+    - cron: '17 */3 * * *'
+  workflow_dispatch:
+    inputs:
+      force_restart:
+        description: '强制重新开始'
+        required: false
+        default: 'false'
+      run_profile:
+        description: '运行时长配置：auto/morning/afternoon'
+        required: false
+        default: 'auto'
+
+env:
+  RUN_TIME: 10800
+  MORNING_RUN_TIME: 10800
+  AFTERNOON_RUN_TIME: 21000
+  MAX_PAGES: 0
+  CRAWL_MIN_DELAY_SECONDS: 2
+  CRAWL_MAX_DELAY_SECONDS: 3
+
+concurrency:
+  group: pconline-phone-crawl
+  cancel-in-progress: false
+
+jobs:
+  pconline-crawl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 390
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@main
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Prepare crawl period
+        id: period
+        run: |
+          mkdir -p crawl_state
+          CN_DAY=$(TZ=Asia/Shanghai date +%d)
+          CN_MONTH=$(TZ=Asia/Shanghai date +%Y%m)
+          if [ $((10#$CN_DAY)) -le 15 ]; then
+            CRAWL_PERIOD="${CN_MONTH}_H1"
+          else
+            CRAWL_PERIOD="${CN_MONTH}_H2"
+          fi
+          DONE_MARKER="crawl_state/pconline_${CRAWL_PERIOD}.done"
+          CURRENT_PERIOD_FILE="crawl_state/pconline_current_period"
+          echo "CRAWL_PERIOD=$CRAWL_PERIOD" >> $GITHUB_ENV
+          echo "PCONLINE_DONE_MARKER=$DONE_MARKER" >> $GITHUB_ENV
+
+          EVENT_NAME="${{ github.event_name }}"
+          FORCE_RESTART="${{ github.event.inputs.force_restart }}"
+          if [ "$EVENT_NAME" = "schedule" ]; then
+            CN_HOUR_NOW=$(TZ=Asia/Shanghai date +%H)
+            CN_MINUTE_NOW=$(TZ=Asia/Shanghai date +%M)
+            IN_WINDOW=false
+            SCHEDULE_PROFILE=""
+            
+            if [ $((10#$CN_HOUR_NOW)) -ge 9 ] && [ $((10#$CN_HOUR_NOW)) -lt 12 ]; then
+              IN_WINDOW=true
+              SCHEDULE_PROFILE="morning"
+            elif [ $((10#$CN_HOUR_NOW)) -eq 12 ] && [ $((10#$CN_MINUTE_NOW)) -le 30 ]; then
+              IN_WINDOW=true
+              SCHEDULE_PROFILE="morning"
+            elif [ $((10#$CN_HOUR_NOW)) -ge 13 ] && [ $((10#$CN_HOUR_NOW)) -lt 16 ]; then
+              IN_WINDOW=true
+              SCHEDULE_PROFILE="afternoon"
+            fi
+            
+            echo "SCHEDULE_PROFILE=$SCHEDULE_PROFILE" >> $GITHUB_ENV
+            if [ "$IN_WINDOW" != "true" ]; then
+              echo "当前北京时间 ${CN_HOUR_NOW}:${CN_MINUTE_NOW} 不在允许爬取窗口（9:00-12:30 或 13:00-16:00），跳过本次 schedule"
+              echo "SKIP_CRAWL=true" >> $GITHUB_ENV
+              echo "skip=true" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+          fi
+
+          if [ "$FORCE_RESTART" = "true" ]; then
+            rm -f "$DONE_MARKER"
+          fi
+
+          if [ -f "$DONE_MARKER" ]; then
+            echo "半月周期 $CRAWL_PERIOD 已完成全量爬取，跳过"
+            echo "SKIP_CRAWL=true" >> $GITHUB_ENV
+            echo "skip=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          if [ "$FORCE_RESTART" = "true" ] || [ ! -f "$CURRENT_PERIOD_FILE" ] || [ "$(cat "$CURRENT_PERIOD_FILE")" != "$CRAWL_PERIOD" ]; then
+            echo "进入新的半月周期 $CRAWL_PERIOD，重置进度"
+            rm -f pconline/progress.json
+          fi
+          echo "$CRAWL_PERIOD" > "$CURRENT_PERIOD_FILE"
+          echo "SKIP_CRAWL=false" >> $GITHUB_ENV
+          echo "skip=false" >> $GITHUB_OUTPUT
+
+      - name: Configure crawl window
+        if: steps.period.outputs.skip != 'true'
+        run: |
+          PROFILE="${{ inputs.run_profile }}"
+          if [ -n "$SCHEDULE_PROFILE" ]; then
+            PROFILE="$SCHEDULE_PROFILE"
+          fi
+          if [ -z "$PROFILE" ] || [ "$PROFILE" = "auto" ]; then
+            CN_HOUR=$(TZ=Asia/Shanghai date +%H)
+            CN_MINUTE=$(TZ=Asia/Shanghai date +%M)
+            if [ $((10#$CN_HOUR)) -ge 9 ] && [ $((10#$CN_HOUR)) -lt 14 ]; then
+              PROFILE="morning"
+            elif [ $((10#$CN_HOUR)) -ge 13 ] && [ $((10#$CN_HOUR)) -lt 16 ]; then
+              PROFILE="afternoon"
+            else
+              PROFILE="afternoon"
+            fi
+          fi
+
+          case "$PROFILE" in
+            morning)
+              RUN_SECONDS="$MORNING_RUN_TIME"
+              ;;
+            afternoon)
+              RUN_SECONDS="$AFTERNOON_RUN_TIME"
+              ;;
+            *)
+              echo "未知 run_profile=$PROFILE，仅支持 auto/morning/afternoon"
+              exit 1
+              ;;
+          esac
+
+          echo "RUN_PROFILE=$PROFILE" >> "$GITHUB_ENV"
+          echo "RUN_TIME=$RUN_SECONDS" >> "$GITHUB_ENV"
+          echo "MAX_PAGES=0" >> "$GITHUB_ENV"
+          echo "运行配置: $PROFILE, RUN_TIME=$RUN_SECONDS 秒, MAX_PAGES=0"
+
+      - name: Set up Python
+        if: steps.period.outputs.skip != 'true'
+        uses: actions/setup-python@main
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        if: steps.period.outputs.skip != 'true'
+        run: |
+          pip install requests beautifulsoup4 lxml
+
+      - name: Run PConline crawler
+        if: steps.period.outputs.skip != 'true'
+        run: |
+          python crawl_pconline.py --step 1 --time-limit $RUN_TIME --max-pages $MAX_PAGES --auto
+        continue-on-error: true
+
+      - name: Parse and merge data
+        if: steps.period.outputs.skip != 'true'
+        run: |
+          python crawl_pconline.py --step 2
+
+      - name: Generate summary
+        if: steps.period.outputs.skip != 'true'
+        run: |
+          python crawl_pconline.py --step 3
+
+      - name: Mark crawl complete
+        if: steps.period.outputs.skip != 'true'
+        run: |
+          if [ -f "pconline_phones_$(date +%Y%m%d).json" ]; then
+            touch "$PCONLINE_DONE_MARKER"
+            echo "爬取完成，标记半月周期"
+          fi
+
+      - name: Commit progress
+        if: steps.period.outputs.skip != 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet || git commit -m "chore: update PConline crawl progress [skip ci]"
+          git pull --rebase || true
+          git push || true
+
+      - name: Upload crawl data
+        if: steps.period.outputs.skip != 'true'
+        uses: actions/upload-artifact@main
+        with:
+          name: pconline-phone-data
+          path: |
+            pconline_phones_*.json
+            pconline_phones_*.csv
+          retention-days: 90
