@@ -141,11 +141,14 @@ def crawl_list_page(session: requests.Session) -> List[Dict]:
             name = link.get_text(strip=True)
             if href and name and len(name) > 2:
                 phone_id_match = re.search(r'/(\d+)\.html', href)
+                brand_match = re.search(r'/mobile/(\w+)/\d+\.html', href)
                 if phone_id_match:
                     phone_id = phone_id_match.group(1)
+                    brand = brand_match.group(1) if brand_match else ''
                     phones.append({
                         'id': phone_id,
                         'name': name,
+                        'brand': brand,
                         'url': f"https:{href}" if href.startswith('//') else href,
                         'source': '太平洋电脑网'
                     })
@@ -158,8 +161,11 @@ def crawl_list_page(session: requests.Session) -> List[Dict]:
         return []
 
 
-def crawl_detail_page(session: requests.Session, phone_id: str) -> Optional[Dict]:
-    url = f"https://product.pconline.com.cn/mobile/{phone_id}.html"
+def crawl_detail_page(session: requests.Session, phone_id: str, brand: str = '') -> Optional[Dict]:
+    if brand:
+        url = f"https://product.pconline.com.cn/mobile/{brand}/{phone_id}.html"
+    else:
+        url = f"https://product.pconline.com.cn/mobile/{phone_id}.html"
     logger.info(f"爬取详情页: {url}")
     
     try:
@@ -205,8 +211,11 @@ def crawl_detail_page(session: requests.Session, phone_id: str) -> Optional[Dict
         return None
 
 
-def crawl_param_page(session: requests.Session, phone_id: str) -> Optional[Dict]:
-    url = f"https://product.pconline.com.cn/mobile/{phone_id}_param.shtml"
+def crawl_param_page(session: requests.Session, phone_id: str, brand: str = '') -> Optional[Dict]:
+    if brand:
+        url = f"https://product.pconline.com.cn/mobile/{brand}/{phone_id}_detail.html"
+    else:
+        url = f"https://product.pconline.com.cn/mobile/{phone_id}_detail.html"
     logger.info(f"爬取参数页: {url}")
     
     try:
@@ -219,30 +228,34 @@ def crawl_param_page(session: requests.Session, phone_id: str) -> Optional[Dict]
             return None
         
         soup = BeautifulSoup(resp.text, 'html.parser')
-        tables = soup.find_all('table')
         
         params = {}
+        
+        tables = soup.find_all('table', class_='dtparams-table')
         for table in tables:
             rows = table.find_all('tr')
             for row in rows:
-                cells = row.find_all(['td', 'th'])
-                if len(cells) >= 2:
-                    key = cells[0].get_text(strip=True)
-                    value = cells[1].get_text(strip=True)
+                th = row.find('th')
+                td = row.find('td')
+                if th and td:
+                    key = th.get_text(strip=True)
+                    value = td.get_text(strip=True)
                     if key and value:
                         key = re.sub(r'\s+', ' ', key).strip()
                         params[key] = value
         
         if not params:
-            params_div = soup.find('div', class_='params')
-            if params_div:
-                items = params_div.find_all('li')
-                for item in items:
-                    text = item.get_text(strip=True)
-                    if '：' in text:
-                        key, value = text.split('：', 1)
+            tables = soup.find_all('table')
+            for table in tables:
+                rows = table.find_all('tr')
+                for row in rows:
+                    cells = row.find_all(['td', 'th'])
+                    if len(cells) >= 2:
+                        key = cells[0].get_text(strip=True)
+                        value = cells[1].get_text(strip=True)
                         if key and value:
-                            params[key.strip()] = value.strip()
+                            key = re.sub(r'\s+', ' ', key).strip()
+                            params[key] = value
         
         logger.info(f"提取 {len(params)} 个参数")
         return params
@@ -309,20 +322,20 @@ def step1_crawl_list_and_detail():
             else:
                 continue
         
-        detail = crawl_detail_page(session, phone_id)
+        detail = crawl_detail_page(session, phone_id, phone.get('brand', ''))
         if detail:
             phone.update(detail)
             
             release_year = extract_release_year(phone)
             if not release_year:
-                params = crawl_param_page(session, phone_id)
+                params = crawl_param_page(session, phone_id, phone.get('brand', ''))
                 if params:
                     phone.update(params)
                     release_year = extract_release_year(phone)
             
             if release_year and release_year >= MIN_YEAR:
                 if '处理器' not in phone:
-                    params = crawl_param_page(session, phone_id)
+                    params = crawl_param_page(session, phone_id, phone.get('brand', ''))
                     if params:
                         phone.update(params)
                 
