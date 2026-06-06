@@ -1,7 +1,7 @@
 name: 太平洋电脑网手机爬虫
 on:
   schedule:
-    - cron: '17 */3 * * *'
+    - cron: '17 3,6 * * *'
   workflow_dispatch:
     inputs:
       force_restart:
@@ -18,8 +18,8 @@ env:
   MORNING_RUN_TIME: 10800
   AFTERNOON_RUN_TIME: 21000
   MAX_PAGES: 0
-  CRAWL_MIN_DELAY_SECONDS: 2
-  CRAWL_MAX_DELAY_SECONDS: 3
+  CRAWL_MIN_DELAY_SECONDS: 3
+  CRAWL_MAX_DELAY_SECONDS: 5
 
 concurrency:
   group: pconline-phone-crawl
@@ -175,7 +175,6 @@ jobs:
             echo "无代理，直接运行 PConline 爬虫"
           fi
           python crawl_pconline.py --step 1 --time-limit $RUN_TIME --auto $INCREMENTAL_FLAG
-        continue-on-error: true
 
       - name: Parse and merge data
         if: steps.period.outputs.skip != 'true'

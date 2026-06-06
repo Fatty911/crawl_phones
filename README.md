@@ -53,11 +53,13 @@ crawl_phones/
 - 推荐请求间隔: 2-3秒
 
 **太平洋电脑网 (PConline)**
-- 列表页: `https://product.pconline.com.cn/mobile/{page}.html`
-- 详情页: `https://product.pconline.com.cn/mobile/{phone_id}.html`
-- 参数页: `https://product.pconline.com.cn/mobile/{phone_id}/param.shtml`
-- 字符编码: UTF-8
-- 推荐请求间隔: 2-3秒
+- 品牌目录: `https://product.pconline.com.cn/mobile/`
+- 列表页: `https://product.pconline.com.cn/mobile/{brand}/` (第1页)
+- 列表页分页: `https://product.pconline.com.cn/mobile/{brand}/{n}s1.shtml` (n = (page-1) * 25)
+- 详情页: `https://product.pconline.com.cn/mobile/{brand}/{phone_id}.html`
+- 参数页: `https://product.pconline.com.cn/mobile/{brand}/{phone_id}_detail.html`
+- 字符编码: GBK (GB2312)
+- 推荐请求间隔: 3-5秒
 
 ### 2. AI搜索BL锁和Root信息
 
@@ -128,7 +130,7 @@ python crawl_pconline.py --step 1 --time-limit 3600 --max-pages 5
 
 工作流会在北京时间 9:00-12:30 和 13:00-16:00 自动触发：
 - 中关村在线：每3小时触发一次
-- 太平洋电脑网：每3小时触发一次（与中关村在线错开10分钟）
+- 太平洋电脑网：每天 11:17 和 14:17 (北京时间) 触发
 - 合并分析：每天 UTC 12:30（北京时间 20:30）
 
 ## 数据字段
@@ -179,7 +181,7 @@ python -m http.server 8000 -d docs/phones
 
 ## 注意事项
 
-1. **请求频率**：默认2-3秒间隔，避免被封IP
+1. **请求频率**：默认3-5秒间隔，避免被封IP
 2. **反爬虫**：使用随机User-Agent、Referer等请求头
 3. **断点续传**：进度文件记录已爬取内容，支持中断后继续
 4. **数据验证**：两个数据源互相验证，差异会记录在diff文件中
