@@ -9,22 +9,35 @@ import random
 import re
 import csv
 import argparse
+import logging
 from datetime import datetime, date
 from typing import List, Dict, Optional
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from bs4 import BeautifulSoup
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 parser = argparse.ArgumentParser(description='中关村在线手机爬虫')
 parser.add_argument('--step', type=int, choices=[1, 2, 3], help='运行指定步骤')
 parser.add_argument('--time-limit', type=int, default=0, help='每步最大运行时间(秒)，0表示不限制')
 parser.add_argument('--max-pages', type=int, default=0, help='第一步最多爬取页数，0表示不限制')
+parser.add_argument('--max-phones', type=int, default=0, help='最多爬取手机数，0表示不限制')
 parser.add_argument('--auto', action='store_true', help='全自动模式：未完成则exit code 10')
 parser.add_argument('--restart', action='store_true', help='重置进度，从头开始')
+parser.add_argument('--incremental', action='store_true', help='增量模式：只爬取新增手机')
 args = parser.parse_args()
 
 MAX_TIME_PER_STEP = args.time_limit
 MAX_PAGES_PER_RUN = args.max_pages
+MAX_PHONES_PER_RUN = args.max_phones
 AUTO_MODE = args.auto
+INCREMENTAL_MODE = args.incremental
 
 working_dir = os.path.dirname(os.path.abspath(__file__))
 zol_dir = os.path.join(working_dir, 'zol')
@@ -39,7 +52,7 @@ progress_file = os.path.join(zol_dir, 'progress.json')
 if os.path.exists(progress_file) and not args.restart:
     with open(progress_file, 'r', encoding='utf-8') as f:
         progress = json.load(f)
-    print('从上次进度继续（使用 --restart 可重新开始）')
+    logger.info('从上次进度继续（使用 --restart 可重新开始）')
 else:
     progress = {
         'crawled_pages': [],
@@ -47,16 +60,16 @@ else:
         'current_page': 1,
         'total_phones': 0
     }
-    print('初始化新进度')
+    logger.info('初始化新进度')
 
 CURRENT_YEAR = 2026
 MIN_YEAR = 2021
-REQUEST_DELAY_MIN = 2.0
-REQUEST_DELAY_MAX = 3.0
+CRAWL_MIN_DELAY_SECONDS = float(os.getenv("CRAWL_MIN_DELAY_SECONDS", "2"))
+CRAWL_MAX_DELAY_SECONDS = float(os.getenv("CRAWL_MAX_DELAY_SECONDS", "3"))
 REQUEST_TIMEOUT = 15
 
 HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
     'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
     'Accept-Encoding': 'gzip, deflate, br',
@@ -78,28 +91,48 @@ def save_progress():
         json.dump(progress, f, ensure_ascii=False, indent=2)
 
 
-def delay_request():
-    delay = random.uniform(REQUEST_DELAY_MIN, REQUEST_DELAY_MAX)
+def human_delay(label=""):
+    delay = random.uniform(CRAWL_MIN_DELAY_SECONDS, CRAWL_MAX_DELAY_SECONDS)
+    if label:
+        logger.info(f"{label}后等待 {delay:.1f} 秒，模拟人工浏览节奏")
     time.sleep(delay)
 
 
 def get_session():
     session = requests.Session()
     session.headers.update(HEADERS)
+    
+    retry_strategy = Retry(
+        total=3,
+        status_forcelist=[429, 500, 502, 503, 504],
+        backoff_factor=0.5
+    )
+    adapter = HTTPAdapter(max_retries=retry_strategy)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    
+    proxy_url = os.environ.get('HTTP_PROXY') or os.environ.get('HTTPS_PROXY')
+    if proxy_url:
+        session.proxies = {
+            'http': proxy_url,
+            'https': proxy_url
+        }
+        logger.info(f"使用代理: {proxy_url}")
+    
     return session
 
 
 def crawl_list_page(session: requests.Session, page: int) -> List[Dict]:
     url = f"{BASE_URL}/cell_phone_index/subcate57_list_{page}.html"
-    print(f"爬取列表页: {url}")
+    logger.info(f"爬取列表页: {url}")
     
     try:
-        delay_request()
+        human_delay("列表页请求")
         resp = session.get(url, timeout=REQUEST_TIMEOUT)
         resp.encoding = 'gbk'
         
         if resp.status_code != 200:
-            print(f"请求失败: {url} (状态码: {resp.status_code})")
+            logger.warning(f"请求失败: {url} (状态码: {resp.status_code})")
             return []
         
         soup = BeautifulSoup(resp.text, 'html.parser')
@@ -120,25 +153,25 @@ def crawl_list_page(session: requests.Session, page: int) -> List[Dict]:
                         'source': '中关村在线'
                     })
         
-        print(f"找到 {len(phones)} 个手机")
+        logger.info(f"找到 {len(phones)} 个手机")
         return phones
         
     except Exception as e:
-        print(f"爬取列表页异常: {e}")
+        logger.error(f"爬取列表页异常: {e}")
         return []
 
 
 def crawl_detail_page(session: requests.Session, phone_id: str) -> Optional[Dict]:
     url = f"{BASE_URL}/cell_phone/index{phone_id}.shtml"
-    print(f"爬取详情页: {url}")
+    logger.info(f"爬取详情页: {url}")
     
     try:
-        delay_request()
+        human_delay("详情页请求")
         resp = session.get(url, timeout=REQUEST_TIMEOUT)
         resp.encoding = 'gbk'
         
         if resp.status_code != 200:
-            print(f"请求失败: {url} (状态码: {resp.status_code})")
+            logger.warning(f"请求失败: {url} (状态码: {resp.status_code})")
             return None
         
         soup = BeautifulSoup(resp.text, 'html.parser')
@@ -161,7 +194,7 @@ def crawl_detail_page(session: requests.Session, phone_id: str) -> Optional[Dict
         labels = soup.find_all('label')
         for label in labels:
             label_text = label.get_text(strip=True)
-            next_elem = label.find_next()
+            next_elem = label.find_next_sibling()
             if next_elem:
                 value = next_elem.get_text(strip=True)
                 if label_text and value:
@@ -172,21 +205,21 @@ def crawl_detail_page(session: requests.Session, phone_id: str) -> Optional[Dict
         return detail
         
     except Exception as e:
-        print(f"爬取详情页异常: {e}")
+        logger.error(f"爬取详情页异常: {e}")
         return None
 
 
 def crawl_param_page(session: requests.Session, phone_id: str, category_id: str = '2140') -> Optional[Dict]:
     url = f"{BASE_URL}/{category_id}/{phone_id}/param.shtml"
-    print(f"爬取参数页: {url}")
+    logger.info(f"爬取参数页: {url}")
     
     try:
-        delay_request()
+        human_delay("参数页请求")
         resp = session.get(url, timeout=REQUEST_TIMEOUT)
         resp.encoding = 'gbk'
         
         if resp.status_code != 200:
-            print(f"请求失败: {url} (状态码: {resp.status_code})")
+            logger.warning(f"请求失败: {url} (状态码: {resp.status_code})")
             return None
         
         soup = BeautifulSoup(resp.text, 'html.parser')
@@ -204,11 +237,11 @@ def crawl_param_page(session: requests.Session, phone_id: str, category_id: str 
                         key = re.sub(r'\s+', ' ', key).strip()
                         params[key] = value
         
-        print(f"提取 {len(params)} 个参数")
+        logger.info(f"提取 {len(params)} 个参数")
         return params
         
     except Exception as e:
-        print(f"爬取参数页异常: {e}")
+        logger.error(f"爬取参数页异常: {e}")
         return None
 
 
@@ -227,53 +260,71 @@ def extract_release_year(detail: Dict) -> Optional[int]:
 
 
 def step1_crawl_list_and_detail():
-    print("\n" + "="*70)
-    print("步骤1：爬取手机列表和详情信息")
-    print("="*70)
+    logger.info("=" * 70)
+    logger.info("步骤1：爬取手机列表和详情信息")
+    logger.info("=" * 70)
     
     session = get_session()
     start_time = time.time()
     page = progress.get('current_page', 1)
     phones_crawled = progress.get('total_phones', 0)
+    skipped_count = 0
     
     while True:
         if MAX_TIME_PER_STEP > 0:
             elapsed = time.time() - start_time
             if elapsed >= MAX_TIME_PER_STEP:
-                print(f"达到时间限制 ({MAX_TIME_PER_STEP}秒)，保存进度")
+                logger.info(f"达到时间限制 ({MAX_TIME_PER_STEP}秒)，保存进度")
                 save_progress()
                 if AUTO_MODE:
+                    logger.info('未完成，等待下次继续')
                     sys.exit(10)
                 return
         
         if MAX_PAGES_PER_RUN > 0 and page > MAX_PAGES_PER_RUN:
-            print(f"达到页数限制 ({MAX_PAGES_PER_RUN}页)，保存进度")
+            logger.info(f"达到页数限制 ({MAX_PAGES_PER_RUN}页)，保存进度")
+            save_progress()
+            return
+        
+        if MAX_PHONES_PER_RUN > 0 and phones_crawled >= MAX_PHONES_PER_RUN:
+            logger.info(f"达到手机数量限制 ({MAX_PHONES_PER_RUN}个)，保存进度")
             save_progress()
             return
         
         phones = crawl_list_page(session, page)
         
         if not phones:
-            print("列表页为空，停止爬取")
+            logger.info("列表页为空，停止爬取")
             break
         
         for phone in phones:
             if MAX_TIME_PER_STEP > 0:
                 elapsed = time.time() - start_time
                 if elapsed >= MAX_TIME_PER_STEP:
-                    print(f"达到时间限制 ({MAX_TIME_PER_STEP}秒)，保存进度")
+                    logger.info(f"达到时间限制 ({MAX_TIME_PER_STEP}秒)，保存进度")
                     progress['current_page'] = page
                     progress['total_phones'] = phones_crawled
                     save_progress()
                     if AUTO_MODE:
+                        logger.info('未完成，等待下次继续')
                         sys.exit(10)
                     return
+            
+            if MAX_PHONES_PER_RUN > 0 and phones_crawled >= MAX_PHONES_PER_RUN:
+                logger.info(f"达到手机数量限制 ({MAX_PHONES_PER_RUN}个)，保存进度")
+                progress['current_page'] = page
+                progress['total_phones'] = phones_crawled
+                save_progress()
+                return
             
             phone_id = phone['id']
             
             if phone_id in progress.get('crawled_phones', []):
-                print(f"跳过已爬取: {phone['name']} (ID: {phone_id})")
-                continue
+                if INCREMENTAL_MODE:
+                    skipped_count += 1
+                    continue
+                else:
+                    continue
             
             detail = crawl_detail_page(session, phone_id)
             if detail:
@@ -298,13 +349,13 @@ def step1_crawl_list_and_detail():
                     
                     phones_crawled += 1
                     progress['crawled_phones'].append(phone_id)
-                    print(f"✓ 保存: {phone['name']} ({release_year}年) - 共{phones_crawled}个")
+                    logger.info(f"✓ 保存: {phone['name']} ({release_year}年) - 共{phones_crawled}个")
                 elif release_year:
-                    print(f"跳过: {phone['name']} ({release_year}年) - 不在近五年范围内")
+                    logger.debug(f"跳过: {phone['name']} ({release_year}年) - 不在近五年范围内")
                 else:
-                    print(f"跳过: {phone['name']} - 无法获取发布年份")
+                    logger.debug(f"跳过: {phone['name']} - 无法获取发布年份")
             else:
-                print(f"✗ 详情页爬取失败: {phone['name']}")
+                logger.warning(f"✗ 详情页爬取失败: {phone['name']}")
         
         progress['crawled_pages'].append(page)
         progress['current_page'] = page + 1
@@ -313,13 +364,16 @@ def step1_crawl_list_and_detail():
         
         page += 1
     
-    print(f"\n步骤1完成！共爬取 {phones_crawled} 个手机")
+    if INCREMENTAL_MODE:
+        logger.info(f"增量模式完成：新增 {phones_crawled} 个手机，跳过 {skipped_count} 个已存在手机")
+    else:
+        logger.info(f"步骤1完成！共爬取 {phones_crawled} 个手机")
 
 
 def step2_parse_and_merge():
-    print("\n" + "="*70)
-    print("步骤2：解析和合并数据")
-    print("="*70)
+    logger.info("=" * 70)
+    logger.info("步骤2：解析和合并数据")
+    logger.info("=" * 70)
     
     all_phones = []
     for filename in os.listdir(zol_json_dir):
@@ -330,9 +384,9 @@ def step2_parse_and_merge():
                     phone_data = json.load(f)
                     all_phones.append(phone_data)
             except Exception as e:
-                print(f"读取文件失败: {filepath} - {e}")
+                logger.error(f"读取文件失败: {filepath} - {e}")
     
-    print(f"总共读取 {len(all_phones)} 个手机数据")
+    logger.info(f"总共读取 {len(all_phones)} 个手机数据")
     
     all_phones.sort(key=lambda x: x.get('国内发布时间', ''), reverse=True)
     
@@ -341,7 +395,7 @@ def step2_parse_and_merge():
     with open(output_file, 'w', encoding='utf-8') as f:
         json.dump(all_phones, f, ensure_ascii=False, indent=2)
     
-    print(f"合并数据已保存到: {output_file}")
+    logger.info(f"合并数据已保存到: {output_file}")
     
     csv_file = os.path.join(working_dir, f"zol_phones_{today}.csv")
     if all_phones:
@@ -359,21 +413,21 @@ def step2_parse_and_merge():
             for phone in all_phones:
                 writer.writerow({key: phone.get(key, '') for key in fieldnames})
         
-        print(f"CSV数据已保存到: {csv_file}")
+        logger.info(f"CSV数据已保存到: {csv_file}")
     
     return all_phones
 
 
 def step3_generate_summary():
-    print("\n" + "="*70)
-    print("步骤3：生成统计摘要")
-    print("="*70)
+    logger.info("=" * 70)
+    logger.info("步骤3：生成统计摘要")
+    logger.info("=" * 70)
     
     total_phones = len(progress.get('crawled_phones', []))
     total_pages = len(progress.get('crawled_pages', []))
     
-    print(f"爬取页数: {total_pages}")
-    print(f"爬取手机数: {total_phones}")
+    logger.info(f"爬取页数: {total_pages}")
+    logger.info(f"爬取手机数: {total_phones}")
     
     brand_count = {}
     for filename in os.listdir(zol_json_dir):
@@ -387,14 +441,14 @@ def step3_generate_summary():
             except:
                 pass
     
-    print("\n品牌分布:")
+    logger.info("品牌分布:")
     for brand, count in sorted(brand_count.items(), key=lambda x: x[1], reverse=True)[:10]:
-        print(f"  {brand}: {count} 个")
+        logger.info(f"  {brand}: {count} 个")
 
 
 def main():
-    print("中关村在线手机参数爬虫")
-    print("="*70)
+    logger.info("中关村在线手机参数爬虫")
+    logger.info("=" * 70)
     
     if args.step:
         if args.step == 1:

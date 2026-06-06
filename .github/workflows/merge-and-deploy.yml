@@ -10,12 +10,49 @@ on:
         default: 'false'
 
 jobs:
+  check-half-month-complete:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      is_complete: ${{ steps.check.outputs.is_complete }}
+      crawl_period: ${{ steps.check.outputs.crawl_period }}
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@main
+
+      - name: 检查半月周期是否完成
+        id: check
+        run: |
+          CN_DAY=$(TZ=Asia/Shanghai date +%d)
+          CN_MONTH=$(TZ=Asia/Shanghai date +%Y%m)
+          if [ $((10#$CN_DAY)) -le 15 ]; then
+            CRAWL_PERIOD="${CN_MONTH}_H1"
+          else
+            CRAWL_PERIOD="${CN_MONTH}_H2"
+          fi
+          echo "crawl_period=$CRAWL_PERIOD" >> $GITHUB_OUTPUT
+          
+          ZOL_DONE="crawl_state/zol_${CRAWL_PERIOD}.done"
+          PCONLINE_DONE="crawl_state/pconline_${CRAWL_PERIOD}.done"
+          
+          if [ -f "$ZOL_DONE" ] && [ -f "$PCONLINE_DONE" ]; then
+            echo "半月周期 $CRAWL_PERIOD 两个爬虫都已完成"
+            echo "is_complete=true" >> $GITHUB_OUTPUT
+          else
+            echo "半月周期 $CRAWL_PERIOD 尚未完成全部爬取"
+            echo "ZOL完成: $([ -f "$ZOL_DONE" ] && echo '是' || echo '否')"
+            echo "PConline完成: $([ -f "$PCONLINE_DONE" ] && echo '是' || echo '否')"
+            echo "is_complete=false" >> $GITHUB_OUTPUT
+          fi
+
   merge-data:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    needs: [check-half-month-complete]
     outputs:
       crawl_date: ${{ steps.date.outputs.date }}
       ready: ${{ steps.validate.outputs.ready }}
+      is_half_month_complete: ${{ needs.check-half-month-complete.outputs.is_complete }}
     steps:
       - name: 检出代码
         uses: actions/checkout@main
@@ -158,8 +195,8 @@ jobs:
   search-root-info:
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    needs: [merge-data]
-    if: needs.merge-data.outputs.ready == 'true'
+    needs: [merge-data, check-half-month-complete]
+    if: needs.merge-data.outputs.ready == 'true' && needs.check-half-month-complete.outputs.is_complete == 'true'
     steps:
       - name: 检出代码
         uses: actions/checkout@main
@@ -185,7 +222,8 @@ jobs:
         run: |
           INPUT_FILE="merged_phones_${{ needs.merge-data.outputs.crawl_date }}.json"
           if [ -f "$INPUT_FILE" ]; then
-            python search_root_info.py --input "$INPUT_FILE" --output "phones_with_root_info.json" --max-phones 100 --delay 2
+            echo "半月周期已完成，开始AI搜索BL锁和Root信息..."
+            python search_root_info.py --input "$INPUT_FILE" --output "phones_with_root_info.json" --max-phones 500 --delay 2
           else
             echo "未找到合并数据文件，跳过AI搜索"
           fi
@@ -200,8 +238,8 @@ jobs:
   create-release:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    needs: [merge-data, search-root-info]
-    if: needs.merge-data.outputs.ready == 'true'
+    needs: [merge-data, search-root-info, check-half-month-complete]
+    if: always() && needs.merge-data.outputs.ready == 'true'
     permissions:
       contents: write
     steps:
@@ -239,8 +277,8 @@ jobs:
   deploy-pages:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [merge-data, search-root-info]
-    if: needs.merge-data.outputs.ready == 'true'
+    needs: [merge-data, search-root-info, check-half-month-complete]
+    if: always() && needs.merge-data.outputs.ready == 'true'
     permissions:
       contents: read
       pages: write

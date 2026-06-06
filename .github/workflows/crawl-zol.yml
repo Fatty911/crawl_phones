@@ -85,10 +85,10 @@ jobs:
           fi
 
           if [ -f "$DONE_MARKER" ]; then
-            echo "半月周期 $CRAWL_PERIOD 已完成全量爬取，跳过"
-            echo "SKIP_CRAWL=true" >> $GITHUB_ENV
-            echo "skip=true" >> $GITHUB_OUTPUT
-            exit 0
+            echo "半月周期 $CRAWL_PERIOD 已完成全量爬取，进入增量模式（只爬新增手机）"
+            echo "INCREMENTAL_MODE=true" >> $GITHUB_ENV
+          else
+            echo "INCREMENTAL_MODE=false" >> $GITHUB_ENV
           fi
 
           if [ "$FORCE_RESTART" = "true" ] || [ ! -f "$CURRENT_PERIOD_FILE" ] || [ "$(cat "$CURRENT_PERIOD_FILE")" != "$CRAWL_PERIOD" ]; then
@@ -145,12 +145,36 @@ jobs:
       - name: Install dependencies
         if: steps.period.outputs.skip != 'true'
         run: |
-          pip install requests beautifulsoup4 lxml
+          pip install requests beautifulsoup4 lxml PyYAML
 
-      - name: Run ZOL crawler
+      - name: Setup environment
         if: steps.period.outputs.skip != 'true'
         run: |
-          python crawl_zol.py --step 1 --time-limit $RUN_TIME --max-pages $MAX_PAGES --auto
+          echo "MINIMAX_API_KEY=${{ secrets.MINIMAX_API_KEY }}" >> $GITHUB_ENV
+          echo "ZEN_API_KEY=${{ secrets.ZEN_API_KEY }}" >> $GITHUB_ENV
+          echo "XAI_API_KEY=${{ secrets.XAI_API_KEY }}" >> $GITHUB_ENV
+          echo "OPENROUTER_API_KEY=${{ secrets.OPENROUTER_API_KEY }}" >> $GITHUB_ENV
+
+      - name: Setup proxy if configured
+        if: steps.period.outputs.skip != 'true'
+        env:
+          PROXY_SUBSCRIPTIONS: ${{ secrets.PROXY_SUBSCRIPTIONS }}
+        run: |
+          python custom_scripts/setup_proxy_runtime.py --github-env "$GITHUB_ENV"
+
+      - name: Run ZOL crawler
+        if: steps.period.outputs.skip != 'true' && steps.check_done.outputs.done != 'true'
+        run: |
+          INCREMENTAL_FLAG=""
+          if [ "$INCREMENTAL_MODE" = "true" ]; then
+            INCREMENTAL_FLAG="--incremental"
+          fi
+          if [ "$PROXY_ENABLED" = "true" ]; then
+            echo "使用代理模式运行 ZOL 爬虫"
+          else
+            echo "无代理，直接运行 ZOL 爬虫"
+          fi
+          python crawl_zol.py --step 1 --time-limit $RUN_TIME --max-pages $MAX_PAGES --auto $INCREMENTAL_FLAG
         continue-on-error: true
 
       - name: Parse and merge data
