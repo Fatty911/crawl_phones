@@ -148,13 +148,17 @@ def crawl_brand_list(session: requests.Session) -> List[str]:
         links = soup.find_all('a', href=re.compile(r'/mobile/\w+/'))
         brands = []
         seen = set()
-        EXCLUDE_BRANDS = {'index', 'list', 'help', 'news', 'search', 'mobile', 'price', 'brand'}
+        EXCLUDE_BRANDS = {'index', 'list', 'help', 'news', 'search', 'mobile', 'price', 'brand', 'series'}
         for link in links:
             href = link.get('href', '')
             brand_match = re.search(r'/mobile/(\w+)/', href)
             if brand_match:
                 brand = brand_match.group(1)
-                if brand not in seen and brand not in EXCLUDE_BRANDS and len(brand) >= 2:
+                # 过滤掉非品牌项：系列页、分类代码(c数字/p数字)、纯数字
+                if (brand not in seen and brand not in EXCLUDE_BRANDS 
+                    and len(brand) >= 2
+                    and not re.match(r'^[cp]\d+$', brand)  # 分类代码如 c20551, p167
+                    and not brand.isdigit()):  # 纯数字
                     brands.append(brand)
                     seen.add(brand)
         
@@ -203,6 +207,9 @@ def crawl_list_page(session: requests.Session, brand: str, page: int = 1) -> Lis
                 if phone_id_match:
                     phone_id = phone_id_match.group(1)
                     brand_name = brand_match.group(1) if brand_match else brand
+                    # 跳过系列概览页（不是真正的手机详情页）
+                    if brand_name == 'series':
+                        continue
                     phones.append({
                         'id': phone_id,
                         'name': name,
