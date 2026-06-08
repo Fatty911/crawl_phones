@@ -35,6 +35,8 @@ def check_crawler_workflow(path: Path, errors: list[str]) -> None:
     assert_condition("WORKFLOW_START_EPOCH" in text, f"{path.name} missing workflow start budget", errors)
     assert_condition("MAX_WORKFLOW_SECONDS" in text, f"{path.name} missing max workflow budget", errors)
     assert_condition("PROGRESS_COMMIT_BUFFER_SECONDS" in text, f"{path.name} missing progress commit buffer", errors)
+    assert_condition("$((8 * 60))" in text, f"{path.name} morning window does not start at 08:00", errors)
+    assert_condition("8:00-12:30" in text, f"{path.name} crawl window text does not say 8:00-12:30", errors)
     assert_condition("EXIT_CODE=$?" in text, f"{path.name} does not capture crawler exit code", errors)
     assert_condition("[ $EXIT_CODE -eq 10 ]" in text, f"{path.name} does not treat exit 10 as resumable", errors)
     assert_condition("custom_scripts/git_sync_progress.sh" in text, f"{path.name} does not use robust progress sync", errors)

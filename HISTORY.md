@@ -2,6 +2,12 @@
 
 ## 2026-06-08
 
+Follow-up correction: moved both phone crawler morning windows from 09:00 to 08:00.
+
+- ZOL now schedules at 08:07-12:07 Beijing time and accepts manual `auto` / `morning` dispatch from 08:00.
+- PConline now schedules at 08:17-12:17 Beijing time and accepts manual `auto` / `morning` dispatch from 08:00.
+- Workflow expectation checks now assert the 08:00 morning start and matching 8:00-12:30 text.
+
 Compared `crawl_phones` with `crawl_cars` commits after `crawl_phones` commit `8ae14f0`.
 
 Relevant `crawl_cars` learnings applied here:
