@@ -1,0 +1,127 @@
+name: 部署手机配置网页
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - docs/phones/**
+      - .github/workflows/deploy-pages.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@main
+
+      - name: 设置 Python
+        uses: actions/setup-python@main
+        with:
+          python-version: "3.12"
+
+      - name: 准备静态站点
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          rm -rf site release-files
+          mkdir -p site/data
+          cp -R docs/phones/. site/
+
+          FOUND_DATA=false
+          for TAG in $(gh release list --repo "${{ github.repository }}" --limit 30 --json tagName --jq '.[].tagName'); do
+            rm -rf release-files
+            mkdir -p release-files
+            gh release download "$TAG" \
+              --repo "${{ github.repository }}" \
+              --dir release-files \
+              --pattern 'merged_phones_*.json' \
+              --pattern 'merged_phones_*.csv' \
+              --pattern 'phones_with_root_info.json' >/dev/null 2>&1 || true
+
+            MERGED_JSON=$(ls release-files/merged_phones_*.json 2>/dev/null | head -n 1 || true)
+            if [ -z "$MERGED_JSON" ]; then
+              continue
+            fi
+
+            ROWS=$(python - "$MERGED_JSON" <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as f:
+              print(len(json.load(f)))
+          PY
+          )
+
+            if [ "$ROWS" -lt 10 ]; then
+              echo "警告：$TAG 的 merged 数据只有 $ROWS 行，网页仍使用这份最近 Release 数据"
+            fi
+
+            DATE=$(basename "$MERGED_JSON" | sed -E 's/merged_phones_([0-9]+)\.json/\1/')
+            if [ -f "release-files/phones_with_root_info.json" ]; then
+              cp "release-files/phones_with_root_info.json" site/data/latest.json
+            else
+              cp "$MERGED_JSON" site/data/latest.json
+            fi
+            cp release-files/merged_phones_*.csv "site/data/merged_phones_${DATE}.csv"
+
+            python - "$DATE" <<'PY'
+          import json
+          import sys
+          from datetime import datetime, timezone
+
+          date = sys.argv[1]
+          with open("site/data/latest.json", encoding="utf-8") as f:
+              latest = json.load(f)
+
+          manifest = {
+              "date": date,
+              "updatedAt": datetime.now(timezone.utc).isoformat(),
+              "rowCount": len(latest),
+              "files": {
+                  "latestJson": "data/latest.json",
+                  "latestCsv": f"data/merged_phones_{date}.csv",
+              },
+          }
+          with open("site/data/manifest.json", "w", encoding="utf-8") as f:
+              json.dump(manifest, f, ensure_ascii=False, indent=2)
+          PY
+
+            FOUND_DATA=true
+            echo "使用 $TAG 发布网页数据：$ROWS 行"
+            break
+          done
+
+          if [ "$FOUND_DATA" != "true" ]; then
+            echo "未找到可用 Release 数据，仅发布网页外壳"
+          fi
+
+          touch site/.nojekyll
+
+      - name: 配置 GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: 上传 Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+
+      - name: 部署到 GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

@@ -69,6 +69,7 @@ def default_files() -> list[Path]:
         ROOT / "custom_scripts/validate_workflow_expectations.py",
         ROOT / ".github/workflows/crawl-zol.yml",
         ROOT / ".github/workflows/crawl-pconline.yml",
+        ROOT / ".github/workflows/deploy-pages.yml",
         ROOT / ".github/workflows/merge-and-deploy.yml",
         ROOT / ".github/workflows/ci.yml",
         ROOT / "docs/phones/index.html",

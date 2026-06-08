@@ -45,6 +45,7 @@ crawl_phones/
     ├── ci.yml                # Python/workflow 静态校验
     ├── crawl-zol.yml         # 中关村在线爬虫工作流
     ├── crawl-pconline.yml    # 太平洋电脑网爬虫工作流
+    ├── deploy-pages.yml      # 静态网页独立发布工作流
     └── merge-and-deploy.yml  # 合并、AI搜索、发布工作流
 ```
 
@@ -185,7 +186,7 @@ CI 会在 `main` 推送后运行：
 ### GitHub Pages（推荐）
 
 1. 在仓库 **Settings → Pages → Build and deployment** 中选择 **GitHub Actions**
-2. 每次合并分析工作流成功后，网页会自动更新到最新数据
+2. 每次合并分析工作流成功后，网页会自动更新到最新数据；`deploy-pages.yml` 也可独立发布网页外壳并使用最近一份 Release 数据
 3. 自定义域名固定为 `phones.jiucai.eu.org`，发布产物会包含 `docs/phones/CNAME`
 4. 访问 `https://phones.jiucai.eu.org/`
 
