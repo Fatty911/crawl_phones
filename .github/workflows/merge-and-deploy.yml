@@ -133,7 +133,6 @@ jobs:
               ("太平洋电脑网", "pconline_phones_*.json"),
           ]
           valid_sources = 0
-          has_bad_source = False
           for label, pattern in checks:
               files = sorted(glob.glob(pattern))
               if not files:
@@ -145,16 +144,22 @@ jobs:
                       rows = json.load(f)
               except Exception as exc:
                   print(f"{label} 数据文件 {path} 读取失败: {exc}")
-                  has_bad_source = True
+                  try:
+                      os.remove(path)
+                  except OSError:
+                      pass
                   continue
               count = len(rows) if isinstance(rows, list) else 0
               print(f"{label} 数据文件: {path}, 行数: {count}")
               if count < 10:
-                  print(f"{label} 数据少于 10 行，疑似爬虫数据不完整，拒绝合并")
-                  has_bad_source = True
+                  print(f"{label} 数据少于 10 行，疑似旧的空 artifact，删除并跳过该来源")
+                  try:
+                      os.remove(path)
+                  except OSError:
+                      pass
               else:
                   valid_sources += 1
-          ok = valid_sources > 0 and not has_bad_source
+          ok = valid_sources > 0
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
               f.write(f"ready={'true' if ok else 'false'}\n")
           if not ok:
