@@ -186,7 +186,8 @@ CI 会在 `main` 推送后运行：
 
 1. 在仓库 **Settings → Pages → Build and deployment** 中选择 **GitHub Actions**
 2. 每次合并分析工作流成功后，网页会自动更新到最新数据
-3. 访问 `https://username.github.io/crawl_phones/`
+3. 自定义域名固定为 `phones.jiucai.eu.org`，发布产物会包含 `docs/phones/CNAME`
+4. 访问 `https://phones.jiucai.eu.org/`
 
 ### 本地预览
 

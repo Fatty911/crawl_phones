@@ -2,6 +2,7 @@
 
 ## 2026-06-08
 
+- Added the GitHub Pages CNAME file for `phones.jiucai.eu.org`.
 - Moved the phone crawler morning window from 09:00 to 08:00 in both schedule cron and runtime guards.
 - Added PConline processed/skipped phone caching so old iPhone entries and no-year records are not fetched again on resume.
 - Treated crawler exit code 10 as a resumable progress checkpoint in both ZOL and PConline workflows.

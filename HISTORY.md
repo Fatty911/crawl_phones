@@ -2,6 +2,12 @@
 
 ## 2026-06-08
 
+Configured GitHub Pages domain:
+
+- GitHub Pages API already had `phones.jiucai.eu.org` as the custom domain.
+- Added `docs/phones/CNAME` so the Pages artifact keeps `phones.jiucai.eu.org` after workflow deployments.
+- DNS check showed `cars.jiucai.eu.org` has a CNAME to `fatty911.github.io`, while `phones.jiucai.eu.org` still needs the Cloudflare DNS record changed to the same target.
+
 Follow-up correction: moved both phone crawler morning windows from 09:00 to 08:00.
 
 - ZOL now schedules at 08:07-12:07 Beijing time and accepts manual `auto` / `morning` dispatch from 08:00.
