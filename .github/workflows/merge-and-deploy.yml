@@ -173,8 +173,9 @@ jobs:
       - name: 合并数据文件
         if: steps.validate.outputs.ready == 'true'
         run: |
-          if ls zol_phones_*.json pconline_phones_*.json 2>/dev/null; then
+          if compgen -G "zol_phones_*.json" > /dev/null || compgen -G "pconline_phones_*.json" > /dev/null; then
             echo "找到数据文件，开始合并..."
+            ls -la zol_phones_*.json pconline_phones_*.json 2>/dev/null || true
             python merge_phones.py
           else
             echo "没有找到数据文件，跳过合并"
