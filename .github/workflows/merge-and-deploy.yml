@@ -103,12 +103,12 @@ jobs:
             echo "最近成功运行中未找到 ${label} 数据 artifact"
           }
 
-          download_latest_artifact "crawl-zol.yml" "zol-phone-data-*" "中关村在线"
+          download_latest_artifact "crawl-zol.yml" "zol-phone-data*" "中关村在线"
           mv zol-phone-data-*/*.json . 2>/dev/null || true
           mv zol-phone-data-*/*.csv . 2>/dev/null || true
           rm -rf zol-phone-data-* 2>/dev/null || true
 
-          download_latest_artifact "crawl-pconline.yml" "pconline-phone-data-*" "太平洋电脑网"
+          download_latest_artifact "crawl-pconline.yml" "pconline-phone-data*" "太平洋电脑网"
           mv pconline-phone-data-*/*.json . 2>/dev/null || true
           mv pconline-phone-data-*/*.csv . 2>/dev/null || true
           rm -rf pconline-phone-data-* 2>/dev/null || true
