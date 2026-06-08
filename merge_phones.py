@@ -10,7 +10,18 @@ from datetime import date
 
 DIR = os.path.dirname(os.path.abspath(__file__))
 
-FIXED = ['数据来源', '品牌', '型号', '手机ID', '上市时间', '价格']
+FIXED = [
+    '数据来源',
+    '品牌',
+    '型号',
+    '手机ID',
+    '上市时间',
+    '价格',
+    '机身宽度',
+    '机身尺寸',
+    '摄像头参数',
+    '超广角缩放倍数',
+]
 
 HEADER_MAP = {
     '国内发布时间': '上市时间',
@@ -32,12 +43,26 @@ HEADER_MAP = {
     '后置摄像头像素': '后置摄像头像素',
     '前置摄像头': '前置摄像头像素',
     '前置摄像头像素': '前置摄像头像素',
+    '摄像头名称': '摄像头名称',
+    '摄像头总数': '摄像头总数',
+    '摄像头特色': '摄像头特色',
+    '变焦倍数': '变焦倍数',
+    '传感器尺寸': '传感器尺寸',
+    '镜头片数': '镜头片数',
+    '焦距': '焦距',
+    '其他摄像头参数': '其他摄像头参数',
     '电池容量': '电池',
     '电池容量(mAh)': '电池',
     'RAM容量': '内存',
     '运行内存': '内存',
     'ROM容量': '存储',
     '机身存储': '存储',
+    '机身尺寸': '机身尺寸',
+    '尺寸': '机身尺寸',
+    '长度': '机身长度',
+    '宽度': '机身宽度',
+    '厚度': '机身厚度',
+    '重量': '机身重量',
 }
 
 
@@ -57,6 +82,15 @@ def has_positive_value(value):
     return text not in negative_values
 
 
+def clean_value(value):
+    if value is None:
+        return value
+    text = str(value)
+    text = text.replace('纠错', '')
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text if text else '-'
+
+
 def norm(header):
     if header in HEADER_MAP:
         return HEADER_MAP[header]
@@ -64,6 +98,105 @@ def norm(header):
         if key in header or header in key:
             return value
     return header
+
+
+def first_number_text(value):
+    match = re.search(r'\d+(?:\.\d+)?', str(value or ''))
+    return match.group(0) if match else ''
+
+
+def derive_body_size(row):
+    if has_positive_value(row.get('机身尺寸')):
+        return clean_value(row.get('机身尺寸'))
+
+    length = first_number_text(row.get('机身长度'))
+    width = first_number_text(row.get('机身宽度'))
+    thickness = first_number_text(row.get('机身厚度'))
+    if length and width and thickness:
+        return f"{length} x {width} x {thickness} mm"
+    return ''
+
+
+def derive_body_width(row):
+    if has_positive_value(row.get('机身宽度')):
+        value = clean_value(row.get('机身宽度'))
+        number = first_number_text(value)
+        return f"{number} mm" if number else value
+
+    size = row.get('机身尺寸')
+    numbers = parse_numbers(size)
+    if len(numbers) >= 2:
+        return f"{numbers[1]:g} mm"
+    return ''
+
+
+def derive_camera_summary(row):
+    parts = []
+    labels = [
+        ('后置', '后置摄像头像素'),
+        ('前置', '前置摄像头像素'),
+        ('镜头', '摄像头名称'),
+        ('数量', '摄像头总数'),
+        ('变焦', '变焦倍数'),
+        ('传感器', '传感器尺寸'),
+        ('焦距', '焦距'),
+        ('特色', '摄像头特色'),
+        ('视频', '后置视频拍摄'),
+        ('前置视频', '前置视频拍摄'),
+        ('其他', '其他摄像头参数'),
+    ]
+    for label, key in labels:
+        value = row.get(key)
+        if has_positive_value(value):
+            text = clean_value(value)
+            if f"{label}:" not in text and f"{label}：" not in text:
+                text = f"{label}: {text}"
+            parts.append(text)
+    return '；'.join(parts)
+
+
+def derive_ultrawide_zoom(row):
+    text = ' '.join(
+        clean_value(row.get(key, ''))
+        for key in [
+            '摄像头名称',
+            '变焦倍数',
+            '焦距',
+            '其他摄像头参数',
+            '摄像头参数',
+        ]
+        if has_positive_value(row.get(key))
+    )
+    if not text:
+        return ''
+
+    patterns = [
+        r'超广角.{0,24}?((?:0\.\d+|1(?:\.0+)?)\s*(?:x|X|倍))',
+        r'((?:0\.\d+|1(?:\.0+)?)\s*(?:x|X|倍)).{0,24}?超广角',
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            return re.sub(r'\s+', '', match.group(1))
+    return ''
+
+
+def add_derived_fields(row):
+    body_size = derive_body_size(row)
+    if body_size:
+        row['机身尺寸'] = body_size
+
+    body_width = derive_body_width(row)
+    if body_width:
+        row['机身宽度'] = body_width
+
+    camera_summary = derive_camera_summary(row)
+    if camera_summary:
+        row['摄像头参数'] = camera_summary
+
+    ultrawide_zoom = derive_ultrawide_zoom(row)
+    if ultrawide_zoom:
+        row['超广角缩放倍数'] = ultrawide_zoom
 
 
 def find_latest(pattern):
@@ -98,10 +231,13 @@ def norm_rows(rows, source):
                 continue
             unified = norm(key)
             if unified in normalized and normalized[unified] not in ('', '-'):
-                if val not in ('', '-') and val != normalized[unified]:
-                    normalized[unified] = f"{normalized[unified]}|{val}"
+                value = clean_value(val)
+                if value not in ('', '-') and value != normalized[unified]:
+                    normalized[unified] = f"{normalized[unified]}|{value}"
             else:
-                normalized[unified] = val
+                normalized[unified] = clean_value(val)
+
+        add_derived_fields(normalized)
 
         out.append(normalized)
     return out

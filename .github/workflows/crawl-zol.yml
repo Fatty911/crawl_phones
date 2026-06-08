@@ -29,7 +29,7 @@ env:
   CRAWL_MAX_DELAY_SECONDS: 3
 
 concurrency:
-  group: zol-phone-crawl-${{ github.ref }}
+  group: zol-phone-crawl-${{ github.ref }}-${{ github.event.schedule || github.event.inputs.run_profile || github.event_name }}
   cancel-in-progress: false
 
 jobs:
@@ -278,7 +278,8 @@ jobs:
 
       - name: Upload crawl data
         if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.complete == 'true'
-        uses: actions/upload-artifact@main
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
         with:
           name: zol-phone-data-${{ github.run_id }}
           path: |
