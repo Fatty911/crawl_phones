@@ -192,7 +192,7 @@ jobs:
         run: |
           if [ -s "merged_phones_${{ steps.date.outputs.date }}.json" ]; then
             echo "合并成功，生成文件:"
-            ls -la merged_phones_* diff_phones_*
+            ls -la merged_phones_* diff_phones_* 2>/dev/null || true
             ROWS=$(python -c 'import json; print(len(json.load(open("merged_phones_${{ steps.date.outputs.date }}.json", encoding="utf-8"))))')
             echo "合并数据行数: $ROWS"
             if [ "$ROWS" -lt 10 ]; then
