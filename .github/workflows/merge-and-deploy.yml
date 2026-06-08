@@ -78,27 +78,40 @@ jobs:
         run: |
           echo "尝试下载最新的爬虫数据 artifact..."
 
-          ZOLRUN=$(gh run list --repo ${{ github.repository }} --workflow crawl-zol.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId' 2>/dev/null || echo "")
-          if [ -n "$ZOLRUN" ]; then
-            echo "找到中关村在线成功运行: $ZOLRUN"
-            gh run download "$ZOLRUN" --repo ${{ github.repository }} --pattern "zol-phone-data-*" --dir . 2>/dev/null || echo "下载中关村在线 artifact 失败"
-            mv zol-phone-data-*/*.json . 2>/dev/null || true
-            mv zol-phone-data-*/*.csv . 2>/dev/null || true
-            rm -rf zol-phone-data-* 2>/dev/null || true
-          else
-            echo "未找到成功的中关村在线爬虫运行"
-          fi
+          download_latest_artifact() {
+            local workflow="$1"
+            local pattern="$2"
+            local label="$3"
+            local run_ids
 
-          PCONLINERUN=$(gh run list --repo ${{ github.repository }} --workflow crawl-pconline.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId' 2>/dev/null || echo "")
-          if [ -n "$PCONLINERUN" ]; then
-            echo "找到太平洋电脑网成功运行: $PCONLINERUN"
-            gh run download "$PCONLINERUN" --repo ${{ github.repository }} --pattern "pconline-phone-data-*" --dir . 2>/dev/null || echo "下载太平洋电脑网 artifact 失败"
-            mv pconline-phone-data-*/*.json . 2>/dev/null || true
-            mv pconline-phone-data-*/*.csv . 2>/dev/null || true
-            rm -rf pconline-phone-data-* 2>/dev/null || true
-          else
-            echo "未找到成功的太平洋电脑网爬虫运行"
-          fi
+            run_ids=$(gh run list --repo "${{ github.repository }}" --workflow "$workflow" --status success --limit 10 --json databaseId --jq '.[].databaseId' 2>/dev/null || true)
+            if [ -z "$run_ids" ]; then
+              echo "未找到成功的 ${label} 爬虫运行"
+              return 0
+            fi
+
+            while IFS= read -r run_id; do
+              [ -n "$run_id" ] || continue
+              echo "尝试下载 ${label} artifact，run=${run_id}"
+              if gh run download "$run_id" --repo "${{ github.repository }}" --pattern "$pattern" --dir . 2>/tmp/${workflow}_artifact_error.txt; then
+                echo "已下载 ${label} artifact，run=${run_id}"
+                return 0
+              fi
+              echo "run=${run_id} 没有匹配 ${pattern} 的 artifact，继续查找更早成功运行"
+            done <<< "$run_ids"
+
+            echo "最近成功运行中未找到 ${label} 数据 artifact"
+          }
+
+          download_latest_artifact "crawl-zol.yml" "zol-phone-data-*" "中关村在线"
+          mv zol-phone-data-*/*.json . 2>/dev/null || true
+          mv zol-phone-data-*/*.csv . 2>/dev/null || true
+          rm -rf zol-phone-data-* 2>/dev/null || true
+
+          download_latest_artifact "crawl-pconline.yml" "pconline-phone-data-*" "太平洋电脑网"
+          mv pconline-phone-data-*/*.json . 2>/dev/null || true
+          mv pconline-phone-data-*/*.csv . 2>/dev/null || true
+          rm -rf pconline-phone-data-* 2>/dev/null || true
 
           echo "当前目录数据文件:"
           ls -la *.json 2>/dev/null || echo "没有找到数据文件"

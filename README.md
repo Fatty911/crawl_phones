@@ -20,10 +20,17 @@ crawl_phones/
 ├── search_root_info.py       # AI搜索BL锁和Root信息
 ├── requirements.txt          # Python依赖
 ├── README.md                 # 项目说明
+├── CHANGELOG.md              # 变更记录
+├── HISTORY.md                # 修复与运维历史
 ├── docs/phones/              # GitHub Pages前端
 │   ├── index.html            # 页面结构
 │   ├── styles.css            # 样式
 │   └── app.js                # 数据加载、搜索、筛选、排序、分页、导出逻辑
+├── custom_scripts/           # GitHub Actions 辅助脚本
+│   ├── git_sync_progress.sh  # 进度提交的 rebase/push 重试
+│   ├── merge_progress_json.py # 进度文件冲突合并
+│   ├── validate_syntax.py    # 本地和 CI 语法校验
+│   └── validate_workflow_expectations.py # workflow 护栏校验
 ├── zol/                      # 中关村在线数据目录
 │   ├── json/                 # 单个手机JSON文件
 │   ├── exception/            # 异常记录
@@ -35,6 +42,7 @@ crawl_phones/
 ├── ai_search/                # AI搜索数据目录
 │   └── progress.json         # 搜索进度文件
 └── .github/workflows/
+    ├── ci.yml                # Python/workflow 静态校验
     ├── crawl-zol.yml         # 中关村在线爬虫工作流
     ├── crawl-pconline.yml    # 太平洋电脑网爬虫工作流
     └── merge-and-deploy.yml  # 合并、AI搜索、发布工作流
@@ -129,9 +137,16 @@ python crawl_pconline.py --step 1 --time-limit 3600 --max-pages 5
 ### GitHub Actions运行
 
 工作流会在北京时间 9:00-12:30 和 13:00-16:00 自动触发：
-- 中关村在线：每3小时触发一次
-- 太平洋电脑网：每天 11:17 和 14:17 (北京时间) 触发
+- 中关村在线：北京时间 09:07-12:07、13:07-15:37 多次触发，错过窗口会自动跳过
+- 太平洋电脑网：北京时间 09:17-12:17、13:17-15:47 多次触发，错过窗口会自动跳过
 - 合并分析：每天 UTC 12:30（北京时间 20:30）
+
+两个爬虫脚本在 `--auto` 模式下使用 exit code `10` 表示“本次时间到了但进度已保存”。GitHub Actions 会把这种情况当作正常的断点续爬：先提交 `zol/progress.json` 或 `pconline/progress.json`，再等待下一次窗口继续。workflow 会按 GitHub Actions 总运行时间预留进度提交缓冲，避免 6 小时硬超时导致进度丢失。
+
+CI 会在 `main` 推送后运行：
+- Python 编译检查
+- YAML / Shell / JSON / 前端静态文件基础语法检查
+- 爬虫 workflow 护栏检查，包括 exit code 10、提交缓冲、进度同步脚本和未定义 step 引用
 
 ## 数据字段
 

@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PYTHONIOENCODING: utf-8
+
+jobs:
+  validate:
+    name: Python and workflow checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt PyYAML
+
+      - name: Compile Python files
+        run: python -m py_compile crawl_zol.py crawl_pconline.py merge_phones.py search_root_info.py proxy_manager.py custom_scripts/*.py
+
+      - name: Validate syntax
+        run: python custom_scripts/validate_syntax.py
+
+      - name: Validate workflow expectations
+        run: python custom_scripts/validate_workflow_expectations.py

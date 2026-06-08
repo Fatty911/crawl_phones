@@ -1,7 +1,11 @@
 name: 太平洋电脑网手机爬虫
+
 on:
   schedule:
-    - cron: '17 3,6 * * *'
+    # UTC 01:17-04:17 = 北京时间 09:17-12:17
+    - cron: '17 1-4 * * *'
+    # UTC 05:17-07:47 = 北京时间 13:17-15:47
+    - cron: '17,47 5-7 * * *'
   workflow_dispatch:
     inputs:
       force_restart:
@@ -17,12 +21,14 @@ env:
   RUN_TIME: 10800
   MORNING_RUN_TIME: 10800
   AFTERNOON_RUN_TIME: 21000
-  MAX_PAGES: 0
+  MAX_WORKFLOW_SECONDS: 21600
+  PROGRESS_COMMIT_BUFFER_SECONDS: 1800
+  MAX_PHONES: 0
   CRAWL_MIN_DELAY_SECONDS: 3
   CRAWL_MAX_DELAY_SECONDS: 5
 
 concurrency:
-  group: pconline-phone-crawl
+  group: pconline-phone-crawl-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -40,6 +46,8 @@ jobs:
         id: period
         run: |
           mkdir -p crawl_state
+          echo "WORKFLOW_START_EPOCH=$(date +%s)" >> "$GITHUB_ENV"
+
           CN_DAY=$(TZ=Asia/Shanghai date +%d)
           CN_MONTH=$(TZ=Asia/Shanghai date +%Y%m)
           if [ $((10#$CN_DAY)) -le 15 ]; then
@@ -49,35 +57,21 @@ jobs:
           fi
           DONE_MARKER="crawl_state/pconline_${CRAWL_PERIOD}.done"
           CURRENT_PERIOD_FILE="crawl_state/pconline_current_period"
-          echo "CRAWL_PERIOD=$CRAWL_PERIOD" >> $GITHUB_ENV
-          echo "PCONLINE_DONE_MARKER=$DONE_MARKER" >> $GITHUB_ENV
+          echo "CRAWL_PERIOD=$CRAWL_PERIOD" >> "$GITHUB_ENV"
+          echo "PCONLINE_DONE_MARKER=$DONE_MARKER" >> "$GITHUB_ENV"
 
           EVENT_NAME="${{ github.event_name }}"
           FORCE_RESTART="${{ github.event.inputs.force_restart }}"
           if [ "$EVENT_NAME" = "schedule" ]; then
-            CN_HOUR_NOW=$(TZ=Asia/Shanghai date +%H)
-            CN_MINUTE_NOW=$(TZ=Asia/Shanghai date +%M)
-            IN_WINDOW=false
-            SCHEDULE_PROFILE=""
-            
-            if [ $((10#$CN_HOUR_NOW)) -ge 9 ] && [ $((10#$CN_HOUR_NOW)) -lt 12 ]; then
-              IN_WINDOW=true
+            SCHEDULE_EXPR="${{ github.event.schedule }}"
+            if [ "$SCHEDULE_EXPR" = "17 1-4 * * *" ]; then
               SCHEDULE_PROFILE="morning"
-            elif [ $((10#$CN_HOUR_NOW)) -eq 12 ] && [ $((10#$CN_MINUTE_NOW)) -le 30 ]; then
-              IN_WINDOW=true
-              SCHEDULE_PROFILE="morning"
-            elif [ $((10#$CN_HOUR_NOW)) -ge 13 ] && [ $((10#$CN_HOUR_NOW)) -lt 16 ]; then
-              IN_WINDOW=true
+            elif [ "$SCHEDULE_EXPR" = "17,47 5-7 * * *" ]; then
               SCHEDULE_PROFILE="afternoon"
+            else
+              SCHEDULE_PROFILE=""
             fi
-            
-            echo "SCHEDULE_PROFILE=$SCHEDULE_PROFILE" >> $GITHUB_ENV
-            if [ "$IN_WINDOW" != "true" ]; then
-              echo "当前北京时间 ${CN_HOUR_NOW}:${CN_MINUTE_NOW} 不在允许爬取窗口（9:00-12:30 或 13:00-16:00），跳过本次 schedule"
-              echo "SKIP_CRAWL=true" >> $GITHUB_ENV
-              echo "skip=true" >> $GITHUB_OUTPUT
-              exit 0
-            fi
+            echo "SCHEDULE_PROFILE=$SCHEDULE_PROFILE" >> "$GITHUB_ENV"
           fi
 
           if [ "$FORCE_RESTART" = "true" ]; then
@@ -86,9 +80,9 @@ jobs:
 
           if [ -f "$DONE_MARKER" ]; then
             echo "半月周期 $CRAWL_PERIOD 已完成全量爬取，进入增量模式（只爬新增手机）"
-            echo "INCREMENTAL_MODE=true" >> $GITHUB_ENV
+            echo "INCREMENTAL_MODE=true" >> "$GITHUB_ENV"
           else
-            echo "INCREMENTAL_MODE=false" >> $GITHUB_ENV
+            echo "INCREMENTAL_MODE=false" >> "$GITHUB_ENV"
           fi
 
           if [ "$FORCE_RESTART" = "true" ] || [ ! -f "$CURRENT_PERIOD_FILE" ] || [ "$(cat "$CURRENT_PERIOD_FILE")" != "$CRAWL_PERIOD" ]; then
@@ -96,34 +90,47 @@ jobs:
             rm -f pconline/progress.json
           fi
           echo "$CRAWL_PERIOD" > "$CURRENT_PERIOD_FILE"
-          echo "SKIP_CRAWL=false" >> $GITHUB_ENV
-          echo "skip=false" >> $GITHUB_OUTPUT
+          echo "skip=false" >> "$GITHUB_OUTPUT"
 
       - name: Configure crawl window
+        id: window
         if: steps.period.outputs.skip != 'true'
         run: |
           PROFILE="${{ inputs.run_profile }}"
-          if [ -n "$SCHEDULE_PROFILE" ]; then
+          if [ -n "${SCHEDULE_PROFILE:-}" ]; then
             PROFILE="$SCHEDULE_PROFILE"
           fi
+
+          CN_HOUR=$(TZ=Asia/Shanghai date +%H)
+          CN_MINUTE=$(TZ=Asia/Shanghai date +%M)
+          CURRENT_MINUTES=$((10#$CN_HOUR * 60 + 10#$CN_MINUTE))
+
           if [ -z "$PROFILE" ] || [ "$PROFILE" = "auto" ]; then
-            CN_HOUR=$(TZ=Asia/Shanghai date +%H)
-            CN_MINUTE=$(TZ=Asia/Shanghai date +%M)
-            if [ $((10#$CN_HOUR)) -ge 9 ] && [ $((10#$CN_HOUR)) -lt 14 ]; then
+            if [ "$CURRENT_MINUTES" -ge $((9 * 60)) ] && [ "$CURRENT_MINUTES" -le $((12 * 60 + 30)) ]; then
               PROFILE="morning"
-            elif [ $((10#$CN_HOUR)) -ge 13 ] && [ $((10#$CN_HOUR)) -lt 16 ]; then
+            elif [ "$CURRENT_MINUTES" -ge $((13 * 60)) ] && [ "$CURRENT_MINUTES" -lt $((16 * 60)) ]; then
               PROFILE="afternoon"
             else
-              PROFILE="afternoon"
+              echo "当前北京时间 ${CN_HOUR}:${CN_MINUTE} 不在允许爬取窗口（9:00-12:30 或 13:00-16:00），跳过本次触发"
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
             fi
           fi
 
           case "$PROFILE" in
             morning)
               RUN_SECONDS="$MORNING_RUN_TIME"
+              WINDOW_OK=false
+              if [ "$CURRENT_MINUTES" -ge $((9 * 60)) ] && [ "$CURRENT_MINUTES" -le $((12 * 60 + 30)) ]; then
+                WINDOW_OK=true
+              fi
               ;;
             afternoon)
               RUN_SECONDS="$AFTERNOON_RUN_TIME"
+              WINDOW_OK=false
+              if [ "$CURRENT_MINUTES" -ge $((13 * 60)) ] && [ "$CURRENT_MINUTES" -lt $((16 * 60)) ]; then
+                WINDOW_OK=true
+              fi
               ;;
             *)
               echo "未知 run_profile=$PROFILE，仅支持 auto/morning/afternoon"
@@ -131,84 +138,147 @@ jobs:
               ;;
           esac
 
+          if [ "$WINDOW_OK" != "true" ]; then
+            echo "当前北京时间 ${CN_HOUR}:${CN_MINUTE} 不在 $PROFILE 允许爬取窗口，跳过本次触发"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "$PROFILE" = "morning" ]; then
+            NOW_UTC_SECONDS=$(( $(date -u +%s) % 86400 ))
+            REMAIN=$(( (4 * 3600 + 30 * 60) - NOW_UTC_SECONDS - 900 ))
+            if [ "$REMAIN" -lt 300 ]; then
+              echo "距 12:30 扣除 15 分钟缓冲后不足 5 分钟，跳过本次上午爬虫"
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            if [ "$REMAIN" -lt "$RUN_SECONDS" ]; then
+              echo "RUN_TIME 从 ${RUN_SECONDS}s 缩短到 ${REMAIN}s，避免上午窗口尾部挤压提交"
+              RUN_SECONDS="$REMAIN"
+            fi
+          fi
+
           echo "RUN_PROFILE=$PROFILE" >> "$GITHUB_ENV"
           echo "RUN_TIME=$RUN_SECONDS" >> "$GITHUB_ENV"
-          echo "MAX_PAGES=0" >> "$GITHUB_ENV"
-          echo "运行配置: $PROFILE, RUN_TIME=$RUN_SECONDS 秒, MAX_PAGES=0"
+          echo "MAX_PHONES=0" >> "$GITHUB_ENV"
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          echo "运行配置: $PROFILE, RUN_TIME=$RUN_SECONDS 秒, MAX_PHONES=0"
 
       - name: Set up Python
-        if: steps.period.outputs.skip != 'true'
+        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true'
         uses: actions/setup-python@main
         with:
           python-version: '3.12'
 
       - name: Install dependencies
-        if: steps.period.outputs.skip != 'true'
-        run: |
-          pip install requests beautifulsoup4 lxml PyYAML
+        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true'
+        run: pip install requests beautifulsoup4 lxml PyYAML
 
       - name: Setup environment
-        if: steps.period.outputs.skip != 'true'
+        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true'
         run: |
-          echo "MINIMAX_API_KEY=${{ secrets.MINIMAX_API_KEY }}" >> $GITHUB_ENV
-          echo "ZEN_API_KEY=${{ secrets.ZEN_API_KEY }}" >> $GITHUB_ENV
-          echo "XAI_API_KEY=${{ secrets.XAI_API_KEY }}" >> $GITHUB_ENV
-          echo "OPENROUTER_API_KEY=${{ secrets.OPENROUTER_API_KEY }}" >> $GITHUB_ENV
+          echo "MINIMAX_API_KEY=${{ secrets.MINIMAX_API_KEY }}" >> "$GITHUB_ENV"
+          echo "ZEN_API_KEY=${{ secrets.ZEN_API_KEY }}" >> "$GITHUB_ENV"
+          echo "XAI_API_KEY=${{ secrets.XAI_API_KEY }}" >> "$GITHUB_ENV"
+          echo "OPENROUTER_API_KEY=${{ secrets.OPENROUTER_API_KEY }}" >> "$GITHUB_ENV"
 
       - name: Setup proxy if configured
-        if: steps.period.outputs.skip != 'true'
+        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true'
         env:
           PROXY_SUBSCRIPTIONS: ${{ secrets.PROXY_SUBSCRIPTIONS }}
+        run: python custom_scripts/setup_proxy_runtime.py --github-env "$GITHUB_ENV"
+
+      - name: Clamp step1 runtime to workflow budget
+        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true'
         run: |
-          python custom_scripts/setup_proxy_runtime.py --github-env "$GITHUB_ENV"
+          NOW=$(date +%s)
+          ELAPSED=$((NOW - WORKFLOW_START_EPOCH))
+          SAFE_REMAIN=$((MAX_WORKFLOW_SECONDS - ELAPSED - PROGRESS_COMMIT_BUFFER_SECONDS))
+          echo "workflow elapsed=${ELAPSED}s, safe step1 remain=${SAFE_REMAIN}s, requested RUN_TIME=${RUN_TIME}s"
+          if [ "$SAFE_REMAIN" -lt 300 ]; then
+            echo "剩余安全时间不足 5 分钟，跳过 step1，避免 GitHub 6 小时硬超时导致进度无法提交"
+            echo "STEP1_SKIP=true" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          if [ "$SAFE_REMAIN" -lt "$RUN_TIME" ]; then
+            echo "RUN_TIME 从 ${RUN_TIME}s 缩短到 ${SAFE_REMAIN}s，预留 ${PROGRESS_COMMIT_BUFFER_SECONDS}s 提交进度缓冲"
+            echo "RUN_TIME=$SAFE_REMAIN" >> "$GITHUB_ENV"
+          fi
 
       - name: Run PConline crawler
-        if: steps.period.outputs.skip != 'true'
+        id: step1
+        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true'
         run: |
+          if [ "${STEP1_SKIP:-false}" = "true" ]; then
+            echo "step1 已因剩余安全时间不足跳过"
+            echo "complete=false" >> "$GITHUB_OUTPUT"
+            echo "failed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           INCREMENTAL_FLAG=""
           if [ "$INCREMENTAL_MODE" = "true" ]; then
             INCREMENTAL_FLAG="--incremental"
           fi
-          if [ "$PROXY_ENABLED" = "true" ]; then
+          if [ "${PROXY_ENABLED:-false}" = "true" ]; then
             echo "使用代理模式运行 PConline 爬虫"
           else
             echo "无代理，直接运行 PConline 爬虫"
           fi
-          python crawl_pconline.py --step 1 --time-limit $RUN_TIME --auto $INCREMENTAL_FLAG
+
+          set +e
+          python crawl_pconline.py --step 1 --time-limit "$RUN_TIME" --max-phones "$MAX_PHONES" --auto $INCREMENTAL_FLAG
+          EXIT_CODE=$?
+          set -e
+          echo "PConline step1 exit code: $EXIT_CODE"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          if [ $EXIT_CODE -eq 10 ]; then
+            echo "Step1 未完成，提交进度并正常结束本次运行"
+            git add -A
+            git diff --cached --quiet || git commit -m "chore: update PConline crawl progress [skip ci]"
+            bash custom_scripts/git_sync_progress.sh "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
+            echo "complete=false" >> "$GITHUB_OUTPUT"
+            echo "failed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          elif [ $EXIT_CODE -ne 0 ]; then
+            echo "Step1 失败"
+            echo "complete=false" >> "$GITHUB_OUTPUT"
+            echo "failed=true" >> "$GITHUB_OUTPUT"
+            exit $EXIT_CODE
+          fi
+
+          echo "complete=true" >> "$GITHUB_OUTPUT"
+          echo "failed=false" >> "$GITHUB_OUTPUT"
 
       - name: Parse and merge data
-        if: steps.period.outputs.skip != 'true'
-        run: |
-          python crawl_pconline.py --step 2
+        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.complete == 'true'
+        run: python crawl_pconline.py --step 2
 
       - name: Generate summary
-        if: steps.period.outputs.skip != 'true'
-        run: |
-          python crawl_pconline.py --step 3
+        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.complete == 'true'
+        run: python crawl_pconline.py --step 3
 
-      - name: Mark crawl complete
-        if: steps.period.outputs.skip != 'true'
+      - name: Mark crawl complete and commit
+        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.complete == 'true'
         run: |
           if [ -f "pconline_phones_$(date +%Y%m%d).json" ]; then
             touch "$PCONLINE_DONE_MARKER"
             echo "爬取完成，标记半月周期"
           fi
-
-      - name: Commit progress
-        if: steps.period.outputs.skip != 'true'
-        run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add -A
-          git diff --cached --quiet || git commit -m "chore: update PConline crawl progress [skip ci]"
-          git pull --rebase || true
-          git push || true
+          git diff --cached --quiet || git commit -m "chore: update PConline crawl data [skip ci]"
+          bash custom_scripts/git_sync_progress.sh "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
 
       - name: Upload crawl data
-        if: steps.period.outputs.skip != 'true'
+        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.complete == 'true'
         uses: actions/upload-artifact@main
         with:
-          name: pconline-phone-data
+          name: pconline-phone-data-${{ github.run_id }}
           path: |
             pconline_phones_*.json
             pconline_phones_*.csv
