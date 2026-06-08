@@ -143,6 +143,8 @@ python crawl_pconline.py --step 1 --time-limit 3600 --max-pages 5
 
 两个爬虫脚本在 `--auto` 模式下使用 exit code `10` 表示“本次时间到了但进度已保存”。GitHub Actions 会把这种情况当作正常的断点续爬：先提交 `zol/progress.json` 或 `pconline/progress.json`，再等待下一次窗口继续。workflow 会按 GitHub Actions 总运行时间预留进度提交缓冲，避免 6 小时硬超时导致进度丢失。
 
+PConline 进度会记录 `processed_phones` 和 `skipped_phones`，已保存、已判定为旧款、无年份的手机 ID 都会进入处理缓存；断点续爬时会直接跳过这些 ID，避免重复爬同一批 iPhone 旧机型或系列页。
+
 CI 会在 `main` 推送后运行：
 - Python 编译检查
 - YAML / Shell / JSON / 前端静态文件基础语法检查

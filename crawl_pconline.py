@@ -55,10 +55,16 @@ if os.path.exists(progress_file) and not args.restart:
         progress['current_brand_index'] = 0
     if 'current_page' not in progress:
         progress['current_page'] = 1
+    if 'processed_phones' not in progress:
+        progress['processed_phones'] = list(progress.get('crawled_phones', []))
+    if 'skipped_phones' not in progress:
+        progress['skipped_phones'] = {}
     logger.info('从上次进度继续（使用 --restart 可重新开始）')
 else:
     progress = {
         'crawled_phones': [],
+        'processed_phones': [],
+        'skipped_phones': {},
         'total_phones': 0,
         'current_brand_index': 0,
         'current_page': 1
@@ -98,6 +104,14 @@ FALLBACK_BRANDS = [
 def save_progress():
     with open(progress_file, 'w', encoding='utf-8') as f:
         json.dump(progress, f, ensure_ascii=False, indent=2)
+
+
+def mark_processed(phone_id: str, reason: str = ''):
+    processed = progress.setdefault('processed_phones', [])
+    if phone_id not in processed:
+        processed.append(phone_id)
+    if reason:
+        progress.setdefault('skipped_phones', {})[phone_id] = reason
 
 
 def human_delay(label=""):
@@ -396,6 +410,10 @@ def step1_crawl_list_and_detail():
             
             if not phones:
                 # 该品牌没有更多页，跳到下一个品牌
+                progress['current_brand_index'] = bi + 1
+                progress['current_page'] = 1
+                progress['total_phones'] = phones_crawled
+                save_progress()
                 break
             
             progress['current_page'] = page
@@ -426,12 +444,10 @@ def step1_crawl_list_and_detail():
                 
                 phone_id = phone['id']
                 
-                if phone_id in progress.get('crawled_phones', []):
+                if phone_id in progress.get('processed_phones', []) or phone_id in progress.get('crawled_phones', []):
                     if INCREMENTAL_MODE:
                         skipped_count += 1
-                        continue
-                    else:
-                        continue
+                    continue
                 
                 detail = crawl_detail_page(session, phone_id, phone.get('brand', ''))
                 if detail:
@@ -456,16 +472,28 @@ def step1_crawl_list_and_detail():
                         
                         phones_crawled += 1
                         progress['crawled_phones'].append(phone_id)
+                        mark_processed(phone_id)
                         logger.info(f"✓ 保存: {phone['name']} ({release_year}年) - 共{phones_crawled}个")
                     elif release_year:
+                        mark_processed(phone_id, f"year:{release_year}")
                         logger.info(f"跳过: {phone['name']} ({release_year}年) - 不在近五年范围内")
                     else:
+                        mark_processed(phone_id, "no_release_year")
                         logger.info(f"跳过: {phone['name']} - 无法获取发布年份")
                 else:
                     logger.warning(f"✗ 详情页爬取失败: {phone['name']}")
             
+            progress['total_phones'] = phones_crawled
+            progress['current_brand_index'] = bi
+            progress['current_page'] = page + 1
+            save_progress()
+            
             # 如果本页结果小于25，说明是该品牌最后一页
             if len(phones) < 25:
+                progress['current_brand_index'] = bi + 1
+                progress['current_page'] = 1
+                progress['total_phones'] = phones_crawled
+                save_progress()
                 break
             page += 1
     

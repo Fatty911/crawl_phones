@@ -8,6 +8,12 @@ Follow-up correction: moved both phone crawler morning windows from 09:00 to 08:
 - PConline now schedules at 08:17-12:17 Beijing time and accepts manual `auto` / `morning` dispatch from 08:00.
 - Workflow expectation checks now assert the 08:00 morning start and matching 8:00-12:30 text.
 
+Follow-up diagnosis for repeated iPhone crawling:
+
+- Runs before `209d27e` exited with code 10 but the workflow treated that as failure, so `pconline/progress.json` stayed empty on `main`.
+- PConline previously cached only saved recent phones; old iPhones and no-year/series-like entries were skipped without recording their IDs.
+- `crawl_pconline.py` now records `processed_phones` and `skipped_phones`, advances `current_page` after each completed page, and advances `current_brand_index` after a brand is exhausted.
+
 Compared `crawl_phones` with `crawl_cars` commits after `crawl_phones` commit `8ae14f0`.
 
 Relevant `crawl_cars` learnings applied here:

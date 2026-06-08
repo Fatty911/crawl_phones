@@ -42,9 +42,17 @@ def merge_progress(current: dict[str, Any], ours: dict[str, Any], theirs: dict[s
     for source in (theirs, ours, current):
         merged.update(source)
 
-    for key in ("crawled_phones", "crawled_pages"):
+    for key in ("crawled_phones", "processed_phones", "crawled_pages"):
         values = [current.get(key), ours.get(key), theirs.get(key)]
         merged[key] = merge_unique_lists(*values)
+
+    skipped: dict[str, Any] = {}
+    for source in (theirs, ours, current):
+        value = source.get("skipped_phones")
+        if isinstance(value, dict):
+            skipped.update(value)
+    if skipped:
+        merged["skipped_phones"] = skipped
 
     if "total_phones" in merged:
         merged["total_phones"] = max_number(

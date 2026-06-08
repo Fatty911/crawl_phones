@@ -3,6 +3,7 @@
 ## 2026-06-08
 
 - Moved the phone crawler morning window from 09:00 to 08:00 in both schedule cron and runtime guards.
+- Added PConline processed/skipped phone caching so old iPhone entries and no-year records are not fetched again on resume.
 - Treated crawler exit code 10 as a resumable progress checkpoint in both ZOL and PConline workflows.
 - Added workflow runtime clamping so step1 leaves a commit buffer before the GitHub Actions six-hour limit.
 - Enforced the configured crawl windows for scheduled and manual dispatch runs.
