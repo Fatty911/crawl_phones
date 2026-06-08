@@ -132,32 +132,32 @@ jobs:
               ("中关村在线", "zol_phones_*.json"),
               ("太平洋电脑网", "pconline_phones_*.json"),
           ]
-valid_sources = 0
-has_bad_source = False
-for label, pattern in checks:
-    files = sorted(glob.glob(pattern))
-    if not files:
-        print(f"{label} 未找到 {pattern} 数据文件，跳过该来源")
-        continue
-    path = files[-1]
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            rows = json.load(f)
-    except Exception as exc:
-        print(f"{label} 数据文件 {path} 读取失败: {exc}")
-        has_bad_source = True
-        continue
-    count = len(rows) if isinstance(rows, list) else 0
-    print(f"{label} 数据文件: {path}, 行数: {count}")
-    if count < 10:
-        print(f"{label} 数据少于 10 行，疑似爬虫数据不完整，拒绝合并")
-        has_bad_source = True
-    else:
-        valid_sources += 1
-ok = valid_sources > 0 and not has_bad_source
-with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
-    f.write(f"ready={'true' if ok else 'false'}\n")
-if not ok:
+          valid_sources = 0
+          has_bad_source = False
+          for label, pattern in checks:
+              files = sorted(glob.glob(pattern))
+              if not files:
+                  print(f"{label} 未找到 {pattern} 数据文件，跳过该来源")
+                  continue
+              path = files[-1]
+              try:
+                  with open(path, "r", encoding="utf-8") as f:
+                      rows = json.load(f)
+              except Exception as exc:
+                  print(f"{label} 数据文件 {path} 读取失败: {exc}")
+                  has_bad_source = True
+                  continue
+              count = len(rows) if isinstance(rows, list) else 0
+              print(f"{label} 数据文件: {path}, 行数: {count}")
+              if count < 10:
+                  print(f"{label} 数据少于 10 行，疑似爬虫数据不完整，拒绝合并")
+                  has_bad_source = True
+              else:
+                  valid_sources += 1
+          ok = valid_sources > 0 and not has_bad_source
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
+              f.write(f"ready={'true' if ok else 'false'}\n")
+          if not ok:
               print("爬虫数据尚未完整，本次合并成功跳过，不发布不完整数据")
               if os.environ.get("EVENT_NAME") == "workflow_dispatch" and os.environ.get("FORCE_MERGE") == "true":
                   print("手动强制合并要求数据必须完整，按失败处理")
