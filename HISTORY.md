@@ -1,5 +1,15 @@
 # History
 
+## 2026-06-09
+
+Fixed missed phone crawler schedule windows by applying the `crawl_cars` backup-trigger pattern:
+
+- GitHub CLI showed the latest scheduled phone runs on 2026-06-09 started at 16:39 and 16:41 Beijing time and skipped because they were outside the 13:00-16:00 afternoon window.
+- `crawl_cars` uses dense backup cron expressions inside the allowed windows instead of relying on one hourly trigger.
+- ZOL now schedules at 08:07/08:22/08:37/08:52 through 11:52, and at 13:07/13:22/13:37/13:52 through 15:52.
+- PConline now schedules at 08:17/08:32/08:47/08:57 through 11:57, and at 13:17/13:32/13:47/13:57 through 15:57.
+- `custom_scripts/validate_workflow_expectations.py` now fails CI if these backup cron expressions are removed.
+
 ## 2026-06-08
 
 Configured GitHub Pages domain:

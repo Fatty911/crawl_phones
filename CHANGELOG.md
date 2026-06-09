@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-06-09
+
+- Increased both phone crawler schedules to 15-minute backup triggers inside the Beijing morning and afternoon crawl windows, following the crawl_cars reliability pattern.
+- Staggered PConline trigger minutes behind ZOL so the two crawler workflows do not always start in the same minute.
+- Tightened workflow expectation checks to assert the required backup cron expressions.
+
 ## 2026-06-08
 
 - Added the GitHub Pages CNAME file for `phones.jiucai.eu.org`.

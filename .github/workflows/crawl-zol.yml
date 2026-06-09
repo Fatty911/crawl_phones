@@ -2,10 +2,10 @@ name: 中关村在线手机爬虫
 
 on:
   schedule:
-    # UTC 00:07-04:07 = 北京时间 08:07-12:07
-    - cron: '7 0-4 * * *'
-    # UTC 05:07-07:37 = 北京时间 13:07-15:37
-    - cron: '7,37 5-7 * * *'
+    # UTC 00:07-03:52 = 北京时间 08:07-11:52，15 分钟备用触发提高 GitHub schedule 可靠性
+    - cron: '7,22,37,52 0-3 * * *'
+    # UTC 05:07-07:52 = 北京时间 13:07-15:52，15 分钟备用触发保证下午窗口至少命中一次
+    - cron: '7,22,37,52 5-7 * * *'
   workflow_dispatch:
     inputs:
       force_restart:
@@ -65,9 +65,9 @@ jobs:
           FORCE_RESTART="${{ github.event.inputs.force_restart }}"
           if [ "$EVENT_NAME" = "schedule" ]; then
             SCHEDULE_EXPR="${{ github.event.schedule }}"
-            if [ "$SCHEDULE_EXPR" = "7 0-4 * * *" ]; then
+            if [ "$SCHEDULE_EXPR" = "7,22,37,52 0-3 * * *" ]; then
               SCHEDULE_PROFILE="morning"
-            elif [ "$SCHEDULE_EXPR" = "7,37 5-7 * * *" ]; then
+            elif [ "$SCHEDULE_EXPR" = "7,22,37,52 5-7 * * *" ]; then
               SCHEDULE_PROFILE="afternoon"
             else
               SCHEDULE_PROFILE=""

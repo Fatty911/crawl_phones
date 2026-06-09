@@ -14,6 +14,16 @@ CRAWLER_WORKFLOWS = [
     ROOT / ".github/workflows/crawl-zol.yml",
     ROOT / ".github/workflows/crawl-pconline.yml",
 ]
+EXPECTED_CRONS = {
+    "crawl-zol.yml": {
+        "7,22,37,52 0-3 * * *": "ZOL morning backup cron",
+        "7,22,37,52 5-7 * * *": "ZOL afternoon backup cron",
+    },
+    "crawl-pconline.yml": {
+        "17,32,47,57 0-3 * * *": "PConline morning backup cron",
+        "17,32,47,57 5-7 * * *": "PConline afternoon backup cron",
+    },
+}
 
 
 def load_yaml(path: Path) -> dict:
@@ -32,6 +42,8 @@ def check_crawler_workflow(path: Path, errors: list[str]) -> None:
     schedules = [item.get("cron") for item in data.get(True, {}).get("schedule", [])]
 
     assert_condition(schedules, f"{path.name} missing schedule cron", errors)
+    for cron, label in EXPECTED_CRONS[path.name].items():
+        assert_condition(cron in schedules, f"{path.name} missing {label}: {cron}", errors)
     assert_condition("WORKFLOW_START_EPOCH" in text, f"{path.name} missing workflow start budget", errors)
     assert_condition("MAX_WORKFLOW_SECONDS" in text, f"{path.name} missing max workflow budget", errors)
     assert_condition("PROGRESS_COMMIT_BUFFER_SECONDS" in text, f"{path.name} missing progress commit buffer", errors)

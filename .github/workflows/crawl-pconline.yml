@@ -2,10 +2,10 @@ name: 太平洋电脑网手机爬虫
 
 on:
   schedule:
-    # UTC 00:17-04:17 = 北京时间 08:17-12:17
-    - cron: '17 0-4 * * *'
-    # UTC 05:17-07:47 = 北京时间 13:17-15:47
-    - cron: '17,47 5-7 * * *'
+    # UTC 00:17-03:57 = 北京时间 08:17-11:57，15 分钟备用触发提高 GitHub schedule 可靠性
+    - cron: '17,32,47,57 0-3 * * *'
+    # UTC 05:17-07:57 = 北京时间 13:17-15:57，15 分钟备用触发保证下午窗口至少命中一次
+    - cron: '17,32,47,57 5-7 * * *'
   workflow_dispatch:
     inputs:
       force_restart:
@@ -64,9 +64,9 @@ jobs:
           FORCE_RESTART="${{ github.event.inputs.force_restart }}"
           if [ "$EVENT_NAME" = "schedule" ]; then
             SCHEDULE_EXPR="${{ github.event.schedule }}"
-            if [ "$SCHEDULE_EXPR" = "17 0-4 * * *" ]; then
+            if [ "$SCHEDULE_EXPR" = "17,32,47,57 0-3 * * *" ]; then
               SCHEDULE_PROFILE="morning"
-            elif [ "$SCHEDULE_EXPR" = "17,47 5-7 * * *" ]; then
+            elif [ "$SCHEDULE_EXPR" = "17,32,47,57 5-7 * * *" ]; then
               SCHEDULE_PROFILE="afternoon"
             else
               SCHEDULE_PROFILE=""
