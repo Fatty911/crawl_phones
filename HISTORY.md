@@ -1,5 +1,15 @@
 # History
 
+## 2026-06-10
+
+Switched phone crawler triggering from GitHub cron schedules to cron-job.org:
+
+- Removed unreliable `schedule` triggers from `crawl-zol.yml` and `crawl-pconline.yml`.
+- Added `crawl-trigger.yml` as the external `repository_dispatch` entrypoint; it accepts `trigger-crawl` and starts both phone crawler workflows by default.
+- Unified crawl windows to Beijing 08:00-12:30 and 13:00-22:00.
+- Added `custom_scripts/crawl_budget.py` so each long step clamps `RUN_TIME` to the earlier of the current window cutoff or the GitHub Actions six-hour cutoff, leaving progress commit buffer.
+- Added `custom_scripts/configure_cron_job_org.py` to create or update cron-job.org jobs at Asia/Shanghai 08:30 and 13:30.
+
 ## 2026-06-09
 
 Fixed missed phone crawler schedule windows by applying the `crawl_cars` backup-trigger pattern:

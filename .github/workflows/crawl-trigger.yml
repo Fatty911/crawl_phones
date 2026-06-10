@@ -1,0 +1,92 @@
+name: 手机爬虫外部触发器
+
+on:
+  repository_dispatch:
+    types: [trigger-crawl]
+  workflow_dispatch:
+    inputs:
+      crawler_type:
+        description: '爬虫类型'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - zol
+          - pconline
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      crawler: ${{ steps.select.outputs.crawler }}
+      run_profile: ${{ steps.select.outputs.run_profile }}
+    steps:
+      - name: Select crawler and profile
+        id: select
+        run: |
+          CN_HOUR=$(TZ=Asia/Shanghai date +%H)
+          CN_MINUTE=$(TZ=Asia/Shanghai date +%M)
+          CURRENT_MINUTES=$((10#$CN_HOUR * 60 + 10#$CN_MINUTE))
+
+          if [ "$CURRENT_MINUTES" -ge $((8 * 60)) ] && [ "$CURRENT_MINUTES" -le $((12 * 60 + 30)) ]; then
+            RUN_PROFILE="morning"
+          elif [ "$CURRENT_MINUTES" -ge $((13 * 60)) ] && [ "$CURRENT_MINUTES" -le $((22 * 60)) ]; then
+            RUN_PROFILE="afternoon"
+          else
+            echo "当前北京时间 ${CN_HOUR}:${CN_MINUTE} 不在 08:00-12:30 或 13:00-22:00 爬取窗口，跳过触发"
+            echo "crawler=skip" >> "$GITHUB_OUTPUT"
+            echo "run_profile=skip" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          CRAWLER="${{ github.event.client_payload.crawler }}"
+          if [ -z "$CRAWLER" ]; then
+            CRAWLER="${{ inputs.crawler_type }}"
+          fi
+          if [ -z "$CRAWLER" ]; then
+            CRAWLER="all"
+          fi
+
+          echo "运行窗口: $RUN_PROFILE"
+          echo "选择的爬虫: $CRAWLER"
+          echo "crawler=$CRAWLER" >> "$GITHUB_OUTPUT"
+          echo "run_profile=$RUN_PROFILE" >> "$GITHUB_OUTPUT"
+
+      - name: Trigger target workflows
+        if: steps.select.outputs.crawler != 'skip'
+        env:
+          GH_TOKEN: ${{ secrets.ACTION_PAT }}
+        run: |
+          CRAWLER="${{ steps.select.outputs.crawler }}"
+          RUN_PROFILE="${{ steps.select.outputs.run_profile }}"
+          TRIGGER_TIME="$(date +%s)"
+
+          trigger_workflow() {
+            local workflow="$1"
+            echo "触发 $workflow..."
+            gh workflow run "$workflow" \
+              --repo "${{ github.repository }}" \
+              -f force_restart="false" \
+              -f run_profile="$RUN_PROFILE"
+          }
+
+          case "$CRAWLER" in
+            all)
+              trigger_workflow "crawl-zol.yml"
+              trigger_workflow "crawl-pconline.yml"
+              ;;
+            zol)
+              trigger_workflow "crawl-zol.yml"
+              ;;
+            pconline)
+              trigger_workflow "crawl-pconline.yml"
+              ;;
+            *)
+              echo "未知爬虫类型: $CRAWLER"
+              exit 1
+              ;;
+          esac
+
+          echo "已触发手机爬虫，trigger_time=$TRIGGER_TIME, run_profile=$RUN_PROFILE"

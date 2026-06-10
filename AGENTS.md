@@ -31,6 +31,12 @@
   - 任何代码变更 → 更新 CHANGELOG.md 和 HISTORY.md
 - 每次对话结束时，必须更新 HISTORY.md（融合进现有总结，不是新建文件）。
 
+## 爬虫时间窗口与外部触发
+- 手机和汽车配置爬虫统一只在北京时间 `08:00-12:30`、`13:00-22:00` 两个窗口执行长爬取步骤。
+- 不依赖 GitHub Actions `schedule` 保证准点触发；外部触发优先使用 cron-job.org API，时间固定在北京时间约 `08:30` 和 `13:30`。
+- 无论任何入口启动，workflow 必须自动判断“当前窗口剩余时间”和“GitHub Actions 6 小时限制剩余时间”，按更早的截止点提前预留提交进度时间并结束。
+- 改动工作流时必须保留 `custom_scripts/crawl_budget.py` / `custom_scripts/configure_cron_job_org.py` 这类护栏，避免重新退回只靠 cron schedule 的方案。
+
 ## 模型与 API 选择
 - 优先选择排行榜前 25 且有免费资源的模型。
 - 当前已知免费渠道：

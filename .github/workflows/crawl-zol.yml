@@ -1,11 +1,6 @@
 name: 中关村在线手机爬虫
 
 on:
-  schedule:
-    # UTC 00:07-03:52 = 北京时间 08:07-11:52，15 分钟备用触发提高 GitHub schedule 可靠性
-    - cron: '7,22,37,52 0-3 * * *'
-    # UTC 05:07-07:52 = 北京时间 13:07-15:52，15 分钟备用触发保证下午窗口至少命中一次
-    - cron: '7,22,37,52 5-7 * * *'
   workflow_dispatch:
     inputs:
       force_restart:
@@ -23,13 +18,14 @@ env:
   AFTERNOON_RUN_TIME: 21000
   MAX_WORKFLOW_SECONDS: 21600
   PROGRESS_COMMIT_BUFFER_SECONDS: 1800
+  WINDOW_END_BUFFER_SECONDS: 900
   MAX_PAGES: 0
   MAX_PHONES: 0
   CRAWL_MIN_DELAY_SECONDS: 2
   CRAWL_MAX_DELAY_SECONDS: 3
 
 concurrency:
-  group: zol-phone-crawl-${{ github.ref }}-${{ github.event.schedule || github.event.inputs.run_profile || github.event_name }}
+  group: zol-phone-crawl-${{ github.ref }}-${{ github.event.inputs.run_profile || github.event_name }}
   cancel-in-progress: false
 
 jobs:
@@ -61,19 +57,7 @@ jobs:
           echo "CRAWL_PERIOD=$CRAWL_PERIOD" >> "$GITHUB_ENV"
           echo "ZOL_DONE_MARKER=$DONE_MARKER" >> "$GITHUB_ENV"
 
-          EVENT_NAME="${{ github.event_name }}"
           FORCE_RESTART="${{ github.event.inputs.force_restart }}"
-          if [ "$EVENT_NAME" = "schedule" ]; then
-            SCHEDULE_EXPR="${{ github.event.schedule }}"
-            if [ "$SCHEDULE_EXPR" = "7,22,37,52 0-3 * * *" ]; then
-              SCHEDULE_PROFILE="morning"
-            elif [ "$SCHEDULE_EXPR" = "7,22,37,52 5-7 * * *" ]; then
-              SCHEDULE_PROFILE="afternoon"
-            else
-              SCHEDULE_PROFILE=""
-            fi
-            echo "SCHEDULE_PROFILE=$SCHEDULE_PROFILE" >> "$GITHUB_ENV"
-          fi
 
           if [ "$FORCE_RESTART" = "true" ]; then
             rm -f "$DONE_MARKER"
@@ -96,75 +80,12 @@ jobs:
       - name: Configure crawl window
         id: window
         if: steps.period.outputs.skip != 'true'
+        env:
+          PROFILE_INPUT: ${{ github.event.inputs.run_profile || 'auto' }}
         run: |
-          PROFILE="${{ inputs.run_profile }}"
-          if [ -n "${SCHEDULE_PROFILE:-}" ]; then
-            PROFILE="$SCHEDULE_PROFILE"
-          fi
-
-          CN_HOUR=$(TZ=Asia/Shanghai date +%H)
-          CN_MINUTE=$(TZ=Asia/Shanghai date +%M)
-          CURRENT_MINUTES=$((10#$CN_HOUR * 60 + 10#$CN_MINUTE))
-
-          if [ -z "$PROFILE" ] || [ "$PROFILE" = "auto" ]; then
-            if [ "$CURRENT_MINUTES" -ge $((8 * 60)) ] && [ "$CURRENT_MINUTES" -le $((12 * 60 + 30)) ]; then
-              PROFILE="morning"
-            elif [ "$CURRENT_MINUTES" -ge $((13 * 60)) ] && [ "$CURRENT_MINUTES" -lt $((16 * 60)) ]; then
-              PROFILE="afternoon"
-            else
-              echo "当前北京时间 ${CN_HOUR}:${CN_MINUTE} 不在允许爬取窗口（8:00-12:30 或 13:00-16:00），跳过本次触发"
-              echo "skip=true" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-          fi
-
-          case "$PROFILE" in
-            morning)
-              RUN_SECONDS="$MORNING_RUN_TIME"
-              WINDOW_OK=false
-              if [ "$CURRENT_MINUTES" -ge $((8 * 60)) ] && [ "$CURRENT_MINUTES" -le $((12 * 60 + 30)) ]; then
-                WINDOW_OK=true
-              fi
-              ;;
-            afternoon)
-              RUN_SECONDS="$AFTERNOON_RUN_TIME"
-              WINDOW_OK=false
-              if [ "$CURRENT_MINUTES" -ge $((13 * 60)) ] && [ "$CURRENT_MINUTES" -lt $((16 * 60)) ]; then
-                WINDOW_OK=true
-              fi
-              ;;
-            *)
-              echo "未知 run_profile=$PROFILE，仅支持 auto/morning/afternoon"
-              exit 1
-              ;;
-          esac
-
-          if [ "$WINDOW_OK" != "true" ]; then
-            echo "当前北京时间 ${CN_HOUR}:${CN_MINUTE} 不在 $PROFILE 允许爬取窗口，跳过本次触发"
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          if [ "$PROFILE" = "morning" ]; then
-            NOW_UTC_SECONDS=$(( $(date -u +%s) % 86400 ))
-            REMAIN=$(( (4 * 3600 + 30 * 60) - NOW_UTC_SECONDS - 900 ))
-            if [ "$REMAIN" -lt 300 ]; then
-              echo "距 12:30 扣除 15 分钟缓冲后不足 5 分钟，跳过本次上午爬虫"
-              echo "skip=true" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-            if [ "$REMAIN" -lt "$RUN_SECONDS" ]; then
-              echo "RUN_TIME 从 ${RUN_SECONDS}s 缩短到 ${REMAIN}s，避免上午窗口尾部挤压提交"
-              RUN_SECONDS="$REMAIN"
-            fi
-          fi
-
-          echo "RUN_PROFILE=$PROFILE" >> "$GITHUB_ENV"
-          echo "RUN_TIME=$RUN_SECONDS" >> "$GITHUB_ENV"
+          python custom_scripts/crawl_budget.py configure
           echo "MAX_PAGES=0" >> "$GITHUB_ENV"
           echo "MAX_PHONES=0" >> "$GITHUB_ENV"
-          echo "skip=false" >> "$GITHUB_OUTPUT"
-          echo "运行配置: $PROFILE, RUN_TIME=$RUN_SECONDS 秒, MAX_PAGES=0, MAX_PHONES=0"
 
       - name: Set up Python
         if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true'
@@ -192,20 +113,7 @@ jobs:
 
       - name: Clamp step1 runtime to workflow budget
         if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true'
-        run: |
-          NOW=$(date +%s)
-          ELAPSED=$((NOW - WORKFLOW_START_EPOCH))
-          SAFE_REMAIN=$((MAX_WORKFLOW_SECONDS - ELAPSED - PROGRESS_COMMIT_BUFFER_SECONDS))
-          echo "workflow elapsed=${ELAPSED}s, safe step1 remain=${SAFE_REMAIN}s, requested RUN_TIME=${RUN_TIME}s"
-          if [ "$SAFE_REMAIN" -lt 300 ]; then
-            echo "剩余安全时间不足 5 分钟，跳过 step1，避免 GitHub 6 小时硬超时导致进度无法提交"
-            echo "STEP1_SKIP=true" >> "$GITHUB_ENV"
-            exit 0
-          fi
-          if [ "$SAFE_REMAIN" -lt "$RUN_TIME" ]; then
-            echo "RUN_TIME 从 ${RUN_TIME}s 缩短到 ${SAFE_REMAIN}s，预留 ${PROGRESS_COMMIT_BUFFER_SECONDS}s 提交进度缓冲"
-            echo "RUN_TIME=$SAFE_REMAIN" >> "$GITHUB_ENV"
-          fi
+        run: python custom_scripts/crawl_budget.py clamp --step-label step1 --skip-env STEP1_SKIP
 
       - name: Run ZOL crawler
         id: step1

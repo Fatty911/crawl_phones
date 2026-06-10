@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-06-10
+
+- Replaced unreliable crawler `schedule` triggers with a cron-job.org `repository_dispatch` entry workflow at Beijing 08:30 and 13:30.
+- Extended the afternoon crawl window to Beijing 13:00-22:00 for both ZOL and PConline.
+- Added shared runtime budgeting so each run stops before the earlier of the current crawl window cutoff or the GitHub Actions six-hour limit.
+- Added a cron-job.org upsert script and workflow expectation checks for the external trigger path.
+
 ## 2026-06-09
 
 - Increased both phone crawler schedules to 15-minute backup triggers inside the Beijing morning and afternoon crawl windows, following the crawl_cars reliability pattern.
