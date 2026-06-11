@@ -1,5 +1,16 @@
 # History
 
+## 2026-06-11
+
+Reviewed recent workflow runs and hardened failing paths:
+
+- Latest phone merge run failed in Pages deployment with an authentication error, while optional `phone-root-info-*` download also produced a noisy artifact warning.
+- ZOL's previous long run reached the normal time limit and exited with code 10, but progress syncing failed after repeated hidden `pull --rebase` errors.
+- `custom_scripts/git_sync_progress.sh` now uses explicit fetch/rebase/push steps and prints sanitized Git failure logs so future sync failures have actionable causes.
+- `merge-and-deploy.yml` now downloads optional Root-info artifacts via `gh run download` and continues quietly when the optional artifact does not exist.
+- `custom_scripts/configure_cron_job_org.py` now retries transient cron-job.org API/network failures.
+- cron-job.org jobs were created/updated for `Fatty911/crawl_phones` at Asia/Shanghai 08:30 and 13:30.
+
 ## 2026-06-10
 
 Switched phone crawler triggering from GitHub cron schedules to cron-job.org:

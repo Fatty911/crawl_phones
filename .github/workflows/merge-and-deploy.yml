@@ -9,6 +9,10 @@ on:
         required: false
         default: 'false'
 
+permissions:
+  contents: read
+  actions: read
+
 jobs:
   check-half-month-complete:
     runs-on: ubuntu-latest
@@ -264,6 +268,7 @@ jobs:
     if: always() && needs.merge-data.outputs.ready == 'true'
     permissions:
       contents: write
+      actions: read
     steps:
       - name: 检出代码
         uses: actions/checkout@main
@@ -274,12 +279,19 @@ jobs:
           name: phone-data-${{ needs.merge-data.outputs.crawl_date }}
           path: release-files
 
-      - name: 下载搜索结果
-        uses: actions/download-artifact@main
-        with:
-          name: phone-root-info-${{ needs.merge-data.outputs.crawl_date }}
-          path: release-files
-        continue-on-error: true
+      - name: 尝试下载搜索结果
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p release-files
+          if gh run download "$GITHUB_RUN_ID" \
+            --repo "${{ github.repository }}" \
+            --name "phone-root-info-${{ needs.merge-data.outputs.crawl_date }}" \
+            --dir release-files 2>/tmp/root_info_download.log; then
+            echo "已下载 Root 信息搜索结果"
+          else
+            echo "未找到 Root 信息搜索结果，继续发布基础合并数据"
+          fi
 
       - name: 创建发布
         uses: softprops/action-gh-release@master
@@ -303,6 +315,7 @@ jobs:
     if: always() && needs.merge-data.outputs.ready == 'true'
     permissions:
       contents: read
+      actions: read
       pages: write
       id-token: write
     environment:
@@ -318,12 +331,19 @@ jobs:
           name: phone-data-${{ needs.merge-data.outputs.crawl_date }}
           path: release-files
 
-      - name: 下载搜索结果
-        uses: actions/download-artifact@main
-        with:
-          name: phone-root-info-${{ needs.merge-data.outputs.crawl_date }}
-          path: release-files
-        continue-on-error: true
+      - name: 尝试下载搜索结果
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p release-files
+          if gh run download "$GITHUB_RUN_ID" \
+            --repo "${{ github.repository }}" \
+            --name "phone-root-info-${{ needs.merge-data.outputs.crawl_date }}" \
+            --dir release-files 2>/tmp/root_info_download.log; then
+            echo "已下载 Root 信息搜索结果"
+          else
+            echo "未找到 Root 信息搜索结果，继续部署基础合并数据"
+          fi
 
       - name: 准备 Pages 静态站点
         run: |

@@ -158,6 +158,8 @@ CRON_JOB_ORG_API_KEY=... GITHUB_DISPATCH_TOKEN=... python custom_scripts/configu
 
 两个爬虫脚本在 `--auto` 模式下使用 exit code `10` 表示“本次时间到了但进度已保存”。GitHub Actions 会把这种情况当作正常的断点续爬：先提交 `zol/progress.json` 或 `pconline/progress.json`，再等待下一次窗口继续。workflow 会按 GitHub Actions 总运行时间预留进度提交缓冲，避免 6 小时硬超时导致进度丢失。
 
+进度同步使用 `custom_scripts/git_sync_progress.sh` 执行 `fetch → rebase → push`，遇到失败会打印脱敏后的 Git 错误；cron-job.org 配置脚本也会重试短暂 API 或网络抖动。合并发布中的 Root 信息搜索结果是可选 artifact，缺失时不会阻断 Release 或 Pages 发布。
+
 PConline 进度会记录 `processed_phones` 和 `skipped_phones`，已保存、已判定为旧款、无年份的手机 ID 都会进入处理缓存；断点续爬时会直接跳过这些 ID，避免重复爬同一批 iPhone 旧机型或系列页。
 
 CI 会在 `main` 推送后运行：

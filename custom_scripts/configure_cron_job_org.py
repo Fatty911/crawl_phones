@@ -7,6 +7,7 @@ import argparse
 import json
 import os
 import sys
+import time
 from typing import Any
 
 import requests
@@ -26,14 +27,34 @@ def headers(api_key: str) -> dict[str, str]:
     }
 
 
-def request_json(method: str, path: str, api_key: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    response = requests.request(
-        method,
-        ENDPOINT + path,
-        headers=headers(api_key),
-        data=json.dumps(payload) if payload is not None else None,
-        timeout=30,
-    )
+def request_json(
+    method: str,
+    path: str,
+    api_key: str,
+    payload: dict[str, Any] | None = None,
+    attempts: int = 4,
+) -> dict[str, Any]:
+    last_error: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            response = requests.request(
+                method,
+                ENDPOINT + path,
+                headers=headers(api_key),
+                data=json.dumps(payload) if payload is not None else None,
+                timeout=30,
+            )
+            break
+        except requests.RequestException as exc:
+            last_error = exc
+            if attempt == attempts:
+                raise RuntimeError(f"{method} {path} failed after {attempts} attempts: {exc}") from exc
+            wait_seconds = min(30, attempt * 5)
+            print(f"{method} {path} attempt {attempt}/{attempts} failed; retrying in {wait_seconds}s")
+            time.sleep(wait_seconds)
+    else:
+        raise RuntimeError(f"{method} {path} failed: {last_error}")
+
     if response.status_code >= 400:
         raise RuntimeError(f"{method} {path} failed: HTTP {response.status_code} {response.text[:500]}")
     if not response.text.strip():

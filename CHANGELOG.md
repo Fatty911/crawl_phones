@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-06-11
+
+- Configured cron-job.org jobs for the phone crawler external trigger at Beijing 08:30 and 13:30.
+- Hardened progress syncing by switching to explicit fetch/rebase/push steps and printing sanitized Git failure logs.
+- Made cron-job.org configuration retry transient API/network failures.
+- Made optional Root-info artifact downloads silent in release and Pages jobs to avoid false red annotations.
+
 ## 2026-06-10
 
 - Replaced unreliable crawler `schedule` triggers with a cron-job.org `repository_dispatch` entry workflow at Beijing 08:30 and 13:30.

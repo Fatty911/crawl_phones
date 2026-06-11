@@ -3,21 +3,43 @@ set -euo pipefail
 
 REMOTE_URL="${1:?remote url required}"
 MAX_ATTEMPTS="${2:-6}"
+BRANCH="${GIT_SYNC_BRANCH:-main}"
 PROXY_URL="${https_proxy:-${HTTPS_PROXY:-}}"
+ORIGINAL_HTTP_PROXY="${HTTP_PROXY:-}"
+ORIGINAL_HTTPS_PROXY="${HTTPS_PROXY:-}"
+ORIGINAL_ALL_PROXY="${ALL_PROXY:-}"
+ORIGINAL_LOWER_HTTP_PROXY="${http_proxy:-}"
+ORIGINAL_LOWER_HTTPS_PROXY="${https_proxy:-}"
+ORIGINAL_LOWER_ALL_PROXY="${all_proxy:-}"
 
 clear_proxy() {
   git config --unset http.proxy 2>/dev/null || true
   git config --unset https.proxy 2>/dev/null || true
+  unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
 }
 
 set_proxy() {
   if [ -n "$PROXY_URL" ]; then
     git config http.proxy "$PROXY_URL"
     git config https.proxy "$PROXY_URL"
+    export HTTP_PROXY="${ORIGINAL_HTTP_PROXY:-$PROXY_URL}"
+    export HTTPS_PROXY="${ORIGINAL_HTTPS_PROXY:-$PROXY_URL}"
+    export http_proxy="${ORIGINAL_LOWER_HTTP_PROXY:-$PROXY_URL}"
+    export https_proxy="${ORIGINAL_LOWER_HTTPS_PROXY:-$PROXY_URL}"
+    if [ -n "$ORIGINAL_ALL_PROXY" ]; then
+      export ALL_PROXY="$ORIGINAL_ALL_PROXY"
+    fi
+    if [ -n "$ORIGINAL_LOWER_ALL_PROXY" ]; then
+      export all_proxy="$ORIGINAL_LOWER_ALL_PROXY"
+    fi
     echo "[git-sync] use proxy: $PROXY_URL"
   else
     echo "[git-sync] no proxy configured"
   fi
+}
+
+rebase_in_progress() {
+  [ -d "$(git rev-parse --git-path rebase-merge)" ] || [ -d "$(git rev-parse --git-path rebase-apply)" ]
 }
 
 resolve_rebase_conflicts() {
@@ -48,34 +70,82 @@ resolve_rebase_conflicts() {
     esac
   done <<< "$conflicts"
 
-  if ! GIT_EDITOR=true git rebase --continue 2>/dev/null; then
-    if git diff --quiet 2>/dev/null && git diff --cached --quiet 2>/dev/null; then
-      GIT_EDITOR=true git rebase --skip 2>/dev/null
-    else
+  return 0
+}
+
+finish_rebase() {
+  local guard=0
+  while rebase_in_progress; do
+    guard=$((guard + 1))
+    if [ "$guard" -gt 20 ]; then
+      echo "[git-sync] rebase recovery exceeded 20 iterations" >&2
       return 1
     fi
+
+    if git status --porcelain 2>/dev/null | grep -q "^UU\|^AA\|^DD"; then
+      resolve_rebase_conflicts || return 1
+    elif ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
+      git add -A
+    fi
+
+    if GIT_EDITOR=true git rebase --continue; then
+      continue
+    fi
+
+    if git diff --quiet 2>/dev/null && git diff --cached --quiet 2>/dev/null; then
+      echo "[git-sync] current rebase commit is empty, running rebase --skip"
+      GIT_EDITOR=true git rebase --skip || return 1
+      continue
+    fi
+
+    return 1
+  done
+  return 0
+}
+
+print_git_failure() {
+  local label="$1"
+  local log_file="$2"
+  echo "[git-sync] $label failed, last log lines:" >&2
+  sed -E 's#https://[^/@]+(:[^/@]+)?@github.com/#https://***@github.com/#g' "$log_file" | tail -n 40 >&2 || true
+}
+
+run_git_with_log() {
+  local label="$1"
+  shift
+  local log_file
+  log_file="$(mktemp)"
+  if "$@" >"$log_file" 2>&1; then
+    rm -f "$log_file"
+    return 0
   fi
+  print_git_failure "$label" "$log_file"
+  rm -f "$log_file"
+  return 1
 }
 
 try_sync() {
   git stash push -m "sync-progress-stash-$(date +%s)" 2>/dev/null || true
 
-  if git pull --rebase "$REMOTE_URL" main 2>/dev/null; then
-    if git push "$REMOTE_URL" HEAD:main 2>/dev/null; then
-      git stash pop 2>/dev/null || true
-      echo "[git-sync] sync succeeded"
-      return 0
+  if run_git_with_log "fetch" git fetch --no-tags "$REMOTE_URL" "$BRANCH"; then
+    if run_git_with_log "rebase" git rebase FETCH_HEAD; then
+      if run_git_with_log "push" git push "$REMOTE_URL" "HEAD:$BRANCH"; then
+        git stash pop 2>/dev/null || true
+        echo "[git-sync] sync succeeded"
+        return 0
+      fi
+    else
+      echo "[git-sync] rebase failed"
     fi
-    echo "[git-sync] push failed"
   else
-    echo "[git-sync] pull --rebase failed"
+    echo "[git-sync] fetch failed"
   fi
 
-  if git status --porcelain 2>/dev/null | grep -q "^UU\|^AA\|^DD"; then
-    resolve_rebase_conflicts || true
-    if git push "$REMOTE_URL" HEAD:main 2>/dev/null; then
+  if rebase_in_progress; then
+    finish_rebase || true
+    if run_git_with_log "push after rebase recovery" git push "$REMOTE_URL" "HEAD:$BRANCH"; then
       git stash pop 2>/dev/null || true
-      echo "[git-sync] sync succeeded after conflict resolution"
+      echo "[git-sync] sync succeeded after rebase recovery"
       return 0
     fi
   fi
