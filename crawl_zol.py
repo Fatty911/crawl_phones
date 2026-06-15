@@ -266,7 +266,7 @@ def step1_crawl_list_and_detail():
     
     session = get_session()
     start_time = time.time()
-    page = progress.get('current_page', 1)
+    page = 1 if INCREMENTAL_MODE else progress.get('current_page', 1)
     phones_crawled = progress.get('total_phones', 0)
     skipped_count = 0
     

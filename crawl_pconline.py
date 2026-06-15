@@ -372,8 +372,8 @@ def step1_crawl_list_and_detail():
     brands = crawl_brand_list(session)
     logger.info(f"品牌列表 ({len(brands)}): {brands}")
     
-    current_brand_idx = progress.get('current_brand_index', 0)
-    current_page = progress.get('current_page', 1)
+    current_brand_idx = 0 if INCREMENTAL_MODE else progress.get('current_brand_index', 0)
+    current_page = 1 if INCREMENTAL_MODE else progress.get('current_page', 1)
     
     for bi in range(current_brand_idx, len(brands)):
         brand = brands[bi]
