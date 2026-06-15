@@ -12,6 +12,8 @@ DIR = os.path.dirname(os.path.abspath(__file__))
 
 FIXED = [
     '数据来源',
+    '验证状态',
+    '交叉验证差异',
     '品牌',
     '型号',
     '手机ID',
@@ -89,6 +91,22 @@ def clean_value(value):
     text = text.replace('纠错', '')
     text = re.sub(r'\s+', ' ', text).strip()
     return text if text else '-'
+
+
+def is_missing(value):
+    if value is None:
+        return True
+    return str(value).strip() in ('', '-')
+
+
+def model_key(row):
+    raw_name = row.get('型号') or row.get('name') or ''
+    if is_missing(raw_name):
+        return ''
+    name = clean_value(raw_name)
+    if is_missing(name):
+        return ''
+    return re.sub(r'\s+', '', name).lower()
 
 
 def norm(header):
@@ -243,6 +261,66 @@ def norm_rows(rows, source):
     return out
 
 
+def merge_verified_rows(zol_rows, pconline_rows, all_fields):
+    pconline_index = {
+        model_key(row): row
+        for row in pconline_rows
+        if model_key(row)
+    }
+    used_pconline = set()
+    merged = []
+
+    def combine_rows(zol_row, pconline_row):
+        combined = {}
+        differences = []
+        for field in all_fields:
+            if field in ('数据来源', '验证状态', '交叉验证差异'):
+                continue
+            zol_val = clean_value(zol_row.get(field, '-'))
+            pc_val = clean_value(pconline_row.get(field, '-'))
+            if is_missing(zol_val) and is_missing(pc_val):
+                continue
+            if is_missing(zol_val):
+                combined[field] = pc_val
+            elif is_missing(pc_val):
+                combined[field] = zol_val
+            elif zol_val == pc_val:
+                combined[field] = zol_val
+            else:
+                combined[field] = f"中关村在线: {zol_val} | 太平洋电脑网: {pc_val}"
+                differences.append(f"{field}: 中关村在线={zol_val}; 太平洋电脑网={pc_val}")
+
+        combined['数据来源'] = '中关村在线+太平洋电脑网'
+        combined['验证状态'] = '双源差异' if differences else '双源一致'
+        combined['交叉验证差异'] = '；'.join(differences) if differences else '-'
+        return combined
+
+    for zol_row in zol_rows:
+        key = model_key(zol_row)
+        pconline_row = pconline_index.get(key)
+        if pconline_row:
+            used_pconline.add(key)
+            merged.append(combine_rows(zol_row, pconline_row))
+            continue
+        row = dict(zol_row)
+        row['数据来源'] = '中关村在线'
+        row['验证状态'] = '单源'
+        row.setdefault('交叉验证差异', '-')
+        merged.append(row)
+
+    for pconline_row in pconline_rows:
+        key = model_key(pconline_row)
+        if key in used_pconline:
+            continue
+        row = dict(pconline_row)
+        row['数据来源'] = '太平洋电脑网'
+        row['验证状态'] = '单源'
+        row.setdefault('交叉验证差异', '-')
+        merged.append(row)
+
+    return merged
+
+
 def diff(zol_rows, pconline_rows, all_fields):
     index = {
         row.get('型号', '').replace(' ', ''): row
@@ -307,10 +385,14 @@ def main():
         print("错误: 没有找到任何数据文件")
         return
 
-    all_rows = zol_rows + pconline_rows
-    print(f"中关村在线:{len(zol_rows)} 太平洋电脑网:{len(pconline_rows)} 合计:{len(all_rows)}")
+    source_rows = zol_rows + pconline_rows
+    print(f"中关村在线:{len(zol_rows)} 太平洋电脑网:{len(pconline_rows)} 合计:{len(source_rows)}")
 
+    source_header = collect_fields(source_rows)
+    all_rows = merge_verified_rows(zol_rows, pconline_rows, source_header)
     header = collect_fields(all_rows)
+    dual_source_count = sum(1 for row in all_rows if row.get('验证状态', '').startswith('双源'))
+    print(f"交叉验证后机型:{len(all_rows)} 双源记录:{dual_source_count} 单源记录:{len(all_rows) - dual_source_count}")
 
     merged_csv_path = os.path.join(DIR, f"merged_phones_{today}.csv")
     merged_json_path = os.path.join(DIR, f"merged_phones_{today}.json")
@@ -319,7 +401,7 @@ def main():
 
     diffs = []
     if zol_rows and pconline_rows:
-        diffs = diff(zol_rows, pconline_rows, header)
+        diffs = diff(zol_rows, pconline_rows, source_header)
         if diffs:
             diff_path = os.path.join(DIR, f"diff_phones_{today}.csv")
             with open(diff_path, 'w', encoding='utf-8-sig', newline='') as f:

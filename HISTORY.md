@@ -1,5 +1,16 @@
 # History
 
+## 2026-06-15
+
+Reworked the phone Pages selector and merge output:
+
+- The old UI exposed a `数据来源` quick filter, which let users split the published data back into one crawler source even though the intended page is a combined selector backed by ZOL + PConline.
+- `merge_phones.py` now consolidates matching model names into one record and marks rows as `双源一致`, `双源差异`, or `单源`; conflicting double-source values are preserved in `交叉验证差异`.
+- `docs/phones/app.js` now builds advanced filter rows from the actual dataset columns instead of hardcoding every possible condition in code.
+- The table-header filter row was removed because re-rendering the header on every input caused focus loss after typing one character; filter inputs now debounce updates and respect Chinese IME composition events.
+- The Pages UI now supports clickable facet values, numeric range filters, local filter-history snapshots, and optional GitHub private Gist sync for cross-device history reuse without hardcoding a repository or Gist token into client code.
+- Verified with `node --check docs/phones/app.js`, `python -m py_compile merge_phones.py`, `python custom_scripts\validate_syntax.py`, an in-memory merge test, and browser checks on desktop/mobile local preview.
+
 ## 2026-06-11
 
 Reviewed recent workflow runs and hardened failing paths:

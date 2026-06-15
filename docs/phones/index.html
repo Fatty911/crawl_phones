@@ -42,16 +42,12 @@
               <strong id="columnCount">0</strong>
             </div>
             <div>
-              <span class="summary-label">数据源</span>
-              <strong id="sourceCount">0</strong>
+              <span class="summary-label">双源记录</span>
+              <strong id="verifiedCount">0</strong>
             </div>
           </div>
 
           <div class="quick-filters" aria-label="快速筛选">
-            <label>
-              <span>数据来源</span>
-              <select id="sourceFilter"></select>
-            </label>
             <label>
               <span>品牌</span>
               <select id="brandFilter"></select>
@@ -106,13 +102,43 @@
 
         <aside class="side-panel" aria-label="筛选和列设置">
           <section>
-            <h2>字段筛选</h2>
-            <div class="field-filter">
-              <select id="fieldSelect"></select>
-              <input id="fieldValue" placeholder="输入筛选值">
-              <button id="applyFieldFilter" type="button">应用</button>
+            <div class="panel-title-row">
+              <h2>高级筛选</h2>
+              <button id="addAdvancedFilter" type="button" class="text-button">添加条件</button>
             </div>
+            <div id="advancedFilterList" class="advanced-filter-list"></div>
             <div id="activeFilters" class="active-filters"></div>
+          </section>
+
+          <section>
+            <h2>鼠标筛选</h2>
+            <div class="facet-control">
+              <select id="facetField"></select>
+              <div class="range-control">
+                <input id="facetMin" inputmode="decimal" placeholder="最小值">
+                <input id="facetMax" inputmode="decimal" placeholder="最大值">
+                <button id="applyFacetRange" type="button" class="text-button">应用范围</button>
+              </div>
+            </div>
+            <div id="facetOptions" class="facet-options"></div>
+          </section>
+
+          <section>
+            <h2>筛选历史</h2>
+            <div class="history-save-row">
+              <input id="historyName" placeholder="历史名称">
+              <button id="saveHistory" type="button" class="text-button">保存</button>
+            </div>
+            <div id="historyList" class="history-list"></div>
+            <div class="history-sync">
+              <input id="gistToken" type="password" autocomplete="off" placeholder="GitHub Gist Token">
+              <div class="panel-title-row">
+                <button id="connectGist" type="button" class="text-button">连接</button>
+                <button id="pullHistory" type="button" class="text-button">拉取</button>
+                <button id="pushHistory" type="button" class="text-button">推送</button>
+              </div>
+              <p id="historySyncStatus"></p>
+            </div>
           </section>
 
           <section>

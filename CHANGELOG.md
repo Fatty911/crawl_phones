@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-06-15
+
+- Reworked the Pages UI into a data-driven advanced phone selector with generated field conditions, clickable facet values, numeric range filters, and IME-safe text input.
+- Removed the source quick filter from the UI because published rows are now meant to represent merged/cross-verified phone records.
+- Added local filter-history snapshots plus optional GitHub private Gist sync for cross-device history reuse.
+- Changed `merge_phones.py` to consolidate matching ZOL/PConline models into one verified row with `验证状态` and `交叉验证差异` metadata.
+
 ## 2026-06-11
 
 - Configured cron-job.org jobs for the phone crawler external trigger at Beijing 08:30 and 13:30.
