@@ -194,3 +194,39 @@ jobs:
             zol_phones_*.json
             zol_phones_*.csv
           retention-days: 90
+
+      - name: 检测新增数据并触发合并分析
+        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.complete == 'true'
+        id: check_new_data
+        run: |
+          TODAY=$(date +%Y%m%d)
+          DATA_FILE="zol_phones_${TODAY}.json"
+          if [ -f "$DATA_FILE" ]; then
+            ROW_COUNT=$(python3 -c "import json; print(len(json.load(open('$DATA_FILE', encoding='utf-8'))))" 2>/dev/null || echo "0")
+            echo "zol_data_file=$DATA_FILE" >> $GITHUB_OUTPUT
+            echo "zol_row_count=$ROW_COUNT" >> $GITHUB_OUTPUT
+            if [ "$ROW_COUNT" -gt 0 ]; then
+              echo "检测到中关村在线新增数据: $DATA_FILE ($ROW_COUNT 行)"
+              echo "has_new_data=true" >> $GITHUB_OUTPUT
+            else
+              echo "中关村在线数据文件为空"
+              echo "has_new_data=false" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "未找到中关村在线今日数据文件: $DATA_FILE"
+            echo "has_new_data=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: 触发合并分析工作流
+        if: steps.check_new_data.outputs.has_new_data == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "触发合并分析工作流..."
+          gh api repos/${{ github.repository }}/actions/workflows/merge-and-deploy.yml/dispatches \
+            --method POST \
+            --field ref=main \
+            --field inputs[force_merge]=false \
+            --field inputs[trigger_source]=zol-crawl \
+            --field inputs[trigger_date]=$(date +%Y%m%d)
+          echo "合并分析工作流已触发"

@@ -8,6 +8,14 @@ on:
         description: '强制重新合并'
         required: false
         default: 'false'
+      trigger_source:
+        description: '触发来源（pconline-crawl/zol-crawl/schedule/manual）'
+        required: false
+        default: 'manual'
+      trigger_date:
+        description: '触发日期（YYYYMMDD格式）'
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -61,6 +69,13 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@main
 
+      - name: 记录触发信息
+        run: |
+          echo "触发来源: ${{ github.event.inputs.trigger_source || 'schedule' }}"
+          echo "触发日期: ${{ github.event.inputs.trigger_date || '未指定' }}"
+          echo "当前日期: $(date +%Y%m%d)"
+          echo "半月周期完成状态: ${{ needs.check-half-month-complete.outputs.is_complete }}"
+
       - name: 设置Python环境
         uses: actions/setup-python@main
         with:
@@ -108,29 +123,47 @@ jobs:
           }
 
           download_latest_artifact "crawl-zol.yml" "zol-phone-data*" "中关村在线"
-          find . -mindepth 2 -maxdepth 2 -type f -name 'zol_phones_*.json' -exec mv -f {} . \; 2>/dev/null || true
-          find . -mindepth 2 -maxdepth 2 -type f -name 'zol_phones_*.csv' -exec mv -f {} . \; 2>/dev/null || true
+          find . -type f -name 'zol_phones_*.json' -exec mv -f {} . \; 2>/dev/null || true
+          find . -type f -name 'zol_phones_*.csv' -exec mv -f {} . \; 2>/dev/null || true
           rm -rf zol-phone-data* 2>/dev/null || true
 
           download_latest_artifact "crawl-pconline.yml" "pconline-phone-data*" "太平洋电脑网"
-          find . -mindepth 2 -maxdepth 2 -type f -name 'pconline_phones_*.json' -exec mv -f {} . \; 2>/dev/null || true
-          find . -mindepth 2 -maxdepth 2 -type f -name 'pconline_phones_*.csv' -exec mv -f {} . \; 2>/dev/null || true
+          find . -type f -name 'pconline_phones_*.json' -exec mv -f {} . \; 2>/dev/null || true
+          find . -type f -name 'pconline_phones_*.csv' -exec mv -f {} . \; 2>/dev/null || true
           rm -rf pconline-phone-data* 2>/dev/null || true
 
           echo "当前目录数据文件:"
           ls -la *.json 2>/dev/null || echo "没有找到数据文件"
+          echo "=== 文件行数统计 ==="
+          for f in zol_phones_*.json pconline_phones_*.json; do
+            if [ -f "$f" ]; then
+              ROWS=$(python3 -c "import json; print(len(json.load(open('$f'))))" 2>/dev/null || echo "0")
+              echo "$f: $ROWS 行"
+            fi
+          done
 
       - name: 校验爬虫数据完整性
         id: validate
         env:
           EVENT_NAME: ${{ github.event_name }}
           FORCE_MERGE: ${{ github.event.inputs.force_merge }}
+          TRIGGER_SOURCE: ${{ github.event.inputs.trigger_source || 'schedule' }}
+          TRIGGER_DATE: ${{ github.event.inputs.trigger_date || '' }}
         run: |
           python - <<'PY'
           import glob
           import json
           import os
           import sys
+
+          trigger_source = os.environ.get("TRIGGER_SOURCE", "schedule")
+          trigger_date = os.environ.get("TRIGGER_DATE", "")
+          event_name = os.environ.get("EVENT_NAME", "")
+          force_merge = os.environ.get("FORCE_MERGE", "false")
+
+          print(f"触发来源: {trigger_source}")
+          print(f"触发日期: {trigger_date}")
+          print(f"事件名称: {event_name}")
 
           checks = [
               ("中关村在线", "zol_phones_*.json"),
@@ -164,6 +197,8 @@ jobs:
               else:
                   valid_sources += 1
           ok = valid_sources > 0
+          if trigger_source in ["pconline-crawl", "zol-crawl"] and not ok:
+              print(f"被爬虫工作流 {trigger_source} 触发但未找到任何有效数据")
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
               f.write(f"ready={'true' if ok else 'false'}\n")
           if not ok:
@@ -355,11 +390,17 @@ jobs:
 
           if [ -f "release-files/phones_with_root_info.json" ]; then
             cp "release-files/phones_with_root_info.json" site/data/latest.json
-          else
+          elif [ -f "release-files/merged_phones_${DATE}.json" ]; then
             cp "release-files/merged_phones_${DATE}.json" site/data/latest.json
+          else
+            echo "错误: 未找到合并数据文件"
+            ls -la release-files/ 2>/dev/null || true
+            exit 1
           fi
 
-          cp "release-files/merged_phones_${DATE}.csv" "site/data/merged_phones_${DATE}.csv"
+          if [ -f "release-files/merged_phones_${DATE}.csv" ]; then
+            cp "release-files/merged_phones_${DATE}.csv" "site/data/merged_phones_${DATE}.csv"
+          fi
 
           touch site/.nojekyll
           python - <<'PY'

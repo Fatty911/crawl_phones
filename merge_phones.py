@@ -220,8 +220,13 @@ def add_derived_fields(row):
 def find_latest(pattern):
     files = glob.glob(os.path.join(DIR, pattern))
     if not files:
+        files = glob.glob(os.path.join(DIR, '**', pattern), recursive=True)
+    if not files:
         return None
-    return max(files, key=os.path.getmtime)
+    data_files = [f for f in files if 'progress' not in f and 'manifest' not in f]
+    if not data_files:
+        data_files = files
+    return max(data_files, key=os.path.getmtime)
 
 
 def load(path):
