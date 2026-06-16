@@ -68,9 +68,14 @@ jobs:
             echo "增量模式（只爬新增手机）"
           fi
 
-          if [ "$FORCE_RESTART" = "true" ] || [ ! -f "$CURRENT_PERIOD_FILE" ] || [ "$(cat "$CURRENT_PERIOD_FILE")" != "$CRAWL_PERIOD" ]; then
-            echo "进入新的半月周期 $CRAWL_PERIOD，重置进度"
+          if [ "$FORCE_RESTART" = "true" ]; then
+            echo "强制重启，重置进度"
             rm -f zol/progress.json
+          elif [ ! -f "$CURRENT_PERIOD_FILE" ] || [ "$(cat "$CURRENT_PERIOD_FILE")" != "$CRAWL_PERIOD" ]; then
+            echo "进入新的半月周期 $CRAWL_PERIOD，保留已处理手机列表"
+            if [ -f zol/progress.json ]; then
+              python3 -c "import json; p=json.load(open('zol/progress.json')); p['current_page']=1; p['total_phones']=0; json.dump(p,open('zol/progress.json','w'),indent=2); print('已重置页码，保留已处理手机列表')"
+            fi
           fi
           echo "$CRAWL_PERIOD" > "$CURRENT_PERIOD_FILE"
           echo "skip=false" >> "$GITHUB_OUTPUT"
