@@ -165,16 +165,42 @@ jobs:
         if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.complete == 'true'
         run: python crawl_pconline.py --step 2
 
-      - name: Generate summary
+      - name: Validate generated PConline data
         if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.complete == 'true'
+        id: validate_data
+        run: |
+          TODAY=$(date +%Y%m%d)
+          DATA_FILE="pconline_phones_${TODAY}.json"
+          echo "pconline_data_file=$DATA_FILE" >> "$GITHUB_OUTPUT"
+          if [ ! -f "$DATA_FILE" ]; then
+            echo "未找到太平洋电脑网今日数据文件: $DATA_FILE"
+            echo "pconline_row_count=0" >> "$GITHUB_OUTPUT"
+            echo "has_data=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          ROW_COUNT=$(python3 -c "import json; print(len(json.load(open('$DATA_FILE', encoding='utf-8'))))" 2>/dev/null || echo "0")
+          echo "pconline_row_count=$ROW_COUNT" >> "$GITHUB_OUTPUT"
+          if [ "$ROW_COUNT" -gt 0 ]; then
+            echo "太平洋电脑网今日数据有效: $DATA_FILE ($ROW_COUNT 行)"
+            echo "has_data=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "太平洋电脑网今日数据文件为空，不上传空 artifact，不触发合并"
+            rm -f "$DATA_FILE" "pconline_phones_${TODAY}.csv"
+            echo "has_data=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate summary
+        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.complete == 'true' && steps.validate_data.outputs.has_data == 'true'
         run: python crawl_pconline.py --step 3
 
       - name: Mark crawl complete and commit
         if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.complete == 'true'
         run: |
-          if [ -f "pconline_phones_$(date +%Y%m%d).json" ]; then
+          if [ "${{ steps.validate_data.outputs.has_data }}" = "true" ] && [ -f "pconline_phones_$(date +%Y%m%d).json" ]; then
             touch "$PCONLINE_DONE_MARKER"
             echo "爬取完成，标记半月周期"
+          else
+            echo "本次没有有效 PConline 数据文件，仅同步进度"
           fi
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -183,7 +209,7 @@ jobs:
           bash custom_scripts/git_sync_progress.sh "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
 
       - name: Upload crawl data
-        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.complete == 'true'
+        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.complete == 'true' && steps.validate_data.outputs.has_data == 'true'
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
@@ -197,22 +223,14 @@ jobs:
         if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.complete == 'true'
         id: check_new_data
         run: |
-          TODAY=$(date +%Y%m%d)
-          DATA_FILE="pconline_phones_${TODAY}.json"
-          if [ -f "$DATA_FILE" ]; then
-            ROW_COUNT=$(python3 -c "import json; print(len(json.load(open('$DATA_FILE', encoding='utf-8'))))" 2>/dev/null || echo "0")
-            echo "pconline_data_file=$DATA_FILE" >> $GITHUB_OUTPUT
-            echo "pconline_row_count=$ROW_COUNT" >> $GITHUB_OUTPUT
-            if [ "$ROW_COUNT" -gt 0 ]; then
-              echo "检测到太平洋电脑网新增数据: $DATA_FILE ($ROW_COUNT 行)"
-              echo "has_new_data=true" >> $GITHUB_OUTPUT
-            else
-              echo "太平洋电脑网数据文件为空"
-              echo "has_new_data=false" >> $GITHUB_OUTPUT
-            fi
+          echo "pconline_data_file=${{ steps.validate_data.outputs.pconline_data_file }}" >> "$GITHUB_OUTPUT"
+          echo "pconline_row_count=${{ steps.validate_data.outputs.pconline_row_count }}" >> "$GITHUB_OUTPUT"
+          if [ "${{ steps.validate_data.outputs.has_data }}" = "true" ]; then
+            echo "检测到太平洋电脑网新增数据: ${{ steps.validate_data.outputs.pconline_data_file }} (${{ steps.validate_data.outputs.pconline_row_count }} 行)"
+            echo "has_new_data=true" >> "$GITHUB_OUTPUT"
           else
-            echo "未找到太平洋电脑网今日数据文件: $DATA_FILE"
-            echo "has_new_data=false" >> $GITHUB_OUTPUT
+            echo "太平洋电脑网本次没有有效新增数据"
+            echo "has_new_data=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: 触发合并分析工作流

@@ -6,6 +6,7 @@
 - Removed the source quick filter from the UI because published rows are now meant to represent merged/cross-verified phone records.
 - Added local filter-history snapshots plus optional GitHub private Gist sync for cross-device history reuse.
 - Changed `merge_phones.py` to consolidate matching ZOL/PConline models into one verified row with `验证状态` and `交叉验证差异` metadata.
+- Hardened crawler artifacts so empty ZOL/PConline JSON files are not uploaded or used to trigger merge analysis, and merge publishing now skips empty recent artifacts while searching for the latest valid source data.
 
 ## 2026-06-11
 

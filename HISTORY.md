@@ -11,6 +11,13 @@ Reworked the phone Pages selector and merge output:
 - The Pages UI now supports clickable facet values, numeric range filters, local filter-history snapshots, and optional GitHub private Gist sync for cross-device history reuse without hardcoding a repository or Gist token into client code.
 - Verified with `node --check docs/phones/app.js`, `python -m py_compile merge_phones.py`, `python custom_scripts\validate_syntax.py`, an in-memory merge test, and browser checks on desktop/mobile local preview.
 
+Follow-up review of commit `2c68258` for empty PConline merge data:
+
+- The commit correctly reset incremental crawler pagination to start from page 1, so new phones are not missed after a half-month crawl has already completed.
+- That was not sufficient by itself because an incremental run with no new local JSON files could still generate `pconline_phones_YYYYMMDD.json` as `[]`, mark the crawler complete, upload the empty artifact, and cause merge analysis to skip PConline.
+- `merge-and-deploy.yml` now downloads crawler artifacts into a temporary directory, checks JSON row counts before accepting them, skips empty or tiny artifacts, and keeps searching older successful runs for valid source data.
+- `crawl-zol.yml` and `crawl-pconline.yml` now validate generated JSON before summary/upload/merge-dispatch, remove empty output files, and only upload or trigger merge when there is real data.
+
 ## 2026-06-11
 
 Reviewed recent workflow runs and hardened failing paths:

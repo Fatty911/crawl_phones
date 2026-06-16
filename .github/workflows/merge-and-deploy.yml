@@ -101,6 +101,8 @@ jobs:
             local workflow="$1"
             local pattern="$2"
             local label="$3"
+            local json_glob="$4"
+            local csv_glob="$5"
             local run_ids
 
             run_ids=$(gh run list --repo "${{ github.repository }}" --workflow "$workflow" --status success --limit 50 --json databaseId --jq '.[].databaseId' 2>/dev/null || true)
@@ -112,24 +114,56 @@ jobs:
             while IFS= read -r run_id; do
               [ -n "$run_id" ] || continue
               echo "尝试下载 ${label} artifact，run=${run_id}"
-              if gh run download "$run_id" --repo "${{ github.repository }}" --pattern "$pattern" --dir . 2>/tmp/${workflow}_artifact_error.txt; then
-                echo "已下载 ${label} artifact，run=${run_id}"
-                return 0
+              tmp_dir="$(mktemp -d)"
+              if gh run download "$run_id" --repo "${{ github.repository }}" --pattern "$pattern" --dir "$tmp_dir" 2>/tmp/${workflow}_artifact_error.txt; then
+                if TMP_DIR="$tmp_dir" JSON_GLOB="$json_glob" LABEL="$label" python3 - <<'PY'
+          import glob
+          import json
+          import os
+          import sys
+
+          tmp_dir = os.environ["TMP_DIR"]
+          json_glob = os.environ["JSON_GLOB"]
+          label = os.environ["LABEL"]
+          files = sorted(glob.glob(os.path.join(tmp_dir, "**", json_glob), recursive=True))
+          if not files:
+              print(f"{label} artifact 中没有 {json_glob}")
+              sys.exit(1)
+          for path in files:
+              try:
+                  with open(path, "r", encoding="utf-8") as f:
+                      rows = json.load(f)
+              except Exception as exc:
+                  print(f"{label} artifact 文件 {path} 读取失败: {exc}")
+                  continue
+              count = len(rows) if isinstance(rows, list) else 0
+              print(f"{label} artifact 文件 {os.path.basename(path)} 行数: {count}")
+              if count >= 10:
+                  sys.exit(0)
+              print(f"{label} artifact 文件 {os.path.basename(path)} 少于 10 行，继续查找")
+          sys.exit(1)
+          PY
+                then
+                  find "$tmp_dir" -type f \( -name "$json_glob" -o -name "$csv_glob" \) -exec mv -f {} . \; 2>/dev/null || true
+                  rm -rf "$tmp_dir"
+                  echo "已下载有效 ${label} artifact，run=${run_id}"
+                  return 0
+                fi
+                echo "run=${run_id} 的 ${label} artifact 无有效数据，继续查找更早成功运行"
+                rm -rf "$tmp_dir"
+              else
+                rm -rf "$tmp_dir"
+                echo "run=${run_id} 没有匹配 ${pattern} 的 artifact，继续查找更早成功运行"
               fi
-              echo "run=${run_id} 没有匹配 ${pattern} 的 artifact，继续查找更早成功运行"
             done <<< "$run_ids"
 
             echo "最近成功运行中未找到 ${label} 数据 artifact"
           }
 
-          download_latest_artifact "crawl-zol.yml" "zol-phone-data*" "中关村在线"
-          find . -type f -name 'zol_phones_*.json' -exec mv -f {} . \; 2>/dev/null || true
-          find . -type f -name 'zol_phones_*.csv' -exec mv -f {} . \; 2>/dev/null || true
+          download_latest_artifact "crawl-zol.yml" "zol-phone-data*" "中关村在线" "zol_phones_*.json" "zol_phones_*.csv"
           rm -rf zol-phone-data* 2>/dev/null || true
 
-          download_latest_artifact "crawl-pconline.yml" "pconline-phone-data*" "太平洋电脑网"
-          find . -type f -name 'pconline_phones_*.json' -exec mv -f {} . \; 2>/dev/null || true
-          find . -type f -name 'pconline_phones_*.csv' -exec mv -f {} . \; 2>/dev/null || true
+          download_latest_artifact "crawl-pconline.yml" "pconline-phone-data*" "太平洋电脑网" "pconline_phones_*.json" "pconline_phones_*.csv"
           rm -rf pconline-phone-data* 2>/dev/null || true
 
           echo "当前目录数据文件:"

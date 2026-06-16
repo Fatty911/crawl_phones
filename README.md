@@ -170,6 +170,8 @@ CRON_JOB_ORG_API_KEY=... GITHUB_DISPATCH_TOKEN=... python custom_scripts/configu
 
 PConline 进度会记录 `processed_phones` 和 `skipped_phones`，已保存、已判定为旧款、无年份的手机 ID 都会进入处理缓存；断点续爬时会直接跳过这些 ID，避免重复爬同一批 iPhone 旧机型或系列页。
 
+增量爬虫如果没有生成有效数据文件，不会上传空的 `zol-phone-data-*` / `pconline-phone-data-*` artifact，也不会触发合并分析。合并工作流下载爬虫 artifact 时会逐个校验 JSON 行数，跳过空文件或少于 10 行的可疑 artifact，继续查找最近一份有效来源数据，避免空增量 artifact 覆盖历史有效数据。
+
 CI 会在 `main` 推送后运行：
 - Python 编译检查
 - YAML / Shell / JSON / 前端静态文件基础语法检查
