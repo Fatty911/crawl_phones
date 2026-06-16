@@ -241,7 +241,7 @@ jobs:
       - name: 触发合并分析工作流
         if: steps.check_new_data.outputs.has_new_data == 'true'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.ACTION_PAT }}
         run: |
           echo "触发合并分析工作流..."
           gh api repos/${{ github.repository }}/actions/workflows/merge-and-deploy.yml/dispatches \
