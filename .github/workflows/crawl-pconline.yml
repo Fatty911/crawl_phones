@@ -60,13 +60,11 @@ jobs:
 
           if [ "$FORCE_RESTART" = "true" ]; then
             rm -f "$DONE_MARKER"
-          fi
-
-          if [ -f "$DONE_MARKER" ]; then
-            echo "半月周期 $CRAWL_PERIOD 已完成全量爬取，进入增量模式（只爬新增手机）"
-            echo "INCREMENTAL_MODE=true" >> "$GITHUB_ENV"
-          else
             echo "INCREMENTAL_MODE=false" >> "$GITHUB_ENV"
+            echo "强制重启，全量爬取模式"
+          else
+            echo "INCREMENTAL_MODE=true" >> "$GITHUB_ENV"
+            echo "增量模式（只爬新增手机）"
           fi
 
           if [ "$FORCE_RESTART" = "true" ] || [ ! -f "$CURRENT_PERIOD_FILE" ] || [ "$(cat "$CURRENT_PERIOD_FILE")" != "$CRAWL_PERIOD" ]; then
@@ -162,11 +160,11 @@ jobs:
           echo "failed=false" >> "$GITHUB_OUTPUT"
 
       - name: Parse and merge data
-        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.complete == 'true'
+        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true'
         run: python crawl_pconline.py --step 2
 
       - name: Validate generated PConline data
-        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.complete == 'true'
+        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true'
         id: validate_data
         run: |
           TODAY=$(date +%Y%m%d)
@@ -190,11 +188,11 @@ jobs:
           fi
 
       - name: Generate summary
-        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.complete == 'true' && steps.validate_data.outputs.has_data == 'true'
+        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true' && steps.validate_data.outputs.has_data == 'true'
         run: python crawl_pconline.py --step 3
 
       - name: Mark crawl complete and commit
-        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.complete == 'true'
+        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true'
         run: |
           if [ "${{ steps.validate_data.outputs.has_data }}" = "true" ] && [ -f "pconline_phones_$(date +%Y%m%d).json" ]; then
             touch "$PCONLINE_DONE_MARKER"
@@ -209,7 +207,7 @@ jobs:
           bash custom_scripts/git_sync_progress.sh "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
 
       - name: Upload crawl data
-        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.complete == 'true' && steps.validate_data.outputs.has_data == 'true'
+        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true' && steps.validate_data.outputs.has_data == 'true'
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
@@ -220,7 +218,7 @@ jobs:
           retention-days: 90
 
       - name: 检测新增数据并触发合并分析
-        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.complete == 'true'
+        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true'
         id: check_new_data
         run: |
           echo "pconline_data_file=${{ steps.validate_data.outputs.pconline_data_file }}" >> "$GITHUB_OUTPUT"
