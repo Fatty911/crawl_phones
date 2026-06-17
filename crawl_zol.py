@@ -365,7 +365,7 @@ def step1_crawl_list_and_detail():
         page += 1
     
     if INCREMENTAL_MODE:
-        logger.info(f"增量模式完成：新增 {phones_crawled} 个手机，跳过 {skipped_count} 个已存在手机")
+        logger.info(f"增量模式完成：新增 {phones_crawled} 个手机，扫描 {skipped_count + phones_crawled} 个条目（其中 {skipped_count} 个已处理）")
     else:
         logger.info(f"步骤1完成！共爬取 {phones_crawled} 个手机")
 
