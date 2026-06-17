@@ -244,8 +244,14 @@ jobs:
           echo "触发合并分析工作流..."
           gh api repos/${{ github.repository }}/actions/workflows/merge-and-deploy.yml/dispatches \
             --method POST \
-            --field ref=main \
-            --field inputs[force_merge]=false \
-            --field inputs[trigger_source]=pconline-crawl \
-            --field inputs[trigger_date]=$(date +%Y%m%d)
+            --input - <<EOF
+          {
+            "ref": "main",
+            "inputs": {
+              "force_merge": "false",
+              "trigger_source": "pconline-crawl",
+              "trigger_date": "$(date +%Y%m%d)"
+            }
+          }
+          EOF
           echo "合并分析工作流已触发"
