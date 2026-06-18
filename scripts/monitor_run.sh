@@ -1,17 +1,26 @@
 #!/bin/bash
-# 定时监控工作流和 Pages 数据
-# 工作流预估完成时间：
-#   - 有 .done marker: 即时（1秒）
-#   - 无 .done marker + 增量扫描: ~2-3小时
-#   - 合并分析: ~1分钟
-#   - Pages 部署: ~1分钟
-# 爬虫触发时间: 00:30 / 05:30 UTC
-# 安全检查时间: 08:00 / 14:00 UTC（覆盖最坏情况 05:30 + 3h）
-
+# 定时监控工作流和 Pages 数据（调试期最多运行 7 天，之后自动停止）
 set -e
 cd /root/crawl_phones
 
+COUNTER_FILE="/root/crawl_phones/scripts/.monitor_count"
+MAX_RUNS=14
+RUN_COUNT=1
+
+if [ -f "$COUNTER_FILE" ]; then
+  RUN_COUNT=$(($(cat "$COUNTER_FILE") + 1))
+fi
+
+if [ "$RUN_COUNT" -gt "$MAX_RUNS" ]; then
+  # 超过限制，自动移除 cron 并退出
+  crontab -l 2>/dev/null | grep -v "monitor_run" | crontab -
+  echo "$(date '+%Y-%m-%d %H:%M:%S') 已运行 ${RUN_COUNT} 次（超过 ${MAX_RUNS} 次上限），自动停止" >> /root/crawl_phones/scripts/monitor.log
+  exit 0
+fi
+
+echo "$RUN_COUNT" > "$COUNTER_FILE"
+
 LOG_FILE="/root/crawl_phones/scripts/monitor_$(date +%Y%m%d_%H%M).log"
-echo "=== 工作流监控 $(date '+%Y-%m-%d %H:%M:%S') ===" | tee -a "$LOG_FILE"
+echo "=== 工作流监控 #$RUN_COUNT/$MAX_RUNS $(date '+%Y-%m-%d %H:%M:%S') ===" | tee -a "$LOG_FILE"
 
 opencode run "$(cat /root/crawl_phones/scripts/monitor_prompt.md)" 2>&1 | tee -a "$LOG_FILE"
