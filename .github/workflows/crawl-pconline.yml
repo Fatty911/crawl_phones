@@ -223,7 +223,7 @@ jobs:
           fi
 
       - name: Generate summary
-        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true' && steps.validate_data.outputs.has_data == 'true'
+        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true'
         run: python crawl_pconline.py --step 3
 
       - name: Mark crawl complete and commit
@@ -245,7 +245,7 @@ jobs:
           bash custom_scripts/git_sync_progress.sh "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
 
       - name: Upload crawl data
-        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true' && steps.validate_data.outputs.has_data == 'true'
+        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true'
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
