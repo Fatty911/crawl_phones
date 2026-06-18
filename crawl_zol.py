@@ -416,6 +416,18 @@ def step2_parse_and_merge():
             logger.info(f"zol/json/ 为空，复用上次数据: {os.path.basename(prev_file)} ({len(all_phones)} 条)")
     
     if not all_phones:
+        progress_file = os.path.join(zol_dir, 'progress.json')
+        if os.path.exists(progress_file):
+            with open(progress_file, 'r', encoding='utf-8') as f:
+                progress = json.load(f)
+            if progress.get('processed_phones') or progress.get('crawled_phones'):
+                logger.warning("有进度记录但无数据文件——状态不一致，重置进度让下次全量爬取")
+                progress['current_page'] = 1
+                progress['total_phones'] = 0
+                progress['processed_phones'] = []
+                progress['crawled_phones'] = []
+                with open(progress_file, 'w', encoding='utf-8') as f:
+                    json.dump(progress, f, ensure_ascii=False, indent=2)
         logger.warning("没有任何手机数据（既无历史也无新增），将输出空文件")
     
     all_phones.sort(key=lambda x: x.get('国内发布时间', ''), reverse=True)
