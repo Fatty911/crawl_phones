@@ -15,6 +15,10 @@ on:
         description: '最多爬取手机数（调试用，0=不限制）'
         required: false
         default: '0'
+      debug_mode:
+        description: '调试模式（忽略时间窗口，只爬 max_phones 条）'
+        required: false
+        default: 'false'
 
 env:
   RUN_TIME: 10800
@@ -95,8 +99,14 @@ jobs:
         env:
           PROFILE_INPUT: ${{ github.event.inputs.run_profile || 'auto' }}
         run: |
-          python custom_scripts/crawl_budget.py configure
-          echo "MAX_PHONES=${{ github.event.inputs.max_phones || '0' }}" >> "$GITHUB_ENV"
+          if [ "${{ github.event.inputs.debug_mode }}" = "true" ]; then
+            echo "调试模式：跳过时间窗口检查"
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "MAX_PHONES=${{ github.event.inputs.max_phones || '30' }}" >> "$GITHUB_ENV"
+          else
+            python custom_scripts/crawl_budget.py configure
+            echo "MAX_PHONES=${{ github.event.inputs.max_phones || '0' }}" >> "$GITHUB_ENV"
+          fi
 
       - name: Set up Python
         if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true'
