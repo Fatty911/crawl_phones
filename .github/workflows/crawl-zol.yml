@@ -66,11 +66,15 @@ jobs:
           echo "ZOL_DONE_MARKER=$DONE_MARKER" >> "$GITHUB_ENV"
 
           FORCE_RESTART="${{ github.event.inputs.force_restart }}"
+          DEBUG_MODE="${{ github.event.inputs.debug_mode }}"
 
           if [ "$FORCE_RESTART" = "true" ]; then
             rm -f "$DONE_MARKER"
             echo "INCREMENTAL_MODE=false" >> "$GITHUB_ENV"
             echo "强制重启，全量爬取模式"
+          elif [ "$DEBUG_MODE" = "true" ]; then
+            echo "INCREMENTAL_MODE=true" >> "$GITHUB_ENV"
+            echo "调试模式（不限时间窗口，限制爬取数量）"
           else
             echo "INCREMENTAL_MODE=true" >> "$GITHUB_ENV"
             echo "增量模式（只爬新增手机）"
@@ -87,7 +91,7 @@ jobs:
           fi
           echo "$CRAWL_PERIOD" > "$CURRENT_PERIOD_FILE"
 
-          if [ "$FORCE_RESTART" != "true" ] && [ -f "$DONE_MARKER" ]; then
+          if [ "$FORCE_RESTART" != "true" ] && [ "$DEBUG_MODE" != "true" ] && [ -f "$DONE_MARKER" ]; then
             echo "半月周期 $CRAWL_PERIOD 已完成，跳过所有爬取步骤"
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
