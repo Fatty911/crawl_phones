@@ -13,9 +13,7 @@ pconline/exception/
 ai_search/
 
 # 生成的数据文件
-zol_phones_*.json
 zol_phones_*.csv
-pconline_phones_*.json
 pconline_phones_*.csv
 merged_phones_*.json
 merged_phones_*.csv
