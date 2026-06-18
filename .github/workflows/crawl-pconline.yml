@@ -72,7 +72,7 @@ jobs:
             echo "INCREMENTAL_MODE=false" >> "$GITHUB_ENV"
             echo "强制重启，全量爬取模式"
           elif [ "$DEBUG_MODE" = "true" ]; then
-            echo "INCREMENTAL_MODE=true" >> "$GITHUB_ENV"
+            echo "INCREMENTAL_MODE=false" >> "$GITHUB_ENV"
             echo "调试模式（不限时间窗口，限制爬取数量）"
           else
             echo "INCREMENTAL_MODE=true" >> "$GITHUB_ENV"
