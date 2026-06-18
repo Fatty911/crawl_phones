@@ -192,7 +192,7 @@ jobs:
           ROW_COUNT=$(python3 -c "import json; print(len(json.load(open('$DATA_FILE', encoding='utf-8'))))" 2>/dev/null || echo "0")
           echo "zol_row_count=$ROW_COUNT" >> "$GITHUB_OUTPUT"
           if [ "$ROW_COUNT" -gt 0 ]; then
-            VALID_RATE=$(python3 -c "import json; rows=json.load(open('$DATA_FILE')); total=len(rows); key_fields=['处理器','内存','存储','屏幕','电池','摄像头参数','上市时间']; results={f:sum(1 for r in rows if r.get(f,'').strip()) for f in key_fields}; min_count=min(results.values()); print(int(min_count/total*100) if total>0 else 0)")
+            VALID_RATE=$(python3 -c "import json; rows=json.load(open('$DATA_FILE')); total=len(rows); key_fields=['处理器','内存','存储','屏幕','电池','摄像头参数','上市时间']; bad={'','-','N/A','暂无','无','null','未知','/','--'}; def ok(v): s=str(v).strip(); return s!='' and s not in bad; results={f:sum(1 for r in rows if ok(r.get(f,''))) for f in key_fields}; print(int(min(results.values())/total*100) if total>0 else 0)")
             if [ "$VALID_RATE" -ge 70 ]; then
               echo "中关村在线今日数据有效: $DATA_FILE ($ROW_COUNT 行, 关键字段完整率 ${VALID_RATE}%)"
               echo "has_data=true" >> "$GITHUB_OUTPUT"
