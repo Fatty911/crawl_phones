@@ -78,10 +78,6 @@ jobs:
             echo "INCREMENTAL_MODE=true" >> "$GITHUB_ENV"
             echo "增量模式（只爬新增手机）"
           fi
-          else
-            echo "INCREMENTAL_MODE=true" >> "$GITHUB_ENV"
-            echo "增量模式（只爬新增手机）"
-          fi
 
           if [ "$FORCE_RESTART" = "true" ]; then
             echo "强制重启，重置进度"
