@@ -190,8 +190,14 @@ jobs:
           ROW_COUNT=$(python3 -c "import json; print(len(json.load(open('$DATA_FILE', encoding='utf-8'))))" 2>/dev/null || echo "0")
           echo "pconline_row_count=$ROW_COUNT" >> "$GITHUB_OUTPUT"
           if [ "$ROW_COUNT" -gt 0 ]; then
-            echo "太平洋电脑网今日数据有效: $DATA_FILE ($ROW_COUNT 行)"
-            echo "has_data=true" >> "$GITHUB_OUTPUT"
+            VALID_RATE=$(python3 -c "import json; rows=json.load(open('$DATA_FILE')); total=len(rows); has_name=sum(1 for r in rows if r.get('手机名称') or r.get('name') or r.get('型号')); has_price=sum(1 for r in rows if r.get('价格') or r.get('price') or r.get('参考价格')); print(int(min(has_name,has_price)/total*100) if total>0 else 0)")
+            if [ "$VALID_RATE" -ge 80 ]; then
+              echo "太平洋电脑网今日数据有效: $DATA_FILE ($ROW_COUNT 行, 完整率 ${VALID_RATE}%)"
+              echo "has_data=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "太平洋电脑网数据字段不完整（完整率 ${VALID_RATE}% < 80%），不上传"
+              echo "has_data=false" >> "$GITHUB_OUTPUT"
+            fi
           else
             echo "太平洋电脑网今日数据文件为空，不上传空 artifact，不触发合并"
             rm -f "$DATA_FILE" "pconline_phones_${TODAY}.csv"

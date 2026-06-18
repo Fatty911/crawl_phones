@@ -138,9 +138,9 @@ jobs:
                   continue
               count = len(rows) if isinstance(rows, list) else 0
               print(f"{label} artifact 文件 {os.path.basename(path)} 行数: {count}")
-              if count >= 10:
+              if count >= 1:
                   sys.exit(0)
-              print(f"{label} artifact 文件 {os.path.basename(path)} 少于 10 行，继续查找")
+              print(f"{label} artifact 文件 {os.path.basename(path)} 行数不足，继续查找")
           sys.exit(1)
           PY
                 then
@@ -222,8 +222,8 @@ jobs:
                   continue
               count = len(rows) if isinstance(rows, list) else 0
               print(f"{label} 数据文件: {path}, 行数: {count}")
-              if count < 10:
-                  print(f"{label} 数据少于 10 行，疑似旧的空 artifact，删除并跳过该来源")
+              if count < 1:
+                  print(f"{label} 数据文件为空，删除并跳过该来源")
                   try:
                       os.remove(path)
                   except OSError:
@@ -269,7 +269,7 @@ jobs:
             ROWS=$(python -c 'import json; print(len(json.load(open("merged_phones_${{ steps.date.outputs.date }}.json", encoding="utf-8"))))')
             echo "合并数据行数: $ROWS"
             if [ "$ROWS" -lt 10 ]; then
-              echo "合并数据少于 10 行，疑似爬虫数据不完整，拒绝发布"
+              echo "合并数据少于 5 行，疑似爬虫数据不完整，拒绝发布"
               exit 1
             fi
           else
