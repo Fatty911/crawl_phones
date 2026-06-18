@@ -368,6 +368,7 @@ def step1_crawl_list_and_detail():
     start_time = time.time()
     phones_crawled = progress.get('total_phones', 0)
     skipped_count = 0
+    logger.info(f"从进度恢复: total_phones={phones_crawled}, processed={len(progress.get('processed_phones',[]))}, crawled={len(progress.get('crawled_phones',[]))}, brand_idx={progress.get('current_brand_index')}")
     
     # 获取品牌列表
     brands = crawl_brand_list(session)
