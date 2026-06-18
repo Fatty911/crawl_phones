@@ -4,6 +4,7 @@
 import os
 import sys
 import json
+import glob
 import time
 import random
 import re
@@ -370,6 +371,26 @@ def step1_crawl_list_and_detail():
         logger.info(f"步骤1完成！共爬取 {phones_crawled} 个手机")
 
 
+def find_latest(pattern):
+    """查找最新匹配文件"""
+    files = glob.glob(os.path.join(working_dir, pattern))
+    if not files:
+        files = glob.glob(os.path.join(working_dir, '**', pattern), recursive=True)
+    if not files:
+        return None
+    data_files = [f for f in files if 'progress' not in f and 'manifest' not in f]
+    if not data_files:
+        data_files = files
+    return max(data_files, key=os.path.getmtime)
+
+
+def load(path):
+    if not path or not os.path.exists(path):
+        return []
+    with open(path, 'r', encoding='utf-8') as f:
+        return json.load(f)
+
+
 def step2_parse_and_merge():
     logger.info("=" * 70)
     logger.info("步骤2：解析和合并数据")
@@ -387,6 +408,15 @@ def step2_parse_and_merge():
                 logger.error(f"读取文件失败: {filepath} - {e}")
     
     logger.info(f"总共读取 {len(all_phones)} 个手机数据")
+
+    if not all_phones:
+        prev_file = find_latest("zol_phones_*.json")
+        if prev_file:
+            all_phones = load(prev_file)
+            logger.info(f"zol/json/ 为空，复用上次数据: {os.path.basename(prev_file)} ({len(all_phones)} 条)")
+    
+    if not all_phones:
+        logger.warning("没有任何手机数据（既无历史也无新增），将输出空文件")
     
     all_phones.sort(key=lambda x: x.get('国内发布时间', ''), reverse=True)
     
