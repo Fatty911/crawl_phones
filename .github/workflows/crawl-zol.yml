@@ -11,6 +11,10 @@ on:
         description: '运行时长配置：auto/morning/afternoon'
         required: false
         default: 'auto'
+      max_phones:
+        description: '最多爬取手机数（调试用，0=不限制）'
+        required: false
+        default: '0'
 
 env:
   RUN_TIME: 10800
@@ -20,7 +24,7 @@ env:
   PROGRESS_COMMIT_BUFFER_SECONDS: 1800
   WINDOW_END_BUFFER_SECONDS: 900
   MAX_PAGES: 0
-  MAX_PHONES: 0
+  MAX_PHONES: ${{ github.event.inputs.max_phones || '0' }}
   CRAWL_MIN_DELAY_SECONDS: 2
   CRAWL_MAX_DELAY_SECONDS: 3
 
@@ -94,7 +98,7 @@ jobs:
         run: |
           python custom_scripts/crawl_budget.py configure
           echo "MAX_PAGES=0" >> "$GITHUB_ENV"
-          echo "MAX_PHONES=0" >> "$GITHUB_ENV"
+          echo "MAX_PHONES=${{ github.event.inputs.max_phones || '0' }}" >> "$GITHUB_ENV"
 
       - name: Set up Python
         if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true'
