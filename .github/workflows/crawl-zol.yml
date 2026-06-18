@@ -78,7 +78,13 @@ jobs:
             fi
           fi
           echo "$CRAWL_PERIOD" > "$CURRENT_PERIOD_FILE"
-          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+          if [ "$FORCE_RESTART" != "true" ] && [ -f "$DONE_MARKER" ]; then
+            echo "半月周期 $CRAWL_PERIOD 已完成，跳过所有爬取步骤"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Configure crawl window
         id: window
