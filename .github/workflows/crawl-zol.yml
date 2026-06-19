@@ -109,6 +109,7 @@ jobs:
             echo "skip=false" >> "$GITHUB_OUTPUT"
             echo "MAX_PAGES=0" >> "$GITHUB_ENV"
             echo "MAX_PHONES=${{ github.event.inputs.max_phones || '30' }}" >> "$GITHUB_ENV"
+            echo "DEBUG_LIMIT=${{ github.event.inputs.max_phones || '30' }}" >> "$GITHUB_ENV"
           else
             python custom_scripts/crawl_budget.py configure
             echo "MAX_PAGES=0" >> "$GITHUB_ENV"
@@ -158,6 +159,10 @@ jobs:
           if [ "$INCREMENTAL_MODE" = "true" ]; then
             INCREMENTAL_FLAG="--incremental"
           fi
+          DEBUG_LIMIT_FLAG=""
+          if [ "${DEBUG_LIMIT:-0}" -gt 0 ]; then
+            DEBUG_LIMIT_FLAG="--debug-limit $DEBUG_LIMIT"
+          fi
           if [ "${PROXY_ENABLED:-false}" = "true" ]; then
             echo "使用代理模式运行 ZOL 爬虫"
           else
@@ -165,7 +170,7 @@ jobs:
           fi
 
           set +e
-          python crawl_zol.py --step 1 --time-limit "$RUN_TIME" --max-pages "$MAX_PAGES" --max-phones "$MAX_PHONES" --auto $INCREMENTAL_FLAG
+          python crawl_zol.py --step 1 --time-limit "$RUN_TIME" --max-pages "$MAX_PAGES" --max-phones "$MAX_PHONES" --auto $INCREMENTAL_FLAG $DEBUG_LIMIT_FLAG
           EXIT_CODE=$?
           set -e
           echo "ZOL step1 exit code: $EXIT_CODE"
@@ -190,6 +195,17 @@ jobs:
 
           echo "complete=true" >> "$GITHUB_OUTPUT"
           echo "failed=false" >> "$GITHUB_OUTPUT"
+
+      - name: Upload crawl data (early, after step1)
+        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true'
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: zol-phone-data-early-${{ github.run_id }}
+          path: |
+            zol/json/
+            zol/progress.json
+          retention-days: 90
 
       - name: Parse and merge data
         if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true'

@@ -103,10 +103,11 @@ jobs:
         env:
           PROFILE_INPUT: ${{ github.event.inputs.run_profile || 'auto' }}
         run: |
-          if [ "${{ github.event.inputs.debug_mode }}" = "true" ]; then
+          if [ "$DEBUG_MODE" = "true" ]; then
             echo "调试模式：跳过时间窗口检查"
             echo "skip=false" >> "$GITHUB_OUTPUT"
             echo "MAX_PHONES=${{ github.event.inputs.max_phones || '30' }}" >> "$GITHUB_ENV"
+            echo "DEBUG_LIMIT=${{ github.event.inputs.max_phones || '30' }}" >> "$GITHUB_ENV"
           else
             python custom_scripts/crawl_budget.py configure
             echo "MAX_PHONES=${{ github.event.inputs.max_phones || '0' }}" >> "$GITHUB_ENV"
@@ -155,6 +156,10 @@ jobs:
           if [ "$INCREMENTAL_MODE" = "true" ]; then
             INCREMENTAL_FLAG="--incremental"
           fi
+          DEBUG_LIMIT_FLAG=""
+          if [ "${DEBUG_LIMIT:-0}" -gt 0 ]; then
+            DEBUG_LIMIT_FLAG="--debug-limit $DEBUG_LIMIT"
+          fi
           if [ "${PROXY_ENABLED:-false}" = "true" ]; then
             echo "使用代理模式运行 PConline 爬虫"
           else
@@ -162,7 +167,7 @@ jobs:
           fi
 
           set +e
-          python crawl_pconline.py --step 1 --time-limit "$RUN_TIME" --max-phones "$MAX_PHONES" --auto $INCREMENTAL_FLAG
+          python crawl_pconline.py --step 1 --time-limit "$RUN_TIME" --max-phones "$MAX_PHONES" --auto $INCREMENTAL_FLAG $DEBUG_LIMIT_FLAG
           EXIT_CODE=$?
           set -e
           echo "PConline step1 exit code: $EXIT_CODE"
@@ -187,6 +192,17 @@ jobs:
 
           echo "complete=true" >> "$GITHUB_OUTPUT"
           echo "failed=false" >> "$GITHUB_OUTPUT"
+
+      - name: Upload crawl data (early, after step1)
+        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true'
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: pconline-phone-data-early-${{ github.run_id }}
+          path: |
+            pconline/json/
+            pconline/progress.json
+          retention-days: 90
 
       - name: Parse and merge data
         if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true'

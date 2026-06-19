@@ -362,34 +362,155 @@ def extract_release_year(detail: Dict) -> Optional[int]:
                 year = int(year_match.group(1))
                 if 2000 <= year <= 2030:
                     return year
-    
+
     return None
+
+
+def _get_existing_phone_ids() -> set:
+    """获取本地已存手机的ID集合（基于json文件实际存在性）"""
+    existing = set()
+    if not os.path.exists(pconline_json_dir):
+        return existing
+    for filename in os.listdir(pconline_json_dir):
+        if filename.endswith('.json'):
+            phone_id = filename.replace('.json', '')
+            existing.add(phone_id)
+    return existing
+
+
+def _scan_all_models(session: requests.Session) -> List[Dict]:
+    """全量扫描所有品牌的所有型号（仅收集基础信息，不爬详情）"""
+    logger.info("=" * 70)
+    logger.info("增量扫描模式：全量扫描所有品牌型号...")
+    logger.info("=" * 70)
+
+    brands = crawl_brand_list(session)
+    logger.info(f"品牌列表 ({len(brands)}): {brands}")
+
+    all_phones = []
+    for brand in brands:
+        page = 1
+        while True:
+            phones = crawl_list_page(session, brand, page)
+            if not phones:
+                break
+            all_phones.extend(phones)
+            if len(phones) < 25:
+                break
+            page += 1
+            # 调试/限制模式下：可以提前终止扫描
+            if MAX_PHONES_PER_RUN > 0 and len(all_phones) >= MAX_PHONES_PER_RUN * 3:
+                logger.info(f"接近数量限制，提前终止型号扫描（已扫描 {len(all_phones)} 个型号）")
+                break
+    logger.info(f"全量扫描完成：共 {len(all_phones)} 个型号")
+    return all_phones
 
 
 def step1_crawl_list_and_detail():
     logger.info("=" * 70)
     logger.info("步骤1：爬取手机列表和详情信息")
     logger.info("=" * 70)
-    
+
     session = get_session()
     start_time = time.time()
-    phones_crawled = progress.get('total_phones', 0)
+    phones_crawled = 0
     skipped_count = 0
+
+    # 增量模式：先全量扫描所有型号，与本地已有对比，仅爬取新增
+    if INCREMENTAL_MODE:
+        all_phones = _scan_all_models(session)
+        existing_ids = _get_existing_phone_ids()
+        new_phones = [p for p in all_phones if p['id'] not in existing_ids]
+
+        logger.info(f"全量扫描完成：共 {len(all_phones)} 个型号，新增 {len(new_phones)} 个，已有 {len(all_phones) - len(new_phones)} 个")
+
+        if not new_phones:
+            logger.info("增量模式：未发现新增型号，无需爬取详情")
+            progress['total_phones'] = 0
+            save_progress()
+            return
+
+        # 仅对新增型号爬取详情
+        for phone in new_phones:
+            # 时间限制检查
+            if MAX_TIME_PER_STEP > 0:
+                elapsed = time.time() - start_time
+                if elapsed >= MAX_TIME_PER_STEP:
+                    logger.info(f"达到时间限制 ({MAX_TIME_PER_STEP}秒)，保存进度")
+                    progress['total_phones'] = phones_crawled
+                    save_progress()
+                    if AUTO_MODE:
+                        logger.info('未完成，等待下次继续')
+                        sys.exit(10)
+                    return
+
+            # 手机数量限制检查
+            if MAX_PHONES_PER_RUN > 0 and phones_crawled >= MAX_PHONES_PER_RUN:
+                logger.info(f"达到手机数量限制 ({MAX_PHONES_PER_RUN}个)，保存进度")
+                progress['total_phones'] = phones_crawled
+                save_progress()
+                if AUTO_MODE:
+                    logger.info('达到数量上限，等待下次继续')
+                    sys.exit(10)
+                return
+
+            phone_id = phone['id']
+            detail = crawl_detail_page(session, phone_id, phone.get('brand', ''))
+            if detail:
+                phone.update(detail)
+
+                release_year = extract_release_year(phone)
+                if not release_year:
+                    params = crawl_param_page(session, phone_id, phone.get('brand', ''))
+                    if params:
+                        phone.update(params)
+                        release_year = extract_release_year(phone)
+
+                if release_year and release_year >= MIN_YEAR:
+                    if '处理器' not in phone:
+                        params = crawl_param_page(session, phone_id, phone.get('brand', ''))
+                        if params:
+                            phone.update(params)
+
+                    phone_file = os.path.join(pconline_json_dir, f"{phone_id}.json")
+                    with open(phone_file, 'w', encoding='utf-8') as f:
+                        json.dump(phone, f, ensure_ascii=False, indent=2)
+
+                    phones_crawled += 1
+                    progress.setdefault('crawled_phones', []).append(phone_id)
+                    mark_processed(phone_id)
+                    # 实时持久化：每成功爬取一个立即保存进度
+                    save_progress()
+                    logger.info(f"✓ 保存: {phone['name']} ({release_year}年) - 共{phones_crawled}个")
+                elif release_year:
+                    mark_processed(phone_id, f"year:{release_year}")
+                    logger.info(f"跳过: {phone['name']} ({release_year}年) - 不在近五年范围内")
+                else:
+                    mark_processed(phone_id, "no_release_year")
+                    logger.info(f"跳过: {phone['name']} - 无法获取发布年份")
+            else:
+                logger.warning(f"✗ 详情页爬取失败: {phone['name']}")
+
+        progress['total_phones'] = phones_crawled
+        save_progress()
+        logger.info(f"增量模式完成：新增 {phones_crawled} 个手机")
+        return
+
+    # 非增量模式：原有逻辑（全量爬取，支持断点续传）
     logger.info(f"从进度恢复: total_phones={phones_crawled}, processed={len(progress.get('processed_phones',[]))}, crawled={len(progress.get('crawled_phones',[]))}, brand_idx={progress.get('current_brand_index')}")
-    
-    # 获取品牌列表
+
     brands = crawl_brand_list(session)
     logger.info(f"品牌列表 ({len(brands)}): {brands}")
-    
-    current_brand_idx = 0 if INCREMENTAL_MODE else progress.get('current_brand_index', 0)
-    current_page = 1 if INCREMENTAL_MODE else progress.get('current_page', 1)
-    
+
+    current_brand_idx = progress.get('current_brand_index', 0)
+    current_page = progress.get('current_page', 1)
+
     for bi in range(current_brand_idx, len(brands)):
         brand = brands[bi]
         page = current_page if bi == current_brand_idx else 1
         progress['current_brand_index'] = bi
         progress['current_page'] = page
-        
+
         while True:
             # 时间限制检查
             if MAX_TIME_PER_STEP > 0:
@@ -403,7 +524,7 @@ def step1_crawl_list_and_detail():
                         logger.info('未完成，等待下次继续')
                         sys.exit(10)
                     return
-            
+
             # 手机数量限制检查
             if MAX_PHONES_PER_RUN > 0 and phones_crawled >= MAX_PHONES_PER_RUN:
                 logger.info(f"达到手机数量限制 ({MAX_PHONES_PER_RUN}个)，保存进度")
@@ -414,21 +535,19 @@ def step1_crawl_list_and_detail():
                     logger.info('达到数量上限，等待下次继续')
                     sys.exit(10)
                 return
-            
+
             phones = crawl_list_page(session, brand, page)
-            
+
             if not phones:
-                # 该品牌没有更多页，跳到下一个品牌
                 progress['current_brand_index'] = bi + 1
                 progress['current_page'] = 1
                 progress['total_phones'] = phones_crawled
                 save_progress()
                 break
-            
+
             progress['current_page'] = page
-            
+
             for phone in phones:
-                # 在内层循环也检查时间和数量限制
                 if MAX_TIME_PER_STEP > 0:
                     elapsed = time.time() - start_time
                     if elapsed >= MAX_TIME_PER_STEP:
@@ -440,7 +559,7 @@ def step1_crawl_list_and_detail():
                             logger.info('未完成，等待下次继续')
                             sys.exit(10)
                         return
-                
+
                 if MAX_PHONES_PER_RUN > 0 and phones_crawled >= MAX_PHONES_PER_RUN:
                     logger.info(f"达到手机数量限制 ({MAX_PHONES_PER_RUN}个)，保存进度")
                     progress['total_phones'] = phones_crawled
@@ -450,38 +569,38 @@ def step1_crawl_list_and_detail():
                         logger.info('达到数量上限，等待下次继续')
                         sys.exit(10)
                     return
-                
+
                 phone_id = phone['id']
-                
+
                 if phone_id in progress.get('processed_phones', []) or phone_id in progress.get('crawled_phones', []):
-                    if INCREMENTAL_MODE:
-                        skipped_count += 1
                     continue
-                
+
                 detail = crawl_detail_page(session, phone_id, phone.get('brand', ''))
                 if detail:
                     phone.update(detail)
-                    
+
                     release_year = extract_release_year(phone)
                     if not release_year:
                         params = crawl_param_page(session, phone_id, phone.get('brand', ''))
                         if params:
                             phone.update(params)
                             release_year = extract_release_year(phone)
-                    
+
                     if release_year and release_year >= MIN_YEAR:
                         if '处理器' not in phone:
                             params = crawl_param_page(session, phone_id, phone.get('brand', ''))
                             if params:
                                 phone.update(params)
-                        
+
                         phone_file = os.path.join(pconline_json_dir, f"{phone_id}.json")
                         with open(phone_file, 'w', encoding='utf-8') as f:
                             json.dump(phone, f, ensure_ascii=False, indent=2)
-                        
+
                         phones_crawled += 1
                         progress['crawled_phones'].append(phone_id)
                         mark_processed(phone_id)
+                        # 实时持久化
+                        save_progress()
                         logger.info(f"✓ 保存: {phone['name']} ({release_year}年) - 共{phones_crawled}个")
                     elif release_year:
                         mark_processed(phone_id, f"year:{release_year}")
@@ -491,13 +610,12 @@ def step1_crawl_list_and_detail():
                         logger.info(f"跳过: {phone['name']} - 无法获取发布年份")
                 else:
                     logger.warning(f"✗ 详情页爬取失败: {phone['name']}")
-            
+
             progress['total_phones'] = phones_crawled
             progress['current_brand_index'] = bi
             progress['current_page'] = page + 1
             save_progress()
-            
-            # 如果本页结果小于25，说明是该品牌最后一页
+
             if len(phones) < 25:
                 progress['current_brand_index'] = bi + 1
                 progress['current_page'] = 1
@@ -505,14 +623,10 @@ def step1_crawl_list_and_detail():
                 save_progress()
                 break
             page += 1
-    
+
     progress['total_phones'] = phones_crawled
     save_progress()
-    
-    if INCREMENTAL_MODE:
-        logger.info(f"增量模式完成：新增 {phones_crawled} 个手机，扫描 {skipped_count + phones_crawled} 个条目（其中 {skipped_count} 个已处理）")
-    else:
-        logger.info(f"步骤1完成！共爬取 {phones_crawled} 个手机")
+    logger.info(f"步骤1完成！共爬取 {phones_crawled} 个手机")
 
 
 def find_latest(pattern):
