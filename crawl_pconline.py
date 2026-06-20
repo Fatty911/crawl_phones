@@ -543,15 +543,15 @@ def step1_crawl_list_and_detail():
                     mark_processed(phone_id)
                     # 实时持久化：每成功爬取一个立即保存进度
                     save_progress()
-                    logger.info(f"✓ 保存: {phone['name']} ({release_year}年) - 共{phones_crawled}个")
+                    logger.info(f"✓ 保存: {phone.get('name', phone.get('型号', '未知'))} ({release_year}年) - 共{phones_crawled}个")
                 elif release_year:
                     mark_processed(phone_id, f"year:{release_year}")
-                    logger.info(f"跳过: {phone['name']} ({release_year}年) - 不在近五年范围内")
+                    logger.info(f"跳过: {phone.get('name', phone.get('型号', '未知'))} ({release_year}年) - 不在近五年范围内")
                 else:
                     mark_processed(phone_id, "no_release_year")
-                    logger.info(f"跳过: {phone['name']} - 无法获取发布年份")
+                    logger.info(f"跳过: {phone.get('name', phone.get('型号', '未知'))} - 无法获取发布年份")
             else:
-                logger.warning(f"✗ 详情页爬取失败: {phone['name']}")
+                logger.warning(f"✗ 详情页爬取失败: {phone.get('name', phone.get('型号', '未知'))}")
 
         progress['total_phones'] = phones_crawled
         save_progress()
@@ -666,15 +666,15 @@ def step1_crawl_list_and_detail():
                         mark_processed(phone_id)
                         # 实时持久化
                         save_progress()
-                        logger.info(f"✓ 保存: {phone['name']} ({release_year}年) - 共{phones_crawled}个")
+                        logger.info(f"✓ 保存: {phone.get('name', phone.get('型号', '未知'))} ({release_year}年) - 共{phones_crawled}个")
                     elif release_year:
                         mark_processed(phone_id, f"year:{release_year}")
-                        logger.info(f"跳过: {phone['name']} ({release_year}年) - 不在近五年范围内")
+                        logger.info(f"跳过: {phone.get('name', phone.get('型号', '未知'))} ({release_year}年) - 不在近五年范围内")
                     else:
                         mark_processed(phone_id, "no_release_year")
-                        logger.info(f"跳过: {phone['name']} - 无法获取发布年份")
+                        logger.info(f"跳过: {phone.get('name', phone.get('型号', '未知'))} - 无法获取发布年份")
                 else:
-                    logger.warning(f"✗ 详情页爬取失败: {phone['name']}")
+                    logger.warning(f"✗ 详情页爬取失败: {phone.get('name', phone.get('型号', '未知'))}")
 
             progress['total_phones'] = phones_crawled
             progress['current_brand_index'] = bi
