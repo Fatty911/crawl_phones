@@ -65,7 +65,9 @@ def normalize_phone_fields(phone: Dict) -> Dict:
     """将手机数据的字段名标准化为统一格式"""
     normalized = {}
     for key, value in phone.items():
-        new_key = HEADER_MAP.get(key, key)
+        # 清理键名：去除冒号和空白
+        clean_key = key.rstrip('：:').strip()
+        new_key = HEADER_MAP.get(clean_key, clean_key)
         if new_key in normalized and not normalized[new_key] and value:
             normalized[new_key] = value
         elif new_key not in normalized:
