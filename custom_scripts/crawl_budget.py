@@ -87,6 +87,12 @@ def configure(args: argparse.Namespace) -> int:
 
 
 def clamp(args: argparse.Namespace) -> int:
+    # 调试模式：跳过时间窗口检查
+    debug_mode = os.environ.get("DEBUG_MODE", os.environ.get("debug_mode", "false"))
+    if str(debug_mode).lower() in ("true", "1", "yes"):
+        print(f"调试模式：跳过 {args.step_label} 时间预算检查")
+        return 0
+
     now = cn_now()
     run_time = int(os.environ.get("RUN_TIME", "0") or "0")
     profile = os.environ.get("RUN_PROFILE", "auto")
