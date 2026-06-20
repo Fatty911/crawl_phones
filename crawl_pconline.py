@@ -737,8 +737,11 @@ def step2_parse_and_merge():
             try:
                 with open(filepath, 'r', encoding='utf-8') as f:
                     phone_data = json.load(f)
+                    # 调试：打印原始字段名
+                    print(f"DEBUG: 文件 {filename} 原始字段: {list(phone_data.keys())[:20]}", flush=True)
                     # 标准化字段名
                     phone_data = normalize_phone_fields(phone_data)
+                    print(f"DEBUG: 文件 {filename} 标准化后字段: {list(phone_data.keys())}", flush=True)
                     all_phones.append(phone_data)
             except Exception as e:
                 logger.error(f"读取文件失败: {filepath} - {e}")
