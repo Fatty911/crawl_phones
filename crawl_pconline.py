@@ -18,6 +18,65 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from bs4 import BeautifulSoup
 
+# 字段标准化映射（与 merge_phones.py 保持一致）
+HEADER_MAP = {
+    '国内发布时间': '上市时间',
+    '发布时间': '上市时间',
+    '发布日期': '上市时间',
+    '上市日期': '上市时间',
+    '电商报价': '价格',
+    '售价': '价格',
+    '手机名称': '型号',
+    'name': '型号',
+    '产品名称': '型号',
+    'CPU型号': '处理器',
+    'CPU': '处理器',
+    '屏幕尺寸': '屏幕',
+    '主屏尺寸': '屏幕',
+    '分辨率': '屏幕分辨率',
+    '主屏分辨率': '屏幕分辨率',
+    '后置摄像头': '后置摄像头像素',
+    '后置摄像头像素': '后置摄像头像素',
+    '前置摄像头': '前置摄像头像素',
+    '前置摄像头像素': '前置摄像头像素',
+    '摄像头名称': '摄像头名称',
+    '摄像头总数': '摄像头总数',
+    '摄像头特色': '摄像头特色',
+    '变焦倍数': '变焦倍数',
+    '传感器尺寸': '传感器尺寸',
+    '镜头片数': '镜头片数',
+    '焦距': '焦距',
+    '其他摄像头参数': '其他摄像头参数',
+    '电池容量': '电池',
+    '电池容量(mAh)': '电池',
+    'RAM容量': '内存',
+    '运行内存': '内存',
+    'ROM容量': '存储',
+    '机身存储': '存储',
+    '机身尺寸': '机身尺寸',
+    '尺寸': '机身尺寸',
+    '长度': '机身长度',
+    '宽度': '机身宽度',
+    '厚度': '机身厚度',
+    '重量': '机身重量',
+}
+
+def normalize_phone_fields(phone: Dict) -> Dict:
+    """将手机数据的字段名标准化为统一格式"""
+    normalized = {}
+    for key, value in phone.items():
+        new_key = HEADER_MAP.get(key, key)
+        # 如果新键已存在，合并值（取非空的）
+        if new_key in normalized and not normalized[new_key] and value:
+            normalized[new_key] = value
+        elif new_key not in normalized:
+            normalized[new_key] = value
+        elif value and normalized[new_key]:
+            # 两个都有值，保留较长的
+            if len(str(value)) > len(str(normalized[new_key])):
+                normalized[new_key] = value
+    return normalized
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
@@ -472,6 +531,9 @@ def step1_crawl_list_and_detail():
                         if params:
                             phone.update(params)
 
+                    # 字段标准化：将原始字段名映射为统一标准名
+                    phone = normalize_phone_fields(phone)
+
                     phone_file = os.path.join(pconline_json_dir, f"{phone_id}.json")
                     with open(phone_file, 'w', encoding='utf-8') as f:
                         json.dump(phone, f, ensure_ascii=False, indent=2)
@@ -591,6 +653,9 @@ def step1_crawl_list_and_detail():
                             params = crawl_param_page(session, phone_id, phone.get('brand', ''))
                             if params:
                                 phone.update(params)
+
+                        # 字段标准化：将原始字段名映射为统一标准名
+                        phone = normalize_phone_fields(phone)
 
                         phone_file = os.path.join(pconline_json_dir, f"{phone_id}.json")
                         with open(phone_file, 'w', encoding='utf-8') as f:
