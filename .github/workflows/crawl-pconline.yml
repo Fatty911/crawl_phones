@@ -111,6 +111,7 @@ jobs:
           else
             python custom_scripts/crawl_budget.py configure
             echo "MAX_PHONES=${{ github.event.inputs.max_phones || '0' }}" >> "$GITHUB_ENV"
+            echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Set up Python
