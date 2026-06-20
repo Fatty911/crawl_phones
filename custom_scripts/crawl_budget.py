@@ -87,10 +87,13 @@ def configure(args: argparse.Namespace) -> int:
 
 
 def clamp(args: argparse.Namespace) -> int:
-    # 调试模式：跳过时间窗口检查
+    # 调试模式：跳过时间窗口检查，并显式设置跳过标志为false
     debug_mode = os.environ.get("DEBUG_MODE", os.environ.get("debug_mode", "false"))
     if str(debug_mode).lower() in ("true", "1", "yes"):
         print(f"调试模式：跳过 {args.step_label} 时间预算检查")
+        # 显式设置跳过标志为false，防止后续步骤被误跳过
+        append_line(args.github_env, f"{args.skip_env}=false")
+        print(f"已设置 {args.skip_env}=false")
         return 0
 
     now = cn_now()
