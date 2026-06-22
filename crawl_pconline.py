@@ -95,6 +95,48 @@ def normalize_phone_fields(phone: Dict) -> Dict:
                 normalized[new_key] = value
     return normalized
 
+# 手机品牌推导
+BRAND_PATTERNS = [
+    ('苹果', ['iphone', 'ipad', 'apple']),
+    ('华为', ['huawei', '华为']),
+    ('荣耀', ['honor', '荣耀']),
+    ('小米', ['xiaomi', '小米', 'poco']),
+    ('红米', ['redmi', '红米']),
+    ('OPPO', ['oppo']),
+    ('一加', ['oneplus', '一加']),
+    ('真我', ['realme', '真我']),
+    ('vivo', ['vivo']),
+    ('iQOO', ['iqoo']),
+    ('三星', ['samsung', '三星']),
+    ('魅族', ['meizu', '魅族']),
+    ('中兴', ['zte', '中兴']),
+    ('努比亚', ['nubia', '努比亚']),
+    ('联想', ['lenovo', '联想']),
+    ('摩托罗拉', ['moto', 'motorola', '摩托罗拉']),
+    ('索尼', ['sony', '索尼', 'xperia']),
+    ('谷歌', ['google', 'pixel']),
+    ('诺基亚', ['nokia', '诺基亚']),
+    ('Nothing', ['nothing']),
+    ('传音', ['tecno', 'itel', 'infinix']),
+]
+
+PCONLINE_BRAND_MAP = {
+    'apple': '苹果', 'bubugao': '步步高', 'oppo': 'OPPO', 'honor': '荣耀',
+    'miui': '小米', 'redmi': '红米', 'oneplus': '一加', 'realme': '真我',
+    'iqoo': 'iQOO', 'samsung': '三星', 'motorola': '摩托罗拉', 'nubia': '努比亚',
+}
+
+def derive_brand_from_name(name):
+    """从手机型号名称推导品牌"""
+    if not name:
+        return ''
+    name_lower = name.lower()
+    for brand_name, patterns in BRAND_PATTERNS:
+        for pat in patterns:
+            if pat in name_lower:
+                return brand_name
+    return ''
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
@@ -552,6 +594,14 @@ def step1_crawl_list_and_detail():
                     # 字段标准化：将原始字段名映射为统一标准名
                     phone = normalize_phone_fields(phone)
 
+                    # 从型号名推导品牌（优先使用URL brand的中文翻译）
+                    if not phone.get('品牌'):
+                        url_brand = phone.get('brand', '')
+                        if url_brand and url_brand in PCONLINE_BRAND_MAP:
+                            phone['品牌'] = PCONLINE_BRAND_MAP[url_brand]
+                        else:
+                            phone['品牌'] = derive_brand_from_name(phone.get('型号', phone.get('name', '')))
+
                     phone_file = os.path.join(pconline_json_dir, f"{phone_id}.json")
                     with open(phone_file, 'w', encoding='utf-8') as f:
                         json.dump(phone, f, ensure_ascii=False, indent=2)
@@ -674,6 +724,14 @@ def step1_crawl_list_and_detail():
 
                         # 字段标准化：将原始字段名映射为统一标准名
                         phone = normalize_phone_fields(phone)
+
+                        # 从型号名推导品牌（优先使用URL brand的中文翻译）
+                        if not phone.get('品牌'):
+                            url_brand = phone.get('brand', '')
+                            if url_brand and url_brand in PCONLINE_BRAND_MAP:
+                                phone['品牌'] = PCONLINE_BRAND_MAP[url_brand]
+                            else:
+                                phone['品牌'] = derive_brand_from_name(phone.get('型号', phone.get('name', '')))
 
                         phone_file = os.path.join(pconline_json_dir, f"{phone_id}.json")
                         with open(phone_file, 'w', encoding='utf-8') as f:

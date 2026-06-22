@@ -83,6 +83,42 @@ HEADER_MAP = {
     '机身重量': '机身重量',
 }
 
+# 手机品牌推导
+BRAND_PATTERNS = [
+    ('苹果', ['iphone', 'ipad', 'apple']),
+    ('华为', ['huawei', '华为']),
+    ('荣耀', ['honor', '荣耀']),
+    ('小米', ['xiaomi', '小米', 'poco']),
+    ('红米', ['redmi', '红米']),
+    ('OPPO', ['oppo']),
+    ('一加', ['oneplus', '一加']),
+    ('真我', ['realme', '真我']),
+    ('vivo', ['vivo']),
+    ('iQOO', ['iqoo']),
+    ('三星', ['samsung', '三星']),
+    ('魅族', ['meizu', '魅族']),
+    ('中兴', ['zte', '中兴']),
+    ('努比亚', ['nubia', '努比亚']),
+    ('联想', ['lenovo', '联想']),
+    ('摩托罗拉', ['moto', 'motorola', '摩托罗拉']),
+    ('索尼', ['sony', '索尼', 'xperia']),
+    ('谷歌', ['google', 'pixel']),
+    ('诺基亚', ['nokia', '诺基亚']),
+    ('Nothing', ['nothing']),
+    ('传音', ['tecno', 'itel', 'infinix']),
+]
+
+def derive_brand_from_name(name):
+    """从手机型号名称推导品牌"""
+    if not name:
+        return ''
+    name_lower = name.lower()
+    for brand_name, patterns in BRAND_PATTERNS:
+        for pat in patterns:
+            if pat in name_lower:
+                return brand_name
+    return ''
+
 
 def parse_numbers(value):
     if not value or value == '-':
@@ -122,7 +158,26 @@ def model_key(row):
     name = clean_value(raw_name)
     if is_missing(name):
         return ''
-    return re.sub(r'\s+', '', name).lower()
+    name = re.sub(r'\s+', '', name).lower()
+    # 去除存储容量后缀（括号形式）
+    name = re.sub(r'[（(]\d+gb(?:/\d+gb)?[）)]', '', name)
+    # 去除末尾裸存储容量后缀
+    name = re.sub(r'\d+gb$', '', name)
+    # 去除常见后缀
+    for suffix in ['5g', '4g', 'wifi']:
+        if name.endswith(suffix):
+            name = name[:-len(suffix)]
+    return name
+
+
+def fuzzy_model_key(row):
+    """更激进的模糊匹配键"""
+    key = model_key(row)
+    if not key:
+        return ''
+    key = re.sub(r'[（(].*?[）)]', '', key)
+    key = key.replace('.', '').replace('-', '')
+    return key
 
 
 def norm(header):
@@ -265,6 +320,13 @@ def norm_rows(rows, source):
         if 'id' in row and '手机ID' not in normalized:
             normalized['手机ID'] = row['id']
 
+        # 品牌回填：如果爬虫未提供品牌，从型号名推导
+        if not normalized.get('品牌') or normalized['品牌'] == '-':
+            model_name = normalized.get('型号', row.get('name', ''))
+            derived = derive_brand_from_name(model_name)
+            if derived:
+                normalized['品牌'] = derived
+
         for key, val in row.items():
             if key in FIXED or key in ['id', 'name', 'url', 'crawl_time', 'param_url', 'phone_id']:
                 continue
@@ -283,11 +345,17 @@ def norm_rows(rows, source):
 
 
 def merge_verified_rows(zol_rows, pconline_rows, all_fields):
-    pconline_index = {
-        model_key(row): row
-        for row in pconline_rows
-        if model_key(row)
-    }
+    # 第一级索引: 精确匹配
+    pconline_exact = {}
+    # 第二级索引: 模糊匹配
+    pconline_fuzzy = {}
+    for row in pconline_rows:
+        exact = model_key(row)
+        fuzzy = fuzzy_model_key(row)
+        if exact:
+            pconline_exact[exact] = row
+        if fuzzy and fuzzy != exact:
+            pconline_fuzzy[fuzzy] = row
     used_pconline = set()
     merged = []
 
@@ -318,9 +386,12 @@ def merge_verified_rows(zol_rows, pconline_rows, all_fields):
 
     for zol_row in zol_rows:
         key = model_key(zol_row)
-        pconline_row = pconline_index.get(key)
+        pconline_row = pconline_exact.get(key)
+        if not pconline_row:
+            fuzzy = fuzzy_model_key(zol_row)
+            pconline_row = pconline_fuzzy.get(fuzzy)
         if pconline_row:
-            used_pconline.add(key)
+            used_pconline.add(model_key(pconline_row))
             merged.append(combine_rows(zol_row, pconline_row))
             continue
         row = dict(zol_row)
