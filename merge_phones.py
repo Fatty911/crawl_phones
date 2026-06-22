@@ -300,6 +300,30 @@ def find_latest(pattern):
     return max(data_files, key=os.path.getmtime)
 
 
+def load_all(pattern):
+    """加载所有匹配文件并合并为去重列表（按手机ID去重）"""
+    files = glob.glob(os.path.join(DIR, pattern))
+    if not files:
+        files = glob.glob(os.path.join(DIR, '**', pattern), recursive=True)
+    data_files = [f for f in files if 'progress' not in f and 'manifest' not in f]
+    if not data_files:
+        data_files = files
+
+    all_rows = []
+    seen_ids = set()
+    for path in sorted(data_files, key=os.path.getmtime):
+        rows = load(path)
+        for row in rows:
+            phone_id = row.get('手机ID') or row.get('id') or row.get('型号', '') or row.get('name', '')
+            key = str(phone_id).strip().lower().replace(' ', '')
+            if key and key in seen_ids:
+                continue
+            if key:
+                seen_ids.add(key)
+            all_rows.append(row)
+    return all_rows
+
+
 def load(path):
     if not path or not os.path.exists(path):
         return []
@@ -465,13 +489,13 @@ def write_json(path, rows):
 def main():
     today = date.today().strftime("%Y%m%d")
 
-    zol_file = find_latest("zol_phones_*.json")
-    pconline_file = find_latest("pconline_phones_*.json")
-    print(f"中关村在线数据: {zol_file}")
-    print(f"太平洋电脑网数据: {pconline_file}")
+    zol_files = sorted(glob.glob(os.path.join(DIR, "zol_phones_*.json")))
+    pconline_files = sorted(glob.glob(os.path.join(DIR, "pconline_phones_*.json")))
+    print(f"中关村在线数据文件 ({len(zol_files)}): {[os.path.basename(f) for f in zol_files]}")
+    print(f"太平洋电脑网数据文件 ({len(pconline_files)}): {[os.path.basename(f) for f in pconline_files]}")
 
-    zol_rows = norm_rows(load(zol_file), '中关村在线')
-    pconline_rows = norm_rows(load(pconline_file), '太平洋电脑网')
+    zol_rows = norm_rows(load_all("zol_phones_*.json"), '中关村在线')
+    pconline_rows = norm_rows(load_all("pconline_phones_*.json"), '太平洋电脑网')
 
     if not zol_rows and not pconline_rows:
         print("错误: 没有找到任何数据文件")
