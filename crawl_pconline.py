@@ -227,6 +227,23 @@ FALLBACK_BRANDS = [
     'oneplus', 'realme', 'iqoo', 'samsung', 'motorola', 'nubia'
 ]
 
+# 手机品牌销量热度排序：热门品牌优先爬取
+# 来源：2025-2026年中国手机市场出货量排行（IDC/Canalys）
+PHONE_BRAND_HEAT_ORDER = [
+    'apple', 'oppo', 'honor', 'vivo', 'miui', 'redmi',
+    'huawei', 'samsung', 'iqoo', 'realme', 'oneplus', 'bubugao',
+    'motorola', 'nubia', 'meizu', 'zte', 'lenovo',
+    'sony', 'google', 'nokia', 'nothing', 'tecno',
+]
+
+
+def sort_brands_by_heat(brands: List[str]) -> List[str]:
+    """按手机品牌销量热度排序，热门品牌优先爬取"""
+    heat_map = {b.strip().lower(): idx for idx, b in enumerate(PHONE_BRAND_HEAT_ORDER)}
+    sorted_brands = sorted(brands, key=lambda b: heat_map.get(b.strip().lower(), 999))
+    logger.info(f"品牌按热度重排: {sorted_brands[:10]}...")
+    return sorted_brands
+
 
 def save_progress():
     with open(progress_file, 'w', encoding='utf-8') as f:
@@ -504,6 +521,7 @@ def _scan_all_models(session: requests.Session) -> List[Dict]:
     logger.info("=" * 70)
 
     brands = crawl_brand_list(session)
+    brands = sort_brands_by_heat(brands)
     logger.info(f"品牌列表 ({len(brands)}): {brands}")
 
     all_phones = []
@@ -630,6 +648,7 @@ def step1_crawl_list_and_detail():
     logger.info(f"从进度恢复: total_phones={phones_crawled}, processed={len(progress.get('processed_phones',[]))}, crawled={len(progress.get('crawled_phones',[]))}, brand_idx={progress.get('current_brand_index')}")
 
     brands = crawl_brand_list(session)
+    brands = sort_brands_by_heat(brands)
     logger.info(f"品牌列表 ({len(brands)}): {brands}")
 
     current_brand_idx = progress.get('current_brand_index', 0)
