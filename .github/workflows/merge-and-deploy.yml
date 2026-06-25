@@ -1,7 +1,5 @@
 name: 合并分析并发布
 on:
-  schedule:
-    - cron: '30 12 * * *'
   workflow_dispatch:
     inputs:
       force_merge:
@@ -65,6 +63,7 @@ jobs:
       crawl_date: ${{ steps.date.outputs.date }}
       ready: ${{ steps.validate.outputs.ready }}
       is_half_month_complete: ${{ needs.check-half-month-complete.outputs.is_complete }}
+      crawl_time: ${{ steps.date.outputs.time }}
     steps:
       - name: 检出代码
         uses: actions/checkout@main
@@ -259,7 +258,12 @@ jobs:
       - name: 设置日期变量
         id: date
         if: steps.validate.outputs.ready == 'true'
-        run: echo "date=$(date +%Y%m%d)" >> $GITHUB_OUTPUT
+        run: |
+          CN_TIME=$(TZ=Asia/Shanghai date +%Y%m%d-%H%M)
+          CN_DATE=$(echo $CN_TIME | cut -d- -f1)
+          CN_HHMM=$(echo $CN_TIME | cut -d- -f2)
+          echo "date=${CN_DATE}" >> $GITHUB_OUTPUT
+          echo "time=${CN_HHMM}" >> $GITHUB_OUTPUT
 
       - name: 检查合并结果
         if: steps.validate.outputs.ready == 'true'
@@ -282,7 +286,7 @@ jobs:
         if: steps.validate.outputs.ready == 'true'
         uses: actions/upload-artifact@main
         with:
-          name: phone-data-${{ steps.date.outputs.date }}
+          name: phone-data-${{ steps.date.outputs.date }}-${{ steps.date.outputs.time }}
           path: |
             merged_phones_${{ steps.date.outputs.date }}.csv
             merged_phones_${{ steps.date.outputs.date }}.json
@@ -309,7 +313,7 @@ jobs:
       - name: 下载合并产物
         uses: actions/download-artifact@main
         with:
-          name: phone-data-${{ needs.merge-data.outputs.crawl_date }}
+          name: phone-data-${{ needs.merge-data.outputs.crawl_date }}-${{ needs.merge-data.outputs.crawl_time }}
           path: .
 
       - name: AI搜索BL锁和Root信息
@@ -346,7 +350,7 @@ jobs:
       - name: 下载合并产物
         uses: actions/download-artifact@main
         with:
-          name: phone-data-${{ needs.merge-data.outputs.crawl_date }}
+          name: phone-data-${{ needs.merge-data.outputs.crawl_date }}-${{ needs.merge-data.outputs.crawl_time }}
           path: release-files
 
       - name: 尝试下载搜索结果
@@ -366,8 +370,8 @@ jobs:
       - name: 创建发布
         uses: softprops/action-gh-release@master
         with:
-          tag_name: v${{ needs.merge-data.outputs.crawl_date }}
-          name: 手机数据 ${{ needs.merge-data.outputs.crawl_date }}
+          tag_name: v${{ needs.merge-data.outputs.crawl_date }}-${{ needs.merge-data.outputs.crawl_time }}
+          name: 手机数据 ${{ needs.merge-data.outputs.crawl_date }}-${{ needs.merge-data.outputs.crawl_time }}
           files: |
             release-files/merged_phones_${{ needs.merge-data.outputs.crawl_date }}.csv
             release-files/merged_phones_${{ needs.merge-data.outputs.crawl_date }}.json
@@ -398,7 +402,7 @@ jobs:
       - name: 下载合并产物
         uses: actions/download-artifact@main
         with:
-          name: phone-data-${{ needs.merge-data.outputs.crawl_date }}
+          name: phone-data-${{ needs.merge-data.outputs.crawl_date }}-${{ needs.merge-data.outputs.crawl_time }}
           path: release-files
 
       - name: 尝试下载搜索结果
