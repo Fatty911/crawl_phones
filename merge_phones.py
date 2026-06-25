@@ -487,7 +487,7 @@ def write_json(path, rows):
 
 
 def main():
-    today = date.today().strftime("%Y%m%d")
+    today = os.environ.get("MERGE_DATE") or date.today().strftime("%Y%m%d")
 
     zol_files = sorted(glob.glob(os.path.join(DIR, "zol_phones_*.json")))
     pconline_files = sorted(glob.glob(os.path.join(DIR, "pconline_phones_*.json")))
