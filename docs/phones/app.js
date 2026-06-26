@@ -18,9 +18,7 @@
     "摄像头参数",
     "超广角缩放倍数",
     "是否可解BL锁",
-    "是否可root",
-    "root方案",
-    "风险等级",
+    "root或越狱",
   ];
 
   var SAMPLE_ROWS = [
@@ -42,9 +40,7 @@
       "摄像头参数": "后置: 5000万像素；镜头: 广角镜头、超广角镜头、长焦镜头；变焦: 5倍光学变焦",
       "超广角缩放倍数": "0.6x",
       "是否可解BL锁": "是",
-      "是否可root": "是",
-      "root方案": "Magisk",
-      "风险等级": "低",
+      "root或越狱": "可永久root (Magisk)",
     },
   ];
 
@@ -289,7 +285,7 @@
       rows = rows.filter(function (row) { return row["品牌"] === state.brand; });
     }
     if (state.rootStatus) {
-      rows = rows.filter(function (row) { return row["是否可root"] === state.rootStatus; });
+      rows = rows.filter(function (row) { return (row["root或越狱"] || "").indexOf(state.rootStatus) !== -1; });
     }
     if (state.blStatus) {
       rows = rows.filter(function (row) { return row["是否可解BL锁"] === state.blStatus; });
@@ -478,7 +474,7 @@
       addChip("品牌: " + state.brand, "brand");
     }
     if (state.rootStatus) {
-      addChip("Root: " + state.rootStatus, "root");
+      addChip("root或越狱: " + state.rootStatus, "root");
     }
     if (state.blStatus) {
       addChip("BL锁: " + state.blStatus, "bl");

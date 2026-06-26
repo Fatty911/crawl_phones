@@ -151,6 +151,34 @@ def is_missing(value):
     return str(value).strip() in ('', '-')
 
 
+def semantic_value_equal(a, b):
+    """判断两个属性值语义是否相同（文本不完全一致但意思一样也算一致）。
+
+    处理：空白符差异、常见修饰词（支持/内置/配备/搭载/采用/具备）、单位间距。
+    例：'支持5G' == '5G', '5000 mAh' == '5000mAh', '6.7英寸' == '6.7 英寸'
+    """
+    if a == b:
+        return True
+    if a is None or b is None:
+        return False
+    a_clean = re.sub(r'\s+', '', str(a))
+    b_clean = re.sub(r'\s+', '', str(b))
+    if a_clean == b_clean:
+        return True
+    modifiers = ['支持', '内置', '配备', '搭载', '采用', '具备', '拥有']
+    for m in modifiers:
+        a_stripped = re.sub(r'^' + m, '', a_clean)
+        b_stripped = re.sub(r'^' + m, '', b_clean)
+        if a_stripped == b_clean or a_clean == b_stripped or a_stripped == b_stripped:
+            return True
+    # 去掉常见的 HTML 括号链接后缀 (如 "5G>")
+    a_nolink = re.sub(r'>.*$', '', a_clean)
+    b_nolink = re.sub(r'>.*$', '', b_clean)
+    if a_nolink == b_clean or a_clean == b_nolink or a_nolink == b_nolink:
+        return True
+    return False
+
+
 def model_key(row):
     raw_name = row.get('型号') or row.get('name') or ''
     if is_missing(raw_name):
@@ -397,8 +425,8 @@ def merge_verified_rows(zol_rows, pconline_rows, all_fields):
                 combined[field] = pc_val
             elif is_missing(pc_val):
                 combined[field] = zol_val
-            elif zol_val == pc_val:
-                combined[field] = zol_val
+            elif semantic_value_equal(zol_val, pc_val):
+                combined[field] = zol_val  # 优先保留简洁版（通常ZOL更规范）
             else:
                 combined[field] = f"中关村在线: {zol_val} | 太平洋电脑网: {pc_val}"
                 differences.append(f"{field}: 中关村在线={zol_val}; 太平洋电脑网={pc_val}")

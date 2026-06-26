@@ -267,6 +267,22 @@ jobs:
             exit 0
           fi
 
+      - name: AI root/越狱验证
+        if: steps.validate.outputs.ready == 'true'
+        env:
+          NVIDIA_NIM_API_KEY: ${{ secrets.NVIDIA_NIM_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          MERGE_DATE: ${{ steps.date.outputs.date }}
+        run: |
+          MERGED="merged_phones_${MERGE_DATE}.json"
+          if [ -s "$MERGED" ]; then
+            echo "开始 AI root/越狱验证..."
+            python ai_verify_root_status.py "$MERGED"
+            echo "root/越狱验证完成"
+          else
+            echo "跳过 root/越狱验证（无合并文件）"
+          fi
+
       - name: 检查合并结果
         if: steps.validate.outputs.ready == 'true'
         run: |
