@@ -154,7 +154,7 @@ def is_missing(value):
 def semantic_value_equal(a, b):
     """判断两个属性值语义是否相同（文本不完全一致但意思一样也算一致）。
 
-    处理：空白符差异、常见修饰词（支持/内置/配备/搭载/采用/具备）、单位间距。
+    处理：空白符差异、常见修饰词（支持/内置/配备/搭载/采用/具备）、单位间距、HTML链接后缀。
     例：'支持5G' == '5G', '5000 mAh' == '5000mAh', '6.7英寸' == '6.7 英寸'
     """
     if a == b:
@@ -165,17 +165,18 @@ def semantic_value_equal(a, b):
     b_clean = re.sub(r'\s+', '', str(b))
     if a_clean == b_clean:
         return True
+    # 去掉 ZOL 常见的 HTML 括号链接后缀 (如 "5G>" → "5G")
+    a_clean = re.sub(r'>.*$', '', a_clean)
+    b_clean = re.sub(r'>.*$', '', b_clean)
+    if a_clean == b_clean:
+        return True
+    # 去掉常见修饰前缀
     modifiers = ['支持', '内置', '配备', '搭载', '采用', '具备', '拥有']
     for m in modifiers:
         a_stripped = re.sub(r'^' + m, '', a_clean)
         b_stripped = re.sub(r'^' + m, '', b_clean)
         if a_stripped == b_clean or a_clean == b_stripped or a_stripped == b_stripped:
             return True
-    # 去掉常见的 HTML 括号链接后缀 (如 "5G>")
-    a_nolink = re.sub(r'>.*$', '', a_clean)
-    b_nolink = re.sub(r'>.*$', '', b_clean)
-    if a_nolink == b_clean or a_clean == b_nolink or a_nolink == b_nolink:
-        return True
     return False
 
 
