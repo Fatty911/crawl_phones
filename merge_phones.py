@@ -83,7 +83,67 @@ HEADER_MAP = {
     '机身重量': '机身重量',
 }
 
-# 手机品牌推导
+# 手机品牌别名映射（归一化到标准品牌名）
+BRAND_ALIASES = {
+    # vivo 系列
+    '步步高': 'vivo',
+    'vivo': 'vivo',
+    # 红米/小米系列
+    '红米': '红米',
+    'redmi': '红米',
+    '小米': '小米',
+    'xiaomi': '小米',
+    'poco': '小米',
+    # OPPO 系
+    'oppo': 'OPPO',
+    'OPPO': 'OPPO',
+    '一加': '一加',
+    'oneplus': '一加',
+    '真我': '真我',
+    'realme': '真我',
+    'iqoo': 'iQOO',
+    'iQOO': 'iQOO',
+    # 华为/荣耀
+    '华为': '华为',
+    'huawei': '华为',
+    '荣耀': '荣耀',
+    'honor': '荣耀',
+    # 三星
+    '三星': '三星',
+    'samsung': '三星',
+    # 苹果
+    '苹果': '苹果',
+    'apple': '苹果',
+    'iphone': '苹果',
+    'ipad': '苹果',
+    # 其他
+    '魅族': '魅族',
+    'meizu': '魅族',
+    '中兴': '中兴',
+    'zte': '中兴',
+    '努比亚': '努比亚',
+    'nubia': '努比亚',
+    '联想': '联想',
+    'lenovo': '联想',
+    '摩托罗拉': '摩托罗拉',
+    'moto': '摩托罗拉',
+    'motorola': '摩托罗拉',
+    '索尼': '索尼',
+    'sony': '索尼',
+    'xperia': '索尼',
+    '谷歌': '谷歌',
+    'google': '谷歌',
+    'pixel': '谷歌',
+    '诺基亚': '诺基亚',
+    'nokia': '诺基亚',
+    'nothing': 'Nothing',
+    '传音': '传音',
+    'tecno': '传音',
+    'itel': '传音',
+    'infinix': '传音',
+}
+
+# 从型号名推导品牌的模式（按优先级排序，越具体越靠前）
 BRAND_PATTERNS = [
     ('苹果', ['iphone', 'ipad', 'apple']),
     ('华为', ['huawei', '华为']),
@@ -108,6 +168,21 @@ BRAND_PATTERNS = [
     ('传音', ['tecno', 'itel', 'infinix']),
 ]
 
+def normalize_brand(brand: str) -> str:
+    """将品牌名归一化为标准名称"""
+    if not brand:
+        return ''
+    # 先尝试直接映射
+    brand_stripped = brand.strip()
+    if brand_stripped in BRAND_ALIASES:
+        return BRAND_ALIASES[brand_stripped]
+    # 再尝试小写匹配
+    brand_lower = brand_stripped.lower()
+    if brand_lower in BRAND_ALIASES:
+        return BRAND_ALIASES[brand_lower]
+    # 最后用模式匹配兜底
+    return derive_brand_from_name(brand_stripped)
+
 def derive_brand_from_name(name):
     """从手机型号名称推导品牌"""
     if not name:
@@ -119,12 +194,10 @@ def derive_brand_from_name(name):
                 return brand_name
     return ''
 
-
 def parse_numbers(value):
     if not value or value == '-':
         return []
     return [float(n) for n in re.findall(r'\d+(?:\.\d+)?', str(value))]
-
 
 def has_positive_value(value):
     if value is None:
@@ -135,7 +208,6 @@ def has_positive_value(value):
     negative_values = {'无', '不支持', '否', '没有', '未配备', '不提供', '0', '0.0'}
     return text not in negative_values
 
-
 def clean_value(value):
     if value is None:
         return value
@@ -144,32 +216,117 @@ def clean_value(value):
     text = re.sub(r'\s+', ' ', text).strip()
     return text if text else '-'
 
-
 def is_missing(value):
     if value is None:
         return True
     return str(value).strip() in ('', '-')
 
 
+def extract_core_keywords(text: str) -> set:
+    """提取核心关键词：型号、频率、容量、尺寸、版本号等"""
+    if not text:
+        return set()
+    text = str(text)
+    keywords = set()
+    
+    # 提取型号/版本号（字母数字组合，如 SM8650, 天玑9400, 骁龙8Gen3, IMX882 等）
+    model_patterns = [
+        r'[A-Z]{2,}\d+[A-Z]*',  # SM8650, IMX882, LPDDR5X 等
+        r'[A-Za-z]+[- ]?\d+[A-Za-z]*',  # 骁龙8Gen3, 天玑9400+, IMX882 等
+        r'\d+\.?\d*[GM]Hz',  # 3.0GHz, 2.8GHz 等
+        r'\d+[GM]B',  # 256GB, 12GB, 5000mAh 等
+        r'\d+\.?\d*\s*(?:英寸|寸|mm|ppi|nits|Hz)',  # 6.7英寸, 120Hz, 4500nits 等
+        r'\d+\.?\d*[x×]\d+',  # 2800x1260, 2750×1260 等分辨率
+        r'[A-Z]{2,}\d+',  # UFS4.1, LPDDR5X 等
+    ]
+    for pat in model_patterns:
+        for m in re.finditer(pat, text, re.IGNORECASE):
+            keywords.add(m.group().upper().replace(' ', '').replace('×', 'X'))
+    
+    # 提取中文处理器型号（关键新增）
+    cn_processor_patterns = [
+        r'(骁龙|天玑|麒麟|Exynos|Tensor|A系列)\s*\d+\w*',
+        r'(联发科|高通|三星|苹果)\s*[\w\s\+\-]*\d+\w*',
+        r'(天玑|骁龙|麒麟)\s*\d+\s*[\w\+\-]*',
+    ]
+    for pat in cn_processor_patterns:
+        for m in re.finditer(pat, text):
+            keywords.add(m.group().replace(' ', ''))
+    
+    # 提取关键中文词汇（处理器系列、屏幕材质、系统版本等）
+    chinese_keywords = [
+        '骁龙', '天玑', '麒麟', 'Exynos', 'Tensor', 'A系列',
+        'AMOLED', 'OLED', 'LCD', 'LTPO', 'E5', 'E6', 'E7',
+        'OriginOS', 'HyperOS', 'MIUI', 'ColorOS', 'MagicOS', 'OneUI',
+        'UFS', 'LPDDR', 'DDR',
+        'IMX', 'HP', 'LYT', 'JN', 'OV', 'S5K',
+        '潜望', '超广角', '长焦', '微距', '主摄', '前置',
+        '快充', '无线充', '反向充',
+        'IP68', 'IP69', '防水', '防尘',
+        '超声波', '光学', '短焦', '指纹',
+        '5G', 'WiFi', '蓝牙', 'NFC', '红外',
+        '双卡', '单卡', 'eSIM',
+    ]
+    for kw in chinese_keywords:
+        if kw in text:
+            keywords.add(kw)
+    
+    return keywords
+
+
+def keyword_overlap_score(a: str, b: str) -> float:
+    """计算两个文本的核心关键词重叠度（0-1）"""
+    ka = extract_core_keywords(a)
+    kb = extract_core_keywords(b)
+    if not ka and not kb:
+        return 1.0
+    if not ka or not kb:
+        return 0.0
+    intersection = ka & kb
+    union = ka | kb
+    return len(intersection) / len(union)
+
+
+def length_ratio(a: str, b: str) -> float:
+    """计算长度比（较短/较长），用于判断是否为详细程度差异"""
+    la = len(str(a).strip())
+    lb = len(str(b).strip())
+    if la == 0 and lb == 0:
+        return 1.0
+    if la == 0 or lb == 0:
+        return 0.0
+    return min(la, lb) / max(la, lb)
+
+
 def semantic_value_equal(a, b):
     """判断两个属性值语义是否相同（文本不完全一致但意思一样也算一致）。
-
-    处理：空白符差异、常见修饰词（支持/内置/配备/搭载/采用/具备）、单位间距、HTML链接后缀。
-    例：'支持5G' == '5G', '5000 mAh' == '5000mAh', '6.7英寸' == '6.7 英寸'
+    
+    核心逻辑：
+    1. 完全相等 -> True
+    2. 去除空白/修饰词/HTML后缀后相等 -> True
+    3. 核心关键词重叠度 ≥ 0.7 且 长度比 ≥ 0.3 -> True（视为描述详略差异）
+    4. 否则 -> False（视为真实差异）
     """
     if a == b:
         return True
     if a is None or b is None:
         return False
-    a_clean = re.sub(r'\s+', '', str(a))
-    b_clean = re.sub(r'\s+', '', str(b))
+    
+    a_str = str(a)
+    b_str = str(b)
+    
+    # 基础清理
+    a_clean = re.sub(r'\s+', '', a_str)
+    b_clean = re.sub(r'\s+', '', b_str)
     if a_clean == b_clean:
         return True
+    
     # 去掉 ZOL 常见的 HTML 括号链接后缀 (如 "5G>" → "5G")
     a_clean = re.sub(r'>.*$', '', a_clean)
     b_clean = re.sub(r'>.*$', '', b_clean)
     if a_clean == b_clean:
         return True
+    
     # 去掉常见修饰前缀
     modifiers = ['支持', '内置', '配备', '搭载', '采用', '具备', '拥有']
     for m in modifiers:
@@ -177,6 +334,136 @@ def semantic_value_equal(a, b):
         b_stripped = re.sub(r'^' + m, '', b_clean)
         if a_stripped == b_clean or a_clean == b_stripped or a_stripped == b_stripped:
             return True
+    
+    # 关键新增：基于核心关键词重叠度 + 长度比 判断是否为"描述详略差异"
+    # 核心关键词重叠度高（≥0.7）且长度比不太悬殊（≥0.3）-> 视为语义一致
+    overlap = keyword_overlap_score(a_str, b_str)
+    ratio = length_ratio(a_str, b_str)
+    
+    if overlap >= 0.7 and ratio >= 0.3:
+        return True
+    
+    # 特殊处理：存储字段（ZOL 单一配置 vs PConline 多配置列表）
+    # 如 "256GB" vs "256GB,512GB" -> 取交集非空即一致
+    storage_a = set(re.findall(r'\d+GB', a_str, re.IGNORECASE))
+    storage_b = set(re.findall(r'\d+GB', b_str, re.IGNORECASE))
+    if storage_a and storage_b and storage_a & storage_b:
+        return True
+    
+    # 特殊处理：内存字段
+    mem_a = set(re.findall(r'\d+GB', a_str, re.IGNORECASE))
+    mem_b = set(re.findall(r'\d+GB', b_str, re.IGNORECASE))
+    if mem_a and mem_b and mem_a & mem_b:
+        return True
+    
+    # 特殊处理：操作系统（提取系统名+版本号比较）
+    os_patterns = r'(OriginOS|Android|ColorOS|MagicOS|MIUI|HyperOS|OneUI|iOS|HarmonyOS|Flyme)\s*(\d+(?:\.\d+)?)?'
+    os_a = re.search(os_patterns, a_str)
+    os_b = re.search(os_patterns, b_str)
+    if os_a and os_b:
+        base_a = os_a.group(1)
+        base_b = os_b.group(1)
+        ver_a = os_a.group(2) or ''
+        ver_b = os_b.group(2) or ''
+        if base_a == base_b and (not ver_a or not ver_b or ver_a == ver_b):
+            return True
+        # 特殊：一个只有系统名，另一个有系统名+Android版本，如 "MagicOS 10" vs "Android 16,MagicOS 10"
+        if base_a == base_b or base_a in b_str or base_b in a_str:
+            return True
+    
+    # 特殊处理：处理器 - 提取核心型号比较
+    # 如 "联发科 天玑 8550 SUPER" vs "联发科(MTK)•...|1超大核+3大核+4中核（最高频率3.4GHz）"
+    proc_patterns = [
+        r'(骁龙\s*8\s*Elite|骁龙\s*8\s*Gen\d+|天玑\s*\d+\w*|麒麟\s*\d+\w*|骁龙|天玑|麒麟|Exynos|Tensor|A系列|Apple\s*A\d+)',
+        r'(联发科|高通|三星|苹果)\s*[\w\s\+\-]*\d+\w*',
+    ]
+    for pat in proc_patterns:
+        proc_a = re.findall(pat, a_str, re.IGNORECASE)
+        proc_b = re.findall(pat, b_str, re.IGNORECASE)
+        if proc_a and proc_b:
+            # 简化：取第一个匹配
+            first_a = proc_a[0] if isinstance(proc_a[0], str) else ''.join(proc_a[0]).replace(' ', '')
+            first_b = proc_b[0] if isinstance(proc_b[0], str) else ''.join(proc_b[0]).replace(' ', '')
+            # 检查核心型号是否包含（处理 Elite/Pro/Ultra 等后缀变体）
+            core_a = re.sub(r'\s*(Elite|Pro|Ultra|Plus|Super|MAX)\s*$', '', first_a, flags=re.IGNORECASE)
+            core_b = re.sub(r'\s*(Elite|Pro|Ultra|Plus|Super|MAX)\s*$', '', first_b, flags=re.IGNORECASE)
+            if core_a in core_b or core_b in core_a or core_a == core_b:
+                return True
+    
+    # 特殊处理：价格（数值相等即一致，忽略小数点格式）
+    price_a = re.search(r'[\d,]+\.?\d*', a_str.replace('￥', '').replace('¥', '').replace(',', ''))
+    price_b = re.search(r'[\d,]+\.?\d*', b_str.replace('￥', '').replace('¥', '').replace(',', ''))
+    if price_a and price_b:
+        try:
+            if abs(float(price_a.group()) - float(price_b.group())) < 0.01:
+                return True
+        except:
+            pass
+    
+    # 特殊处理：上市时间（年月日一致即一致）
+    date_a = re.search(r'(\d{4})[年\-,.\s]*(\d{1,2})[月\-,.\s]*(\d{1,2})?', a_str)
+    date_b = re.search(r'(\d{4})[年\-,.\s]*(\d{1,2})[月\-,.\s]*(\d{1,2})?', b_str)
+    if date_a and date_b:
+        if date_a.group(1) == date_b.group(1) and date_a.group(2) == date_b.group(2):
+            return True
+    
+    # 特殊处理：屏幕字段 - 核心参数一致即可
+    screen_keywords_a = set(re.findall(r'(AMOLED|OLED|LCD|LTPO|E[567]|120Hz|144Hz|60Hz|LTPO|HDR|P3|杜比|nits|英寸|分辨率|\d+x\d+)', a_str, re.IGNORECASE))
+    screen_keywords_b = set(re.findall(r'(AMOLED|OLED|LCD|LTPO|E[567]|120Hz|144Hz|60Hz|LTPO|HDR|P3|杜比|nits|英寸|分辨率|\d+x\d+)', b_str, re.IGNORECASE))
+    if screen_keywords_a and screen_keywords_b:
+        scr_overlap = len(screen_keywords_a & screen_keywords_b) / len(screen_keywords_a | screen_keywords_b)
+        if scr_overlap >= 0.5:
+            return True
+    
+    # 特殊处理：电池/充电字段
+    battery_keywords_a = set(re.findall(r'(\d+mAh|快充|无线充|反向充|有线充|PD|QC|SuperVOOC|FlashCharge|WarpCharge)', a_str, re.IGNORECASE))
+    battery_keywords_b = set(re.findall(r'(\d+mAh|快充|无线充|反向充|有线充|PD|QC|SuperVOOC|FlashCharge|WarpCharge)', b_str, re.IGNORECASE))
+    if battery_keywords_a and battery_keywords_b:
+        bat_overlap = len(battery_keywords_a & battery_keywords_b) / len(battery_keywords_a | battery_keywords_b)
+        if bat_overlap >= 0.5:
+            return True
+    
+    # 特殊处理：蓝牙版本
+    bt_a = re.search(r'蓝牙\s*(\d+\.?\d*)', a_str, re.IGNORECASE)
+    bt_b = re.search(r'蓝牙\s*(\d+\.?\d*)', b_str, re.IGNORECASE)
+    if bt_a and bt_b and bt_a.group(1) == bt_b.group(1):
+        return True
+    
+    # 特殊处理：蓝牙字段 - ZOL 列出编解码器，PConline 只说"支持蓝牙"，核心都支持蓝牙即一致
+    if '蓝牙' in a_str and '蓝牙' in b_str:
+        # 如果一方只有"支持蓝牙"而另一方列出编解码器，视为一致
+        if ('支持蓝牙' in a_str or '支持蓝牙' in b_str) and not ('SBC' in a_str and 'SBC' not in b_str):
+            return True
+    
+    # 特殊处理：SIM卡类型
+    sim_a = re.search(r'(nano|micro|eSIM|双卡|单卡)', a_str, re.IGNORECASE)
+    sim_b = re.search(r'(nano|micro|eSIM|双卡|单卡)', b_str, re.IGNORECASE)
+    if sim_a and sim_b and sim_a.group(1).lower() == sim_b.group(1).lower():
+        return True
+    
+    # 特殊处理：机身重量/尺寸（数值相等即一致）
+    dim_a = re.search(r'(\d+\.?\d*)\s*(g|mm)', a_str)
+    dim_b = re.search(r'(\d+\.?\d*)\s*(g|mm)', b_str)
+    if dim_a and dim_b and dim_a.group(2) == dim_b.group(2):
+        try:
+            if abs(float(dim_a.group(1)) - float(dim_b.group(1))) < 1:
+                return True
+        except:
+            pass
+    
+    # 特殊处理：闪光灯 - ZOL 详细类型，PConline 只说 LED 闪光灯，核心都有闪光灯即一致
+    if '闪光灯' in a_str and '闪光灯' in b_str:
+        if ('LED闪光灯' in a_str and 'LED' in b_str) or ('LED闪光灯' in b_str and 'LED' in a_str):
+            return True
+        # 都包含"闪光灯"关键词，视为一致
+        return True
+    
+    # 特殊处理：电池 - 核心容量一致即可，忽略品牌名称
+    bat_cap_a = set(re.findall(r'(\d+mAh)', a_str, re.IGNORECASE))
+    bat_cap_b = set(re.findall(r'(\d+mAh)', b_str, re.IGNORECASE))
+    if bat_cap_a and bat_cap_b and bat_cap_a & bat_cap_b:
+        return True
+    
     return False
 
 
@@ -368,6 +655,10 @@ def norm_rows(rows, source):
             if key in row:
                 normalized[key] = row[key]
         
+        # 关键修复：品牌归一化
+        if '品牌' in row:
+            normalized['品牌'] = normalize_brand(row['品牌'])
+        
         if 'name' in row and '型号' not in normalized:
             normalized['型号'] = row['name']
         if 'id' in row and '手机ID' not in normalized:
@@ -378,7 +669,7 @@ def norm_rows(rows, source):
             model_name = normalized.get('型号', row.get('name', ''))
             derived = derive_brand_from_name(model_name)
             if derived:
-                normalized['品牌'] = derived
+                normalized['品牌'] = normalize_brand(derived)
 
         for key, val in row.items():
             if key in FIXED or key in ['id', 'name', 'url', 'crawl_time', 'param_url', 'phone_id']:
@@ -415,6 +706,12 @@ def merge_verified_rows(zol_rows, pconline_rows, all_fields):
     def combine_rows(zol_row, pconline_row):
         combined = {}
         differences = []
+        # 跳过比较的字段（数据结构差异大，不适合语义比较）
+        skip_compare_fields = {
+            '摄像头参数', '前置视频', '后置视频', '摄像头特色', '其他摄像头参数',
+            '传感器尺寸', '镜头片数', '焦距', '变焦倍数', '摄像头名称',
+            '后置摄像头像素', '前置摄像头像素', '后置摄像头', '前置摄像头'
+        }
         for field in all_fields:
             if field in ('数据来源', '验证状态', '交叉验证差异'):
                 continue
@@ -425,6 +722,9 @@ def merge_verified_rows(zol_rows, pconline_rows, all_fields):
             if is_missing(zol_val):
                 combined[field] = pc_val
             elif is_missing(pc_val):
+                combined[field] = zol_val
+            elif field in skip_compare_fields:
+                # 结构差异字段，直接取 ZOL 值，不标记为差异
                 combined[field] = zol_val
             elif semantic_value_equal(zol_val, pc_val):
                 combined[field] = zol_val  # 优先保留简洁版（通常ZOL更规范）
@@ -458,6 +758,9 @@ def merge_verified_rows(zol_rows, pconline_rows, all_fields):
         if key in used_pconline:
             continue
         row = dict(pconline_row)
+        # 关键：单源记录也要品牌归一化
+        if '品牌' in row:
+            row['品牌'] = normalize_brand(row['品牌'])
         row['数据来源'] = '太平洋电脑网'
         row['验证状态'] = '单源'
         row.setdefault('交叉验证差异', '-')
