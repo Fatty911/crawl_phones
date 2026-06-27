@@ -29,8 +29,8 @@ env:
   WINDOW_END_BUFFER_SECONDS: 900
   MAX_PAGES: 0
   MAX_PHONES: ${{ github.event.inputs.max_phones || '0' }}
-  CRAWL_MIN_DELAY_SECONDS: 2
-  CRAWL_MAX_DELAY_SECONDS: 3
+  CRAWL_MIN_DELAY_SECONDS: 8
+  CRAWL_MAX_DELAY_SECONDS: 20
 
 concurrency:
   group: zol-phone-crawl-${{ github.ref }}-${{ github.event.inputs.run_profile || github.event_name }}
