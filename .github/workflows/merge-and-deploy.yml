@@ -23,9 +23,8 @@ on:
       - 'search_root_info.py'
       - 'custom_scripts/git_sync_progress.sh'
       - 'docs/phones/**'
-    paths-ignore:
-      - '**.done'
-      - 'crawl_state/**'
+      - '!.done'
+      - '!crawl_state/**'
 
 permissions:
   contents: read
