@@ -283,6 +283,7 @@ jobs:
 
       - name: AI root/越狱验证
         if: steps.validate.outputs.ready == 'true'
+        continue-on-error: true
         env:
           NVIDIA_NIM_API_KEY: ${{ secrets.NVIDIA_NIM_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}

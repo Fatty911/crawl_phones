@@ -15,8 +15,16 @@ API：优先 NIM free (nvidia/nvidia-glm-5.1)，备用 OpenRouter free
   iPhone：不可越狱 / 可完美越狱（工具版本） / 可不完美越狱（工具版本）
 """
 
-import json, os, sys, re, time, hashlib
+import json
+import os
+import sys
+import re
+import time
+import hashlib
+import concurrent.futures
+import threading
 from datetime import datetime
+from collections import defaultdict
 from urllib.request import Request, urlopen
 from urllib.error import URLError, HTTPError
 
@@ -28,12 +36,33 @@ OUTPUT_FILE = DATA_FILE  # 原地更新
 # 每批品牌SOC查询多少个型号（避免prompt过长）
 MAX_BATCH = 8
 
+# ── 性能优化配置 ──────────────────────────────────────
+MAX_TOKENS = 300
+API_TIMEOUT = 30
+MAX_RETRIES = 3
+MAX_WORKERS = 2  # 并发请求数（保守：最多 2 个网络 worker）
+TOTAL_TIME_BUDGET = 25 * 60  # 25 分钟总时间预算
+# 请求级 rate limiting：每秒最多发起 2 个请求
+MIN_REQUEST_INTERVAL = 0.5  # 秒
+_last_request_time = 0.0
+_request_lock = threading.Lock()
+
 # ── API ──────────────────────────────────────────────
 NIM_KEY = os.environ.get("NVIDIA_NIM_API_KEY", "")
 OR_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 
-def ai_query(prompt, model=None, retries=3):
+
+def ai_query(prompt, model=None, retries=MAX_RETRIES):
     """调用 AI 查询，自动 fallback NIM → OpenRouter"""
+    # Rate limiting: 请求发起前等待
+    global _last_request_time
+    with _request_lock:
+        now = time.time()
+        wait = MIN_REQUEST_INTERVAL - (now - _last_request_time)
+        if wait > 0:
+            time.sleep(wait)
+        _last_request_time = time.time()
+
     # NIM 优先（免费）
     if NIM_KEY:
         try:
@@ -42,7 +71,7 @@ def ai_query(prompt, model=None, retries=3):
                 data=json.dumps({
                     "model": model or "nvidia/nvidia-glm-5.1",
                     "messages": [{"role": "user", "content": prompt}],
-                    "max_tokens": 500,
+                    "max_tokens": MAX_TOKENS,
                     "temperature": 0.1,
                 }).encode(),
                 headers={
@@ -50,7 +79,7 @@ def ai_query(prompt, model=None, retries=3):
                     "Content-Type": "application/json",
                 },
             )
-            resp = urlopen(req, timeout=60)
+            resp = urlopen(req, timeout=API_TIMEOUT)
             body = json.loads(resp.read())
             return body["choices"][0]["message"]["content"].strip()
         except Exception as e:
@@ -65,7 +94,7 @@ def ai_query(prompt, model=None, retries=3):
                     data=json.dumps({
                         "model": "google/gemma-4-31b-it:free",
                         "messages": [{"role": "user", "content": prompt}],
-                        "max_tokens": 500,
+                        "max_tokens": MAX_TOKENS,
                         "temperature": 0.1,
                     }).encode(),
                     headers={
@@ -75,7 +104,7 @@ def ai_query(prompt, model=None, retries=3):
                         "X-Title": "Phone Root Status Verifier",
                     },
                 )
-                resp = urlopen(req, timeout=60)
+                resp = urlopen(req, timeout=API_TIMEOUT)
                 body = json.loads(resp.read())
                 return body["choices"][0]["message"]["content"].strip()
             except Exception as e:
@@ -258,7 +287,6 @@ def main():
         return
 
     # 按品牌+SOC分组
-    from collections import defaultdict
     groups = defaultdict(list)
     for row in pending:
         brand = row.get("品牌", "未知")
@@ -268,52 +296,154 @@ def main():
 
     # 先处理品牌+SOC组（跨型号漏洞）
     verified_count = 0
-    for grp_key, grp_rows in sorted(groups.items()):
+    start_time = time.time()
+
+    # 并发处理品牌+SOC组
+    def process_group(grp_key, grp_rows):
         if not grp_rows:
-            continue
+            return None
         brand, soc = grp_key.split("|", 1)
         models = [r.get("型号", "") or r.get("name", "") for r in grp_rows[:MAX_BATCH]]
         os_info = grp_rows[0].get("操作系统", "") if grp_rows else ""
 
         # 跳过无意义的SOC
         if soc in ("未知SOC", ""):
-            continue
+            return None
 
         result = verify_brand_soc_group(brand, soc, models, os_info)
         if not result or "不确定" in result.get("conclusion", ""):
-            continue
+            return None
+        return (grp_key, grp_rows, result)
 
-        # 应用结果到同一组所有机型
-        conclusion = result.get("conclusion", "未知")
-        method = result.get("method", "")
-        status = f"{conclusion}"
-        if method and conclusion not in ("不可root", "不可越狱", "未知"):
-            status += f"（{method}）"
+    # 使用线程池并发处理 —— 手动管理 shutdown 以便超时时取消 pending futures
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS)
+    try:
+        future_to_key = {
+            executor.submit(process_group, grp_key, grp_rows): grp_key
+            for grp_key, grp_rows in sorted(groups.items())
+        }
 
-        for row in grp_rows:
-            row["root或越狱"] = status
-            key = (row.get("型号", "") or row.get("name", "")).strip()
-            cache[key] = status
-            verified_count += 1
+        for future in concurrent.futures.as_completed(future_to_key):
+            # 检查时间预算
+            if time.time() - start_time > TOTAL_TIME_BUDGET:
+                print(f"⚠ 时间预算耗尽 ({TOTAL_TIME_BUDGET//60}分钟)，停止品牌SOC组查询并取消剩余任务")
+                # 取消所有未完成的 future
+                for f in future_to_key:
+                    if not f.done():
+                        f.cancel()
+                break
 
-        print(f"  ✅ {brand} {soc}: {len(grp_rows)} 机型 → {status}")
-        time.sleep(1)  # 避免rate limit
+            # future.result(timeout=...) 防止已在运行的 future 超时后仍阻塞
+            remaining_time = TOTAL_TIME_BUDGET - (time.time() - start_time)
+            if remaining_time <= 30:
+                print(f"⚠ 剩余时间不足 ({remaining_time:.0f}s)，停止品牌SOC组查询")
+                for f in future_to_key:
+                    if not f.done():
+                        f.cancel()
+                break
+
+            try:
+                result = future.result(timeout=min(remaining_time, 90))
+            except concurrent.futures.TimeoutError:
+                print("⚠ 品牌SOC组任务超时，取消剩余并退出")
+                for f in future_to_key:
+                    if not f.done():
+                        f.cancel()
+                break
+
+            if result is None:
+                continue
+
+            grp_key, grp_rows, group_result = result
+            brand, soc = grp_key.split("|", 1)
+
+            conclusion = group_result.get("conclusion", "未知")
+            method = group_result.get("method", "")
+            status = f"{conclusion}"
+            if method and conclusion not in ("不可root", "不可越狱", "未知"):
+                status += f"（{method}）"
+
+            for row in grp_rows:
+                row["root或越狱"] = status
+                key = (row.get("型号", "") or row.get("name", "")).strip()
+                cache[key] = status
+                verified_count += 1
+
+            print(f"  ✅ {brand} {soc}: {len(grp_rows)} 机型 → {status}")
+            time.sleep(0.5)  # 轻微延迟避免 rate limit
+    finally:
+        # 关键：shutdown(wait=False) 立即返回，不等待已取消/运行中的 futures
+        # cancel_futures=True 需要 Python 3.9+，GitHub Actions runner 使用 Python 3.12
+        try:
+            executor.shutdown(wait=False, cancel_futures=True)
+        except TypeError:
+            # 兼容旧版本：仅 wait=False
+            executor.shutdown(wait=False)
 
     # 处理剩余未匹配的单个机型
     remaining = [r for r in pending if r.get("root或越狱") in ("未知", "", None)]
     print(f"\n品牌SOC匹配后剩余: {len(remaining)} 个")
 
-    for row in remaining:
+    # 并发处理单机型
+    def process_single(row):
         resp = verify_single_model(row)
         if not resp:
-            continue
+            return None
         status = parse_ai_response(resp, row.get("品牌"), extract_soc(row), row.get("型号"))
-        row["root或越狱"] = status
         key = (row.get("型号", "") or row.get("name", "")).strip()
-        cache[key] = status
-        verified_count += 1
-        print(f"  ✅ {row.get('品牌', '?')} {key[:40]}: {status}")
-        time.sleep(1)
+        return (row, key, status)
+
+    # 使用线程池并发处理 —— 手动管理 shutdown 以便超时时取消 pending futures
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS)
+    try:
+        future_to_row = {executor.submit(process_single, row): row for row in remaining}
+
+        for future in concurrent.futures.as_completed(future_to_row):
+            # 检查时间预算
+            if time.time() - start_time > TOTAL_TIME_BUDGET:
+                print(f"⚠ 时间预算耗尽 ({TOTAL_TIME_BUDGET//60}分钟)，停止单机型查询并取消剩余任务")
+                # 取消所有未完成的 future
+                for f in future_to_row:
+                    if not f.done():
+                        f.cancel()
+                break
+
+            # future.result(timeout=...) 防止已在运行的 future 超时后仍阻塞
+            # 计算剩余时间预算，留 30s 缓冲
+            remaining_time = TOTAL_TIME_BUDGET - (time.time() - start_time)
+            if remaining_time <= 30:
+                print(f"⚠ 剩余时间不足 ({remaining_time:.0f}s)，停止单机型查询")
+                for f in future_to_row:
+                    if not f.done():
+                        f.cancel()
+                break
+
+            try:
+                result = future.result(timeout=min(remaining_time, 60))
+            except concurrent.futures.TimeoutError:
+                print("⚠ 单任务超时，取消剩余并退出")
+                for f in future_to_row:
+                    if not f.done():
+                        f.cancel()
+                break
+
+            if result is None:
+                continue
+
+            row, key, status = result
+            row["root或越狱"] = status
+            cache[key] = status
+            verified_count += 1
+            print(f"  ✅ {row.get('品牌', '?')} {key[:40]}: {status}")
+            time.sleep(0.2)  # 极小延迟
+    finally:
+        # 关键：shutdown(wait=False) 立即返回，不等待已取消/运行中的 futures
+        # cancel_futures=True 需要 Python 3.9+，GitHub Actions runner 使用 Python 3.12
+        try:
+            executor.shutdown(wait=False, cancel_futures=True)
+        except TypeError:
+            # 兼容旧版本：仅 wait=False
+            executor.shutdown(wait=False)
 
     # 标记仍未确定的
     for row in pending:
