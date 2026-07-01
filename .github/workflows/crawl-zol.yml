@@ -250,7 +250,10 @@ jobs:
       - name: Mark crawl complete and commit
         if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true'
         run: |
-          if [ "${{ steps.step1.outputs.complete }}" = "true" ]; then
+          DEBUG_MODE="${{ github.event.inputs.debug_mode || 'false' }}"
+          if [ "$DEBUG_MODE" = "true" ]; then
+            echo "调试模式：不标记周期完成"
+          elif [ "${{ steps.step1.outputs.complete }}" = "true" ]; then
             touch "$ZOL_DONE_MARKER"
             echo "爬取完成（扫描所有品牌），标记半月周期"
           elif [ "${{ steps.validate_data.outputs.has_data }}" = "true" ] && [ -f "zol_phones_$(date +%Y%m%d).json" ]; then
