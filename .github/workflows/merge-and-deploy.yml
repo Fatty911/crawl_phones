@@ -27,7 +27,7 @@ on:
       - '!crawl_state/**'
 
 permissions:
-  contents: read
+  contents: write
   actions: read
 
 jobs:
