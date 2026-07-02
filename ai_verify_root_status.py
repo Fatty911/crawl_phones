@@ -51,9 +51,65 @@ _request_lock = threading.Lock()
 NIM_KEY = os.environ.get("NVIDIA_NIM_API_KEY", "")
 OR_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 
+# NIM 可用模型（按优先级排序，首选大上下文 + 推理能力强的）
+NIM_MODELS = [
+    "deepseek-ai/deepseek-v4-pro",
+    "nvidia/nemotron-3-super-120b-a12b",
+    "nvidia/nemotron-3-ultra-550b-a55b",
+    "deepseek-ai/deepseek-v4-flash",
+]
+
+# OpenRouter 免费模型（按优先级）
+OR_FREE_MODELS = [
+    "google/gemma-4-31b-it:free",
+    "google/gemma-4-26b-a4b-it:free",
+]
+
+
+def _try_nim(prompt, model, timeout=API_TIMEOUT):
+    """尝试单个 NIM 模型"""
+    req = Request(
+        "https://integrate.api.nvidia.com/v1/chat/completions",
+        data=json.dumps({
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": MAX_TOKENS,
+            "temperature": 0.1,
+        }).encode(),
+        headers={
+            "Authorization": f"Bearer {NIM_KEY}",
+            "Content-Type": "application/json",
+        },
+    )
+    resp = urlopen(req, timeout=timeout)
+    body = json.loads(resp.read())
+    return body["choices"][0]["message"]["content"].strip()
+
+
+def _try_or(prompt, model, timeout=API_TIMEOUT):
+    """尝试单个 OpenRouter 模型"""
+    req = Request(
+        "https://openrouter.ai/api/v1/chat/completions",
+        data=json.dumps({
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": MAX_TOKENS,
+            "temperature": 0.1,
+        }).encode(),
+        headers={
+            "Authorization": f"Bearer {OR_KEY}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://phones.jiucai.eu.org",
+            "X-Title": "Phone Root Status Verifier",
+        },
+    )
+    resp = urlopen(req, timeout=timeout)
+    body = json.loads(resp.read())
+    return body["choices"][0]["message"]["content"].strip()
+
 
 def ai_query(prompt, model=None, retries=MAX_RETRIES):
-    """调用 AI 查询，自动 fallback NIM → OpenRouter"""
+    """调用 AI 查询，自动 fallback NIM models → OpenRouter free models"""
     # Rate limiting: 请求发起前等待
     global _last_request_time
     with _request_lock:
@@ -63,53 +119,26 @@ def ai_query(prompt, model=None, retries=MAX_RETRIES):
             time.sleep(wait)
         _last_request_time = time.time()
 
-    # NIM 优先（免费）
+    # 1) NIM 模型轮询（免费，优先）
     if NIM_KEY:
-        try:
-            req = Request(
-                "https://integrate.api.nvidia.com/v1/chat/completions",
-                data=json.dumps({
-                    "model": model or "nvidia/nvidia-glm-5.1",
-                    "messages": [{"role": "user", "content": prompt}],
-                    "max_tokens": MAX_TOKENS,
-                    "temperature": 0.1,
-                }).encode(),
-                headers={
-                    "Authorization": f"Bearer {NIM_KEY}",
-                    "Content-Type": "application/json",
-                },
-            )
-            resp = urlopen(req, timeout=API_TIMEOUT)
-            body = json.loads(resp.read())
-            return body["choices"][0]["message"]["content"].strip()
-        except Exception as e:
-            print(f"  NIM error: {e}", file=sys.stderr)
-
-    # OpenRouter 备用
-    if OR_KEY:
-        for attempt in range(retries):
+        models_to_try = [model] if model else NIM_MODELS
+        for m in models_to_try:
             try:
-                req = Request(
-                    "https://openrouter.ai/api/v1/chat/completions",
-                    data=json.dumps({
-                        "model": "google/gemma-4-31b-it:free",
-                        "messages": [{"role": "user", "content": prompt}],
-                        "max_tokens": MAX_TOKENS,
-                        "temperature": 0.1,
-                    }).encode(),
-                    headers={
-                        "Authorization": f"Bearer {OR_KEY}",
-                        "Content-Type": "application/json",
-                        "HTTP-Referer": "https://phones.jiucai.eu.org",
-                        "X-Title": "Phone Root Status Verifier",
-                    },
-                )
-                resp = urlopen(req, timeout=API_TIMEOUT)
-                body = json.loads(resp.read())
-                return body["choices"][0]["message"]["content"].strip()
+                print(f"  尝试 NIM: {m}", file=sys.stderr)
+                return _try_nim(prompt, m)
             except Exception as e:
-                print(f"  OR error (attempt {attempt+1}): {e}", file=sys.stderr)
-                time.sleep(2 ** attempt)
+                print(f"  NIM {m} error: {e}", file=sys.stderr)
+
+    # 2) OpenRouter 免费模型轮询
+    if OR_KEY:
+        for m in OR_FREE_MODELS:
+            for attempt in range(retries):
+                try:
+                    print(f"  尝试 OpenRouter: {m} (attempt {attempt+1})", file=sys.stderr)
+                    return _try_or(prompt, m)
+                except Exception as e:
+                    print(f"  OR {m} error (attempt {attempt+1}): {e}", file=sys.stderr)
+                    time.sleep(2 ** attempt)
 
     return None
 

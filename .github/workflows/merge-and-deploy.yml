@@ -317,7 +317,6 @@ jobs:
 
       - name: 提交合并产物到仓库
         if: steps.validate.outputs.ready == 'true'
-        continue-on-error: true
         env:
           DATE: ${{ steps.date.outputs.date }}
         run: |
@@ -333,7 +332,13 @@ jobs:
             echo "没有变更，跳过提交"
           else
             git commit -m "chore: update merged phone data [skip merge] [skip ci]"
-            git push || echo "git push 失败（可能是权限问题），继续执行后续步骤上传 artifact"
+            echo "尝试推送到远程仓库..."
+            if git push; then
+              echo "✅ git push 成功"
+            else
+              echo "❌ git push 失败（可能是权限问题）"
+              exit 1
+            fi
           fi
 
       - name: 上传合并产物
