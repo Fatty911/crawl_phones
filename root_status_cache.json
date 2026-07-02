@@ -1274,5 +1274,14 @@
   "vivo S12 Pro": "未知",
   "华为畅享20e(标配版)": "不可root",
   "vivo S10e": "可临时root（重启失效）",
-  "华为nova9": "不可root"
+  "华为nova9": "不可root",
+  "vivo X Fold6(12GB/256GB)": "可永久root",
+  "vivo X Fold6(16GB/512GB)": "可永久root",
+  "Redmi K90至尊版（12GB/512GB）": "未知",
+  "Redmi K90至尊版（12GB/256GB）": "可永久root",
+  "Redmi K90至尊版（16GB/256GB）": "可永久root",
+  "Redmi K90至尊版（16GB/512GB）": "可永久root（Magisk (via官方解锁bootloader后刷入Magisk补丁或使用TWRP). 说明：需要先在小米官网申请解锁bootloader）",
+  "华为nova 10 Pro": "不可root",
+  "HUAWEI Mate 70 Pro优享版": "不可root",
+  "vivo S10": "可永久root（Magisk (通过解锁bootloader后刷入Magisk补丁的boot.img) 说明：vivo S10的bootloader可通过官方解锁或fastboot oem unlock解锁）"
 }
