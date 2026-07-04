@@ -12,14 +12,28 @@
     "内存",
     "存储",
     "屏幕",
+    "屏占比",
     "电池",
-    "机身宽度",
-    "机身尺寸",
-    "摄像头参数",
-    "超广角缩放倍数",
+    "机身厚度",
+    "机身重量",
+    "指纹识别",
+    "面部识别",
+    "网络类型",
+    "NFC",
+    "连接与共享",
+    "机身接口",
+    "有线充电",
+    "无线充电",
+    "快充协议",
+    "交叉验证差异",
+    "散热",
+    "广角",
+    "Geekbench6单核",
     "是否可解BL锁",
     "root或越狱",
   ];
+
+  var DEFAULT_HIDDEN_COLUMNS = new Set(["手机ID", "source"]);
 
   var SAMPLE_ROWS = [
     {
@@ -35,10 +49,22 @@
       "存储": "256GB",
       "屏幕": "6.7英寸",
       "电池": "5000mAh",
-      "机身宽度": "74.5 mm",
-      "机身尺寸": "163.6 x 74.5 x 8.8 mm",
-      "摄像头参数": "后置: 5000万像素；镜头: 广角镜头、超广角镜头、长焦镜头；变焦: 5倍光学变焦",
-      "超广角缩放倍数": "0.6x",
+      "屏占比": "93.4%",
+      "机身厚度": "7.9mm",
+      "机身重量": "199g",
+      "指纹识别": "屏幕指纹",
+      "面部识别": "支持",
+      "网络类型": "5G / 4G / 3G",
+      "NFC": "支持",
+      "连接与共享": "OTG / WLAN热点",
+      "机身接口": "USB Type-C",
+      "有线充电": "100W",
+      "无线充电": "50W",
+      "快充协议": "PD / QC / SuperVOOC",
+      "交叉验证差异": "-",
+      "散热": "VC液冷",
+      "广角": "120°",
+      "Geekbench6单核": "2240",
       "是否可解BL锁": "是",
       "root或越狱": "可永久root (Magisk)",
     },
@@ -210,6 +236,64 @@
     return Boolean(text && text !== "-");
   }
 
+  function compactSpecValue(column, value) {
+    var text = String(value == null || value === "" ? "-" : value).trim();
+    if (!text || text === "-") {
+      return "-";
+    }
+
+    text = text
+      .replace(/>/g, "")
+      .replace(/纠错/g, "")
+      .replace(/查看更多[^，,；;|]*/g, "")
+      .replace(/更多[^，,；;|]*手机/g, "")
+      .replace(/手机性能排行/g, "")
+      .replace(/•[^•，,；;|]+是什么•查看所有[^，,；;|]*/g, "")
+      .replace(/\s+/g, " ")
+      .replace(/，\s*，/g, "，")
+      .replace(/[,，；;|\s]+$/g, "")
+      .trim();
+
+    if (column === "网络类型") {
+      return Array.from(new Set(text.match(/(?:[2345]G|Wi-?Fi ?\d(?:\.\d)?|LTE)/ig) || []))
+        .join(" / ") || text;
+    }
+    if (column === "NFC" || column === "NFC功能") {
+      return /不支持|无/.test(text) ? "不支持" : (/NFC|支持/.test(text) ? "支持" : text);
+    }
+    if (column === "指纹识别") {
+      text = text.replace(/识别/g, "").replace(/屏幕指纹/g, "屏幕指纹").replace(/侧面指纹/g, "侧边指纹");
+      return text || "-";
+    }
+    if (column === "面部识别") {
+      if (/3D|Face ID|结构光/i.test(text)) {
+        return "支持 3D";
+      }
+      if (/2D|Face Wake|人脸|面部|支持/i.test(text)) {
+        return "支持";
+      }
+      return text;
+    }
+    if (column === "机身接口") {
+      return text.replace(/接口/g, "").replace(/USB Type-C/g, "USB-C");
+    }
+    if (column === "有线充电" || column === "无线充电") {
+      var watts = text.match(/\d+(?:\.\d+)?\s*[wW]/g);
+      if (watts && watts.length) {
+        return Array.from(new Set(watts.map(function (item) { return item.replace(/\s+/g, "").toUpperCase(); }))).join(" / ");
+      }
+      return text.replace(/^支持[，,]?/, "支持");
+    }
+    if (column === "快充协议") {
+      return Array.from(new Set(text.match(/SuperVOOC|VOOC|PD\d*(?:\.\d)?|QC\d*(?:\.\d)?|PPS|UFCS|FlashCharge|WarpCharge/ig) || []))
+        .join(" / ") || text;
+    }
+    if (column === "交叉验证差异") {
+      return text.length > 160 ? text.slice(0, 157) + "..." : text;
+    }
+    return text.length > 220 ? text.slice(0, 217) + "..." : text;
+  }
+
   function newFilter(field, op, value) {
     return {
       id: "f_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8),
@@ -224,12 +308,17 @@
   function setDataset() {
     state.rows = state.latestRows;
     state.columns = buildColumns(state.rows);
-    state.visibleColumns = new Set(state.columns.slice(0, Math.min(18, state.columns.length)));
+    state.visibleColumns = new Set();
     CORE_COLUMNS.forEach(function (column) {
-      if (state.columns.indexOf(column) !== -1) {
+      if (state.columns.indexOf(column) !== -1 && !DEFAULT_HIDDEN_COLUMNS.has(column)) {
         state.visibleColumns.add(column);
       }
     });
+    if (!state.visibleColumns.size) {
+      state.visibleColumns = new Set(state.columns.filter(function (column) {
+        return !DEFAULT_HIDDEN_COLUMNS.has(column);
+      }).slice(0, Math.min(18, state.columns.length)));
+    }
     state.advancedFilters = [];
     state.facetField = state.columns.indexOf("品牌") !== -1 ? "品牌" : state.columns[0] || "";
     state.history = readLocalJson(STORAGE_KEYS.history, []);
@@ -398,7 +487,8 @@
       var tr = document.createElement("tr");
       visibleColumns.forEach(function (column) {
         var td = document.createElement("td");
-        td.textContent = row[column] == null || row[column] === "" ? "-" : row[column];
+        td.textContent = compactSpecValue(column, row[column]);
+        td.title = row[column] == null || row[column] === "" ? "" : String(row[column]);
         tr.appendChild(td);
       });
       els.tableBody.appendChild(tr);
@@ -715,7 +805,9 @@
       return state.columns.indexOf(column) !== -1;
     }));
     if (!state.visibleColumns.size) {
-      state.visibleColumns = new Set(state.columns.slice(0, Math.min(18, state.columns.length)));
+      state.visibleColumns = new Set(state.columns.filter(function (column) {
+        return !DEFAULT_HIDDEN_COLUMNS.has(column);
+      }).slice(0, Math.min(18, state.columns.length)));
     }
     state.sortField = criteria.sortField || "";
     state.sortDir = criteria.sortDir || "asc";
@@ -1071,7 +1163,7 @@
     els.showCoreColumns.addEventListener("click", function () {
       state.visibleColumns = new Set();
       CORE_COLUMNS.forEach(function (column) {
-        if (state.columns.indexOf(column) !== -1) {
+        if (state.columns.indexOf(column) !== -1 && !DEFAULT_HIDDEN_COLUMNS.has(column)) {
           state.visibleColumns.add(column);
         }
       });
