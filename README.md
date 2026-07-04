@@ -177,6 +177,31 @@ CI 会在 `main` 推送后运行：
 - YAML / Shell / JSON / 前端静态文件基础语法检查
 - 爬虫 workflow 护栏检查，包括外部触发入口、窗口预算、exit code 10、提交缓冲、进度同步脚本和未定义 step 引用
 
+### Hermes/Codex 持续调试闭环
+
+当用户要求“完全达到预期前持续调试”时，不能只看 `github-actions[bot]` 的进度提交，也不能只汇报 Actions 仍在运行。有效进展必须至少包含一次人工或 Hermes/Codex 产生的源码、workflow、合并逻辑或 Pages 前端修复提交，并继续完成以下闭环：
+
+1. 用 `gh run list --all`、`gh run view --log`、Release artifact 和 `https://phones.jiucai.eu.org/data/latest.json` 同时确认当前失败点。
+2. 在本地或干净临时 clone 中修改源码、workflow、合并脚本或 Pages 前端，并运行适用的 Python 编译、workflow 护栏和前端语法检查。
+3. 提交并推送非 bot 修复提交，避免只留下进度 JSON 或合并数据自动提交。
+4. 手动触发 debug 模式爬虫 workflow，样本量控制在二三十条，验证“爬虫 -> artifact -> merge-and-deploy -> deploy-pages -> Pages 数据”的短链路。
+5. 若已有 schedule/外部触发 workflow 正在运行，按北京时间 08:00-12:30、13:00-22:00 窗口、GitHub Actions 6 小时限制和合并/部署预计耗时估算下一次检查时间，不要重复抢跑长任务。
+6. Pages 验证不只看 HTTP 200；要检查 `latest.json` 行数、双源/验证字段、关键字段覆盖率和前端默认列是否符合预期。
+
+2026-07-04 的治理结论是：远程仓库长时间只有 `github-actions[bot]` 提交时，应视为持续调试闭环没有形成，监控器必须继续定位并修复源码或 workflow，而不是仅写状态报告。
+
+### 2026-07-04 Pages 默认列与显示层精简
+
+手机 Pages 默认表格不再显示 `手机ID` 和 `source`，因为 `source` 与用户可读的 `数据来源` 重复。默认核心列包含：`机身厚度`、`机身重量`、`指纹识别`、`面部识别`、`屏占比`、`网络类型`、`NFC`、`连接与共享`、`机身接口`、`有线充电`、`无线充电`、`快充协议`、`交叉验证差异`、`散热`、`广角`、`Geekbench6单核`。
+
+前端 `compactSpecValue()` 只在表格显示层精简啰嗦属性值，例如去掉 `纠错`、`查看更多`、`手机性能排行` 等残留，并对 NFC、网络类型、接口、充电功率和快充协议做短显示。原始值仍保存在 `state.rows`，导出 CSV/JSON 和 `latest.json` 不被改写；表格单元格的 `title` 保留原始文本，便于悬浮查看。
+
+上线后要同时验证：
+
+- `https://phones.jiucai.eu.org/app.js?v=<commit>` 已包含 `DEFAULT_HIDDEN_COLUMNS`、`compactSpecValue` 和 `Geekbench6单核`。
+- `CI`、`部署手机配置网页`、`合并分析并发布` 三类 Actions 均成功。
+- `https://phones.jiucai.eu.org/data/latest.json` 中上述默认字段存在，并抽查非空覆盖率；字段存在但覆盖率低时，后续应修爬虫或字段归一化，而不是只改前端。
+
 ## 数据字段
 
 ### 基础参数（从网站爬取）
