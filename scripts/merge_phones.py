@@ -9,6 +9,7 @@ import re
 from datetime import date
 
 DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(DIR)
 
 FIXED = [
     '数据来源',
@@ -619,9 +620,9 @@ def add_derived_fields(row):
 
 
 def find_latest(pattern):
-    files = glob.glob(os.path.join(DIR, pattern))
+    files = glob.glob(os.path.join(ROOT, pattern))
     if not files:
-        files = glob.glob(os.path.join(DIR, '**', pattern), recursive=True)
+        files = glob.glob(os.path.join(ROOT, '**', pattern), recursive=True)
     if not files:
         return None
     data_files = [f for f in files if 'progress' not in f and 'manifest' not in f]
@@ -632,9 +633,9 @@ def find_latest(pattern):
 
 def load_all(pattern):
     """加载所有匹配文件并合并为去重列表（按手机ID去重）"""
-    files = glob.glob(os.path.join(DIR, pattern))
+    files = glob.glob(os.path.join(ROOT, pattern))
     if not files:
-        files = glob.glob(os.path.join(DIR, '**', pattern), recursive=True)
+        files = glob.glob(os.path.join(ROOT, '**', pattern), recursive=True)
     data_files = [f for f in files if 'progress' not in f and 'manifest' not in f]
     if not data_files:
         data_files = files
@@ -835,8 +836,8 @@ def write_json(path, rows):
 def main():
     today = os.environ.get("MERGE_DATE") or date.today().strftime("%Y%m%d")
 
-    zol_files = sorted(glob.glob(os.path.join(DIR, "data/zol_phones_*.json")))
-    pconline_files = sorted(glob.glob(os.path.join(DIR, "data/pconline_phones_*.json")))
+    zol_files = sorted(glob.glob(os.path.join(ROOT, "data/zol_phones_*.json")))
+    pconline_files = sorted(glob.glob(os.path.join(ROOT, "data/pconline_phones_*.json")))
     print(f"中关村在线数据文件 ({len(zol_files)}): {[os.path.basename(f) for f in zol_files]}")
     print(f"太平洋电脑网数据文件 ({len(pconline_files)}): {[os.path.basename(f) for f in pconline_files]}")
 
@@ -856,8 +857,8 @@ def main():
     dual_source_count = sum(1 for row in all_rows if row.get('验证状态', '').startswith('双源'))
     print(f"交叉验证后机型:{len(all_rows)} 双源记录:{dual_source_count} 单源记录:{len(all_rows) - dual_source_count}")
 
-    merged_csv_path = os.path.join(DIR, f"data/merged_phones_{today}.csv")
-    merged_json_path = os.path.join(DIR, f"data/merged_phones_{today}.json")
+    merged_csv_path = os.path.join(ROOT, f"data/merged_phones_{today}.csv")
+    merged_json_path = os.path.join(ROOT, f"data/merged_phones_{today}.json")
     write_csv(merged_csv_path, all_rows, header)
     write_json(merged_json_path, all_rows)
 
@@ -865,7 +866,7 @@ def main():
     if zol_rows and pconline_rows:
         diffs = diff(zol_rows, pconline_rows, source_header)
         if diffs:
-            diff_path = os.path.join(DIR, f"data/diff_phones_{today}.csv")
+            diff_path = os.path.join(ROOT, f"data/diff_phones_{today}.csv")
             with open(diff_path, 'w', encoding='utf-8-sig', newline='') as f:
                 writer = csv.DictWriter(f, fieldnames=['手机', '配置项', '中关村在线', '太平洋电脑网'])
                 writer.writeheader()
