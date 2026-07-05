@@ -21,7 +21,7 @@ crawl_phones/
 ├── requirements.txt          # Python依赖
 ├── README.md                 # 项目说明
 ├── CHANGELOG.md              # 变更记录
-├── HISTORY.md                # 修复与运维历史
+├── CHANGELOG.md             # 变更日志与历史记录
 ├── docs/phones/              # GitHub Pages前端
 │   ├── index.html            # 页面结构
 │   ├── styles.css            # 样式
