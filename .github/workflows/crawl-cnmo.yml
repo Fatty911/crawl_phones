@@ -1,0 +1,101 @@
+name: CNMO手机爬虫
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_pages:
+        description: '最大列表页数（0=全部165页）'
+        required: false
+        default: '0'
+      max_phones:
+        description: '最多爬取手机数（调试用，0=不限制）'
+        required: false
+        default: '0'
+      debug_mode:
+        description: '调试模式（忽略时间窗口，只爬 max_phones 条）'
+        required: false
+        default: 'false'
+
+env:
+  MAX_PAGES: ${{ github.event.inputs.max_pages || '0' }}
+  MAX_PHONES: ${{ github.event.inputs.max_phones || '0' }}
+
+concurrency:
+  group: cnmo-phone-crawl-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  cnmo-crawl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 390
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Run CNMO crawler - Step 1 (list pages)
+        run: |
+          python scripts/crawl_cnmo.py --step 1 --max-pages "${{ env.MAX_PAGES }}" --max-phones "${{ env.MAX_PHONES }}"
+
+      - name: Run CNMO crawler - Step 2 (detail pages)
+        run: |
+          python scripts/crawl_cnmo.py --step 2 --max-phones "${{ env.MAX_PHONES }}"
+
+      - name: Validate generated CNMO data
+        id: validate_data
+        run: |
+          TODAY=$(date +%Y%m%d)
+          DATA_FILE="data/cnmo_phones_${TODAY}.json"
+          echo "cnmo_data_file=$DATA_FILE" >> "$GITHUB_OUTPUT"
+          if [ ! -f "$DATA_FILE" ]; then
+            echo "未找到CNMO今日数据文件: $DATA_FILE"
+            echo "has_data=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          ROW_COUNT=$(python3 -c "import json; print(len(json.load(open('$DATA_FILE', encoding='utf-8'))))" 2>/dev/null || echo "0")
+          echo "cnmo_row_count=$ROW_COUNT" >> "$GITHUB_OUTPUT"
+          if [ "$ROW_COUNT" -gt 0 ]; then
+            echo "CNMO今日数据有效: $DATA_FILE ($ROW_COUNT 行)"
+            echo "has_data=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "CNMO今日数据文件为空"
+            rm -f "$DATA_FILE"
+            echo "has_data=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate summary
+        if: steps.validate_data.outputs.has_data == 'true'
+        run: python scripts/crawl_cnmo.py --step 3
+
+      - name: Commit and push
+        if: steps.validate_data.outputs.has_data == 'true'
+        run: |
+          git add data/
+          git diff --cached --quiet || git commit -m "chore: update CNMO crawl data [skip ci]"
+          bash scripts/git_sync_progress.sh "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" || true
+
+      - name: Upload crawl data
+        if: steps.validate_data.outputs.has_data == 'true'
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: cnmo-phone-data-${{ github.run_id }}
+          path: |
+            data/cnmo_phones_*.json
+          retention-days: 90

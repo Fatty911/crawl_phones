@@ -71,6 +71,7 @@ def default_files() -> list[Path]:
         ROOT / "scripts/validate_workflow_expectations.py",
         ROOT / ".github/workflows/crawl-zol.yml",
         ROOT / ".github/workflows/crawl-pconline.yml",
+        ROOT / ".github/workflows/crawl-cnmo.yml",
         ROOT / ".github/workflows/crawl-trigger.yml",
         ROOT / ".github/workflows/deploy-pages.yml",
         ROOT / ".github/workflows/merge-and-deploy.yml",
