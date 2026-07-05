@@ -214,20 +214,32 @@ def wait_for_controller(timeout: int = 15) -> bool:
     return False
 
 
-def test_local_proxy(urls: list[str]) -> bool:
+def test_local_proxy(urls: list[str], max_retries: int = 3, retry_delay: int = 5) -> bool:
+    """Test local mihomo proxy connectivity with retries.
+
+    mihomo load-balance group needs time to establish tunnels to remote nodes
+    after startup. A single immediate test often fails with SSLEOFError because
+    the proxy tunnel is not yet ready. Retry each URL up to max_retries times.
+    """
     local_proxy = {
         "http": "http://127.0.0.1:7890",
         "https": "http://127.0.0.1:7890",
     }
-    for url in urls:
-        try:
-            resp = requests.get(url, proxies=local_proxy, timeout=12)
-            if 200 <= resp.status_code < 400:
-                print(f"代理连通性测试通过: {url} HTTP {resp.status_code}")
-                return True
-            print(f"代理连通性测试未通过: {url} HTTP {resp.status_code}")
-        except requests.RequestException as exc:
-            print(f"代理连通性测试异常: {url} {exc}")
+    session = requests.Session()
+    session.trust_env = False
+    for attempt in range(1, max_retries + 1):
+        for url in urls:
+            try:
+                resp = session.get(url, proxies=local_proxy, timeout=15)
+                if 200 <= resp.status_code < 400:
+                    print(f"代理连通性测试通过: {url} HTTP {resp.status_code} (第{attempt}次尝试)")
+                    return True
+                print(f"代理连通性测试未通过: {url} HTTP {resp.status_code} (第{attempt}次尝试)")
+            except requests.RequestException as exc:
+                print(f"代理连通性测试异常: {url} (第{attempt}次尝试) {exc}")
+        if attempt < max_retries:
+            print(f"等待 {retry_delay} 秒后重试 (剩余 {max_retries - attempt} 次)...")
+            time.sleep(retry_delay)
     return False
 
 

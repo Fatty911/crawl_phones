@@ -522,13 +522,13 @@ proxy-groups:
     type: load-balance
     proxies:
 {self._format_proxy_list(auto_proxies, 6)}
-    url: 'http://www.gstatic.com/generate_204'
-    interval: 300
+    url: 'https://www.baidu.com'
+    interval: 60
     strategy: round-robin
     health-check:
       enable: true
-      url: 'http://www.gstatic.com/generate_204'
-      interval: 300
+      url: 'https://www.baidu.com'
+      interval: 60
 
 rules:
   - GEOIP,LAN,DIRECT

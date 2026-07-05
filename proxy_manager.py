@@ -566,7 +566,7 @@ class ProxyManager:
             print(f"选择代理失败: {e}")
             return False
     
-    def get_clash_delay(self, proxy_name: str, url: str = "http://www.gstatic.com/generate_204") -> int:
+    def get_clash_delay(self, proxy_name: str, url: str = "https://www.baidu.com") -> int:
         """测试Clash代理延迟"""
         try:
             resp = requests.get(
