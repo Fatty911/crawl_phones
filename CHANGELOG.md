@@ -1,3 +1,15 @@
+## 2026-07-06
+
+### Fixed
+- 根目录数据文件再次堆积（workflow 产出仍在根目录）——彻底修复
+- 爬虫脚本 `crawl_zol.py`/`crawl_pconline.py` 输出路径改为 `data/` 子目录（`data_dir` 变量）
+- 爬虫 workflow `crawl-zol.yml`/`crawl-pconline.yml` 中 validate DATA_FILE、git commit 检查、artifact upload path 全部加上 `data/` 前缀
+- `.gitignore` 不再忽略 `data/` 目录（之前 `data/*.json` `data/*.csv` 全屏蔽导致 data/ 文件无法追踪）
+- `find_latest()` 函数优先在 `data_dir` 里找，保留递归搜索作为兜底
+
+### Changed
+- 根目录从 218 个文件降至 19 个（仅代码、配置、目录）；197 个数据文件归入 `data/`
+
 ## 2026-07-05
 
 ### Fixed

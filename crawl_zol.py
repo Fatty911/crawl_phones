@@ -156,6 +156,8 @@ if args.debug_limit > 0:
 working_dir = os.path.dirname(os.path.abspath(__file__))
 zol_dir = os.path.join(working_dir, 'zol')
 zol_json_dir = os.path.join(zol_dir, 'json')
+data_dir = os.path.join(working_dir, 'data')
+os.makedirs(data_dir, exist_ok=True)
 zol_exception_dir = os.path.join(zol_dir, 'exception')
 
 for d in [zol_dir, zol_json_dir, zol_exception_dir]:
@@ -697,7 +699,9 @@ def step1_crawl_list_and_detail():
 
 def find_latest(pattern):
     """查找最新匹配文件"""
-    files = glob.glob(os.path.join(working_dir, pattern))
+    files = glob.glob(os.path.join(data_dir, pattern))
+    if not files:
+        files = glob.glob(os.path.join(working_dir, pattern))
     if not files:
         files = glob.glob(os.path.join(working_dir, '**', pattern), recursive=True)
     if not files:
@@ -759,13 +763,13 @@ def step2_parse_and_merge():
     all_phones.sort(key=lambda x: x.get('国内发布时间', ''), reverse=True)
     
     today = date.today().strftime("%Y%m%d")
-    output_file = os.path.join(working_dir, f"zol_phones_{today}.json")
+    output_file = os.path.join(data_dir, f"zol_phones_{today}.json")
     with open(output_file, 'w', encoding='utf-8') as f:
         json.dump(all_phones, f, ensure_ascii=False, indent=2)
     
     logger.info(f"合并数据已保存到: {output_file}")
     
-    csv_file = os.path.join(working_dir, f"zol_phones_{today}.csv")
+    csv_file = os.path.join(data_dir, f"zol_phones_{today}.csv")
     if all_phones:
         all_keys = set()
         for phone in all_phones:

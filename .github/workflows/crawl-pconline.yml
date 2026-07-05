@@ -214,7 +214,7 @@ jobs:
         id: validate_data
         run: |
           TODAY=$(date +%Y%m%d)
-          DATA_FILE="pconline_phones_${TODAY}.json"
+          DATA_FILE="data/pconline_phones_${TODAY}.json"
           echo "pconline_data_file=$DATA_FILE" >> "$GITHUB_OUTPUT"
           if [ ! -f "$DATA_FILE" ]; then
             echo "未找到太平洋电脑网今日数据文件: $DATA_FILE"
@@ -235,7 +235,7 @@ jobs:
             fi
           else
             echo "太平洋电脑网今日数据文件为空，不上传空 artifact，不触发合并"
-            rm -f "$DATA_FILE" "pconline_phones_${TODAY}.csv"
+            rm -f "$DATA_FILE" "data/pconline_phones_${TODAY}.csv"
             echo "has_data=false" >> "$GITHUB_OUTPUT"
           fi
 
@@ -252,7 +252,7 @@ jobs:
           elif [ "${{ steps.step1.outputs.complete }}" = "true" ]; then
             touch "$PCONLINE_DONE_MARKER"
             echo "爬取完成（扫描所有品牌），标记半月周期"
-          elif [ "${{ steps.validate_data.outputs.has_data }}" = "true" ] && [ -f "pconline_phones_$(date +%Y%m%d).json" ]; then
+          elif [ "${{ steps.validate_data.outputs.has_data }}" = "true" ] && [ -f "data/pconline_phones_$(date +%Y%m%d).json" ]; then
             touch "$PCONLINE_DONE_MARKER"
             echo "爬取完成（有有效数据），标记半月周期"
           else
@@ -271,8 +271,8 @@ jobs:
         with:
           name: pconline-phone-data-${{ github.run_id }}
           path: |
-            pconline_phones_*.json
-            pconline_phones_*.csv
+            data/pconline_phones_*.json
+            data/pconline_phones_*.csv
           retention-days: 90
 
       - name: 检测新增数据并触发合并分析

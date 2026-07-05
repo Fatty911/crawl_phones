@@ -1,3 +1,17 @@
+## 2026-07-06
+
+### 爬虫根目录数据文件彻底归整
+
+- **问题**：高峰期爬虫运行后 GitHub 仓库根目录再次堆积 197 个 json/csv 数据文件（共 218 个根文件）
+- **根因**：`.gitignore` 第29-32行 `data/` `data/*.json` `data/*.csv` 把整个 data/ 目录屏蔽，之前 `git mv` 操作把数据移到 data/ 但被 ignore 无法追踪；同时爬虫脚本 `crawl_zol.py`/`crawl_pconline.py` 的 `working_dir` 仍是根目录，每次爬虫运行后生成 `zol_phones_$DATE.json` 文件放在根目录
+- **修复**：
+  1. `.gitignore`：删除 `data/`、`data/*.json`、`data/*.csv`、`!data/.gitkeep`；改为只忽略 `data/tmp/`
+  2. `crawl_zol.py`：新增 `data_dir = os.path.join(working_dir, 'data')`，`output_file` 和 `csv_file` 改用 `data_dir`；`find_latest()` 优先在 `data_dir` 搜索
+  3. `crawl_pconline.py`：同上修改
+  4. `crawl-zol.yml`/`crawl-pconline.yml`：`DATA_FILE="data/..._phones_$TODAY.json"`，commit check `[ -f "data/..._phones_$(date +%Y%m%d).json" ]`，artifacts path 加 `data/` 前缀
+- **验证**：`python3 -m py_compile` 三个 .py 文件全部 OK；根目录剩 19 个文件（全为代码/配置/目录）；`git mv` 197 个数据文件到 `data/` 全部成功 staged
+- **影响范围**：5 个源文件改动 + 200 个文件移动
+
 ## 2026-07-05 — 代理修复 + 数据目录整理
 
 ### 代理连通性修复（与 crawl_cars 同步）

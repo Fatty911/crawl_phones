@@ -218,7 +218,7 @@ jobs:
         id: validate_data
         run: |
           TODAY=$(date +%Y%m%d)
-          DATA_FILE="zol_phones_${TODAY}.json"
+          DATA_FILE="data/zol_phones_${TODAY}.json"
           echo "zol_data_file=$DATA_FILE" >> "$GITHUB_OUTPUT"
           if [ ! -f "$DATA_FILE" ]; then
             echo "未找到中关村在线今日数据文件: $DATA_FILE"
@@ -239,7 +239,7 @@ jobs:
             fi
           else
             echo "中关村在线今日数据文件为空，不上传空 artifact，不触发合并"
-            rm -f "$DATA_FILE" "zol_phones_${TODAY}.csv"
+            rm -f "$DATA_FILE" "data/zol_phones_${TODAY}.csv"
             echo "has_data=false" >> "$GITHUB_OUTPUT"
           fi
 
@@ -256,7 +256,7 @@ jobs:
           elif [ "${{ steps.step1.outputs.complete }}" = "true" ]; then
             touch "$ZOL_DONE_MARKER"
             echo "爬取完成（扫描所有品牌），标记半月周期"
-          elif [ "${{ steps.validate_data.outputs.has_data }}" = "true" ] && [ -f "zol_phones_$(date +%Y%m%d).json" ]; then
+          elif [ "${{ steps.validate_data.outputs.has_data }}" = "true" ] && [ -f "data/zol_phones_$(date +%Y%m%d).json" ]; then
             touch "$ZOL_DONE_MARKER"
             echo "爬取完成（有有效数据），标记半月周期"
           else
@@ -275,8 +275,8 @@ jobs:
         with:
           name: zol-phone-data-${{ github.run_id }}
           path: |
-            zol_phones_*.json
-            zol_phones_*.csv
+            data/zol_phones_*.json
+            data/zol_phones_*.csv
           retention-days: 90
 
       - name: 检测新增数据并触发合并分析

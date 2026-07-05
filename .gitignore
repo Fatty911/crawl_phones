@@ -12,13 +12,13 @@ pconline/json/
 pconline/exception/
 ai_search/
 
-# 生成的数据文件
-zol_phones_*.csv
-pconline_phones_*.csv
-merged_phones_*.json
-merged_phones_*.csv
-diff_phones_*.csv
-phones_with_root_info.json
+# 生成的临时数据文件（爬虫运行时临时输出，已归入 data/ 目录）
+# 根目录不再放数据文件
+/merged_phones_*.json
+/merged_phones_*.csv
+/diff_phones_*.csv
+/phones_with_root_info.json
+/root_status_cache.json
 
 # 日志
 *.log
@@ -26,7 +26,7 @@ phones_with_root_info.json
 # IDE
 .vscode/
 .idea/
-data/
-data/*.json
-data/*.csv
-!data/.gitkeep
+
+# data/ 目录存放爬虫产出和合并数据，需要追踪
+# 只忽略超大临时文件
+data/tmp/
