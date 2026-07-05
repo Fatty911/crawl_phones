@@ -33,10 +33,10 @@ jobs:
         run: pip install -r requirements.txt PyYAML
 
       - name: Compile Python files
-        run: python -m py_compile crawl_zol.py crawl_pconline.py merge_phones.py search_root_info.py proxy_manager.py custom_scripts/*.py
+        run: python -m py_compile scripts/crawl_zol.py scripts/crawl_pconline.py scripts/merge_phones.py scripts/search_root_info.py scripts/proxy_manager.py scripts/generate_clash_config.py scripts/ai_verify_root_status.py
 
       - name: Validate syntax
-        run: python custom_scripts/validate_syntax.py
+        run: python scripts/validate_syntax.py
 
       - name: Validate workflow expectations
-        run: python custom_scripts/validate_workflow_expectations.py
+        run: python scripts/validate_workflow_expectations.py

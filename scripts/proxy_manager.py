@@ -449,7 +449,7 @@ class ProxyManager:
     def generate_clash_config(self) -> bool:
         """生成Clash配置文件"""
         try:
-            from generate_clash_config import ClashConfigGenerator
+            import sys; sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))); from generate_clash_config import ClashConfigGenerator
             generator = ClashConfigGenerator(self.clash_config)
             return generator.generate_and_save(
                 subscriptions=self.subscriptions,

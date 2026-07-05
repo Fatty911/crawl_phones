@@ -36,11 +36,11 @@ def check_crawler_workflow(path: Path, errors: list[str]) -> None:
     assert_condition("MAX_WORKFLOW_SECONDS" in text, f"{path.name} missing max workflow budget", errors)
     assert_condition("PROGRESS_COMMIT_BUFFER_SECONDS" in text, f"{path.name} missing progress commit buffer", errors)
     assert_condition("WINDOW_END_BUFFER_SECONDS" in text, f"{path.name} missing window end buffer", errors)
-    assert_condition("crawl_budget.py configure" in text, f"{path.name} does not use shared crawl window budget", errors)
-    assert_condition("crawl_budget.py clamp" in text, f"{path.name} does not clamp by combined budget", errors)
+    assert_condition("scripts/crawl_budget.py configure" in text, f"{path.name} does not use shared crawl window budget", errors)
+    assert_condition("scripts/crawl_budget.py clamp" in text, f"{path.name} does not clamp by combined budget", errors)
     assert_condition("EXIT_CODE=$?" in text, f"{path.name} does not capture crawler exit code", errors)
     assert_condition("[ $EXIT_CODE -eq 10 ]" in text, f"{path.name} does not treat exit 10 as resumable", errors)
-    assert_condition("custom_scripts/git_sync_progress.sh" in text, f"{path.name} does not use robust progress sync", errors)
+    assert_condition("scripts/git_sync_progress.sh" in text, f"{path.name} does not use robust progress sync", errors)
     assert_condition("steps.check_done.outputs.done" not in text, f"{path.name} references undefined check_done step", errors)
 
 
@@ -68,8 +68,8 @@ def main() -> int:
     for path in CRAWLER_WORKFLOWS:
         check_crawler_workflow(path, errors)
     check_trigger(ROOT / ".github/workflows/crawl-trigger.yml", errors)
-    check_budget_script(ROOT / "custom_scripts/crawl_budget.py", errors)
-    assert_condition((ROOT / "custom_scripts/configure_cron_job_org.py").exists(), "missing cron-job.org configuration script", errors)
+    check_budget_script(ROOT / "scripts/crawl_budget.py", errors)
+    assert_condition((ROOT / "scripts/configure_cron_job_org.py").exists(), "missing cron-job.org configuration script", errors)
 
     if errors:
         print("workflow expectation check failed:")

@@ -18,10 +18,10 @@ on:
     paths:
       - 'data/zol_phones_*.json'
       - 'data/pconline_phones_*.json'
-      - 'merge_phones.py'
-      - 'ai_verify_root_status.py'
-      - 'search_root_info.py'
-      - 'custom_scripts/git_sync_progress.sh'
+      - 'scripts/merge_phones.py'
+      - 'scripts/ai_verify_root_status.py'
+      - 'scripts/search_root_info.py'
+      - 'scripts/git_sync_progress.sh'
       - 'docs/phones/**'
       - '!.done'
       - '!crawl_state/**'
@@ -277,7 +277,7 @@ jobs:
             echo "找到数据文件，开始合并..."
             echo "合并数据..."
             cp data/*.json data/*.csv . 2>/dev/null || true
-            python merge_phones.py
+            python scripts/merge_phones.py
           else
             echo "没有找到数据文件，跳过合并"
             exit 0
@@ -294,7 +294,7 @@ jobs:
           MERGED="data/merged_phones_${MERGE_DATE}.json"
           if [ -s "$MERGED" ]; then
             echo "开始 AI root/越狱验证..."
-            python ai_verify_root_status.py "$MERGED"
+            python scripts/ai_verify_root_status.py "$MERGED"
             echo "root/越狱验证完成"
           else
             echo "跳过 root/越狱验证（无合并文件）"
@@ -384,7 +384,7 @@ jobs:
           INPUT_FILE="data/merged_phones_${{ needs.merge-data.outputs.crawl_date }}.json"
           if [ -f "$INPUT_FILE" ]; then
             echo "半月周期已完成，开始AI搜索BL锁和Root信息..."
-            python search_root_info.py --input "$INPUT_FILE" --output "phones_with_root_info.json" --max-phones 500 --delay 2
+            python scripts/search_root_info.py --input "$INPUT_FILE" --output "phones_with_root_info.json" --max-phones 500 --delay 2
           else
             echo "未找到合并数据文件，跳过AI搜索"
           fi

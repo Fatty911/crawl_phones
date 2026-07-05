@@ -81,11 +81,11 @@ jobs:
 
           if [ "$FORCE_RESTART" = "true" ]; then
             echo "强制重启，重置进度"
-            rm -f pconline/progress.json
+            rm -f crawl_state/pconline/progress.json
           elif [ ! -f "$CURRENT_PERIOD_FILE" ] || [ "$(cat "$CURRENT_PERIOD_FILE")" != "$CRAWL_PERIOD" ]; then
             echo "进入新的半月周期 $CRAWL_PERIOD，保留已处理手机列表"
-            if [ -f pconline/progress.json ]; then
-              python3 -c "import json; p=json.load(open('pconline/progress.json')); p['current_brand_index']=0; p['current_page']=1; p['total_phones']=0; json.dump(p,open('pconline/progress.json','w'),indent=2); print('已重置品牌索引，保留已处理手机列表')"
+            if [ -f crawl_state/pconline/progress.json ]; then
+              python3 -c "import json; p=json.load(open('crawl_state/pconline/progress.json')); p['current_brand_index']=0; p['current_page']=1; p['total_phones']=0; json.dump(p,open('crawl_state/pconline/progress.json','w'),indent=2); print('已重置品牌索引，保留已处理手机列表')"
             fi
           fi
           echo "$CRAWL_PERIOD" > "$CURRENT_PERIOD_FILE"
@@ -109,7 +109,7 @@ jobs:
             echo "MAX_PHONES=${{ github.event.inputs.max_phones || '30' }}" >> "$GITHUB_ENV"
             echo "DEBUG_LIMIT=${{ github.event.inputs.max_phones || '30' }}" >> "$GITHUB_ENV"
           else
-            python custom_scripts/crawl_budget.py configure
+            python scripts/crawl_budget.py configure
             echo "MAX_PHONES=${{ github.event.inputs.max_phones || '0' }}" >> "$GITHUB_ENV"
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
@@ -136,11 +136,11 @@ jobs:
         if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true'
         env:
           PROXY_SUBSCRIPTIONS: ${{ secrets.PROXY_SUBSCRIPTIONS }}
-        run: python custom_scripts/setup_proxy_runtime.py --github-env "$GITHUB_ENV"
+        run: python scripts/setup_proxy_runtime.py --github-env "$GITHUB_ENV"
 
       - name: Clamp step1 runtime to workflow budget
         if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true'
-        run: python custom_scripts/crawl_budget.py clamp --step-label step1 --skip-env STEP1_SKIP
+        run: python scripts/crawl_budget.py clamp --step-label step1 --skip-env STEP1_SKIP
 
       - name: Run PConline crawler
         id: step1
@@ -168,7 +168,7 @@ jobs:
           fi
 
           set +e
-          python crawl_pconline.py --step 1 --time-limit "$RUN_TIME" --max-phones "$MAX_PHONES" --auto $INCREMENTAL_FLAG $DEBUG_LIMIT_FLAG
+          python scripts/crawl_pconline.py --step 1 --time-limit "$RUN_TIME" --max-phones "$MAX_PHONES" --auto $INCREMENTAL_FLAG $DEBUG_LIMIT_FLAG
           EXIT_CODE=$?
           set -e
           echo "PConline step1 exit code: $EXIT_CODE"
@@ -180,7 +180,7 @@ jobs:
             echo "Step1 未完成，提交进度并正常结束本次运行"
             git add -A
             git diff --cached --quiet || git commit -m "chore: update PConline crawl progress [skip ci]"
-            bash custom_scripts/git_sync_progress.sh "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
+            bash scripts/git_sync_progress.sh "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
             echo "complete=false" >> "$GITHUB_OUTPUT"
             echo "failed=false" >> "$GITHUB_OUTPUT"
             exit 0
@@ -201,13 +201,13 @@ jobs:
         with:
           name: pconline-phone-data-early-${{ github.run_id }}
           path: |
-            pconline/json/
-            pconline/progress.json
+            crawl_state/pconline/json/
+            crawl_state/pconline/progress.json
           retention-days: 90
 
       - name: Parse and merge data
         if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true'
-        run: python crawl_pconline.py --step 2
+        run: python scripts/crawl_pconline.py --step 2
 
       - name: Validate generated PConline data
         if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true'
@@ -241,7 +241,7 @@ jobs:
 
       - name: Generate summary
         if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true'
-        run: python crawl_pconline.py --step 3
+        run: python scripts/crawl_pconline.py --step 3
 
       - name: Mark crawl complete and commit
         if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true'
@@ -262,7 +262,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add -A
           git diff --cached --quiet || git commit -m "chore: update PConline crawl data [skip ci]"
-          bash custom_scripts/git_sync_progress.sh "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
+          bash scripts/git_sync_progress.sh "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
 
       - name: Upload crawl data
         if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true'

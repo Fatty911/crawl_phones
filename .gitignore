@@ -6,10 +6,10 @@ venv/
 .venv/
 
 # 爬取的临时数据文件
-zol/json/
-zol/exception/
-pconline/json/
-pconline/exception/
+crawl_state/zol/json/
+crawl_state/zol/exception/
+crawl_state/pconline/json/
+crawl_state/pconline/exception/
 ai_search/
 
 # 生成的临时数据文件（爬虫运行时临时输出，已归入 data/ 目录）
@@ -30,3 +30,4 @@ ai_search/
 # data/ 目录存放爬虫产出和合并数据，需要追踪
 # 只忽略超大临时文件
 data/tmp/
+.omo/run-continuation/

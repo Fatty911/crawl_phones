@@ -57,7 +57,7 @@ resolve_rebase_conflicts() {
         theirs="$(mktemp)"
         git show ":2:$path" > "$ours" 2>/dev/null || echo "{}" > "$ours"
         git show ":3:$path" > "$theirs" 2>/dev/null || echo "{}" > "$theirs"
-        python custom_scripts/merge_progress_json.py "$path" "$ours" "$theirs"
+        python scripts/merge_progress_json.py "$path" "$ours" "$theirs"
         rm -f "$ours" "$theirs"
         git add "$path"
         echo "[git-sync] merged $path"

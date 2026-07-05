@@ -1,5 +1,14 @@
 ## 2026-07-06
 
+### Changed
+- 根目录 7 个 Python 脚本全部移入 `scripts/`（crawl_zol/crawl_pconline/merge_phones/search_root_info/ai_verify_root_status/proxy_manager/generate_clash_config）
+- `custom_scripts/` 合并入 `scripts/`（7 个文件），删除 `custom_scripts/` 目录
+- `zol/` 和 `pconline/` 目录移入 `crawl_state/`（合并为 `crawl_state/zol/` + `crawl_state/pconline/`）
+- 所有 workflow（crawl-zol/crawl-pconline/merge-and-deploy/ci）路径引用同步更新
+- `validate_syntax.py`/`validate_workflow_expectations.py` 路径引用同步更新
+- `.gitignore` 规则同步更新（zol/json/ → crawl_state/zol/json/ 等）
+- 根目录从 22 个文件降至 10 个（仅 README/AGENTS/CHANGELOG/HISTORY/requirements.txt + 4 个目录）
+
 ### Fixed
 - 根目录数据文件再次堆积（workflow 产出仍在根目录）——彻底修复
 - 爬虫脚本 `crawl_zol.py`/`crawl_pconline.py` 输出路径改为 `data/` 子目录（`data_dir` 变量）
