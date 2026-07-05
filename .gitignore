@@ -26,3 +26,7 @@ phones_with_root_info.json
 # IDE
 .vscode/
 .idea/
+data/
+data/*.json
+data/*.csv
+!data/.gitkeep

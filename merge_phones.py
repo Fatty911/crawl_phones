@@ -821,13 +821,13 @@ def write_json(path, rows):
 def main():
     today = os.environ.get("MERGE_DATE") or date.today().strftime("%Y%m%d")
 
-    zol_files = sorted(glob.glob(os.path.join(DIR, "zol_phones_*.json")))
-    pconline_files = sorted(glob.glob(os.path.join(DIR, "pconline_phones_*.json")))
+    zol_files = sorted(glob.glob(os.path.join(DIR, "data/zol_phones_*.json")))
+    pconline_files = sorted(glob.glob(os.path.join(DIR, "data/pconline_phones_*.json")))
     print(f"中关村在线数据文件 ({len(zol_files)}): {[os.path.basename(f) for f in zol_files]}")
     print(f"太平洋电脑网数据文件 ({len(pconline_files)}): {[os.path.basename(f) for f in pconline_files]}")
 
-    zol_rows = norm_rows(load_all("zol_phones_*.json"), '中关村在线')
-    pconline_rows = norm_rows(load_all("pconline_phones_*.json"), '太平洋电脑网')
+    zol_rows = norm_rows(load_all("data/zol_phones_*.json"), '中关村在线')
+    pconline_rows = norm_rows(load_all("data/pconline_phones_*.json"), '太平洋电脑网')
 
     if not zol_rows and not pconline_rows:
         print("错误: 没有找到任何数据文件")
@@ -842,8 +842,8 @@ def main():
     dual_source_count = sum(1 for row in all_rows if row.get('验证状态', '').startswith('双源'))
     print(f"交叉验证后机型:{len(all_rows)} 双源记录:{dual_source_count} 单源记录:{len(all_rows) - dual_source_count}")
 
-    merged_csv_path = os.path.join(DIR, f"merged_phones_{today}.csv")
-    merged_json_path = os.path.join(DIR, f"merged_phones_{today}.json")
+    merged_csv_path = os.path.join(DIR, f"data/merged_phones_{today}.csv")
+    merged_json_path = os.path.join(DIR, f"data/merged_phones_{today}.json")
     write_csv(merged_csv_path, all_rows, header)
     write_json(merged_json_path, all_rows)
 
@@ -851,7 +851,7 @@ def main():
     if zol_rows and pconline_rows:
         diffs = diff(zol_rows, pconline_rows, source_header)
         if diffs:
-            diff_path = os.path.join(DIR, f"diff_phones_{today}.csv")
+            diff_path = os.path.join(DIR, f"data/diff_phones_{today}.csv")
             with open(diff_path, 'w', encoding='utf-8-sig', newline='') as f:
                 writer = csv.DictWriter(f, fieldnames=['手机', '配置项', '中关村在线', '太平洋电脑网'])
                 writer.writeheader()

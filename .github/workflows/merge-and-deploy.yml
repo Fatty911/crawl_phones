@@ -16,8 +16,8 @@ on:
         default: ''
   push:
     paths:
-      - 'zol_phones_*.json'
-      - 'pconline_phones_*.json'
+      - 'data/zol_phones_*.json'
+      - 'data/pconline_phones_*.json'
       - 'merge_phones.py'
       - 'ai_verify_root_status.py'
       - 'search_root_info.py'
@@ -102,7 +102,7 @@ jobs:
         if: github.event.inputs.force_merge == 'true'
         run: |
           echo "强制重新合并，清理旧数据文件..."
-          rm -f zol_phones_*.json pconline_phones_*.json merged_phones_*.csv diff_phones_*.csv merged_phones_*.json
+          rm -f data/zol_phones_*.json data/pconline_phones_*.json data/merged_phones_*.csv data/diff_phones_*.csv data/merged_phones_*.json
 
       - name: 下载所有增量爬虫数据
         env:
@@ -158,7 +158,7 @@ jobs:
           PY
                 then
                   # 不覆盖同名文件——给每个 artifact 加上 run_id 前缀以累积
-                  find "$tmp_dir" -type f \( -name "$json_glob" -o -name "$csv_glob" \) -exec sh -c 'for f; do base="$(basename "$f")"; if [ -f "./$base" ]; then cp "$f" "./'${run_id}'_$base"; else cp "$f" .; fi; done' _ {} \; 2>/dev/null || true
+                  find "$tmp_dir" -type f \( -name "$json_glob" -o -name "$csv_glob" \) -exec sh -c 'for f; do base="$(basename "$f")"; if [ -f "./data/$base" ]; then cp "$f" "./data/'${run_id}'_$base"; else cp "$f" ./data/; fi; done' _ {} \; 2>/dev/null || true
                   total_downloaded=$((total_downloaded + 1))
                   echo "已下载 ${label} artifact，run=${run_id}（累积 #${total_downloaded}）"
                 else
@@ -174,6 +174,7 @@ jobs:
             echo "${label} 共下载 ${total_downloaded} 个有效 artifact"
           }
 
+          mkdir -p data
           download_all_artifacts "crawl-zol.yml" "zol-phone-data*" "中关村在线" "zol_phones_*.json" "zol_phones_*.csv"
           rm -rf zol-phone-data* 2>/dev/null || true
 
@@ -181,9 +182,9 @@ jobs:
           rm -rf pconline-phone-data* 2>/dev/null || true
 
           echo "当前目录数据文件:"
-          ls -la *.json 2>/dev/null || echo "没有找到数据文件"
+          ls -la data/*.json 2>/dev/null || echo "没有找到数据文件"
           echo "=== 文件行数统计 ==="
-          for f in zol_phones_*.json pconline_phones_*.json; do
+          for f in data/zol_phones_*.json data/pconline_phones_*.json; do
             if [ -f "$f" ]; then
               ROWS=$(python3 -c "import json; print(len(json.load(open('$f'))))" 2>/dev/null || echo "0")
               echo "$f: $ROWS 行"
@@ -214,8 +215,8 @@ jobs:
           print(f"事件名称: {event_name}")
 
           checks = [
-              ("中关村在线", "zol_phones_*.json"),
-              ("太平洋电脑网", "pconline_phones_*.json"),
+              ("中关村在线", "data/zol_phones_*.json"),
+              ("太平洋电脑网", "data/pconline_phones_*.json"),
           ]
           valid_sources = 0
           for label, pattern in checks:
@@ -272,9 +273,10 @@ jobs:
         env:
           MERGE_DATE: ${{ steps.date.outputs.date }}
         run: |
-          if compgen -G "zol_phones_*.json" > /dev/null || compgen -G "pconline_phones_*.json" > /dev/null; then
+          if compgen -G "data/zol_phones_*.json" > /dev/null || compgen -G "data/pconline_phones_*.json" > /dev/null; then
             echo "找到数据文件，开始合并..."
-            ls -la zol_phones_*.json pconline_phones_*.json 2>/dev/null || true
+            echo "合并数据..."
+            cp data/*.json data/*.csv . 2>/dev/null || true
             python merge_phones.py
           else
             echo "没有找到数据文件，跳过合并"
@@ -289,7 +291,7 @@ jobs:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           MERGE_DATE: ${{ steps.date.outputs.date }}
         run: |
-          MERGED="merged_phones_${MERGE_DATE}.json"
+          MERGED="data/merged_phones_${MERGE_DATE}.json"
           if [ -s "$MERGED" ]; then
             echo "开始 AI root/越狱验证..."
             python ai_verify_root_status.py "$MERGED"
@@ -301,10 +303,10 @@ jobs:
       - name: 检查合并结果
         if: steps.validate.outputs.ready == 'true'
         run: |
-          if [ -s "merged_phones_${{ steps.date.outputs.date }}.json" ]; then
+          if [ -s "data/merged_phones_${{ steps.date.outputs.date }}.json" ]; then
             echo "合并成功，生成文件:"
-            ls -la merged_phones_* diff_phones_* 2>/dev/null || true
-            ROWS=$(python -c 'import json; print(len(json.load(open("merged_phones_${{ steps.date.outputs.date }}.json", encoding="utf-8"))))')
+            ls -la data/merged_phones_* diff_phones_* 2>/dev/null || true
+            ROWS=$(python -c 'import json; print(len(json.load(open("data/merged_phones_${{ steps.date.outputs.date }}.json", encoding="utf-8"))))')
             echo "合并数据行数: $ROWS"
             if [ "$ROWS" -lt 10 ]; then
               echo "合并数据少于 10 行，疑似爬虫数据不完整，拒绝发布"
@@ -323,7 +325,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           # 如果有生成合并文件，提交到仓库（供 push 触发后续发布）
-          if [ -f "merged_phones_${DATE}.json" ]; then
+          if [ -f "data/merged_phones_${DATE}.json" ]; then
             mkdir -p docs/phones/data
             cp "merged_phones_${DATE}.json" docs/phones/data/latest.json
           fi
@@ -379,7 +381,7 @@ jobs:
         env:
           AI_API_KEY: ${{ secrets.AI_API_KEY }}
         run: |
-          INPUT_FILE="merged_phones_${{ needs.merge-data.outputs.crawl_date }}.json"
+          INPUT_FILE="data/merged_phones_${{ needs.merge-data.outputs.crawl_date }}.json"
           if [ -f "$INPUT_FILE" ]; then
             echo "半月周期已完成，开始AI搜索BL锁和Root信息..."
             python search_root_info.py --input "$INPUT_FILE" --output "phones_with_root_info.json" --max-phones 500 --delay 2

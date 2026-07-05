@@ -51,11 +51,11 @@ jobs:
             gh release download "$TAG" \
               --repo "${{ github.repository }}" \
               --dir release-files \
-              --pattern 'merged_phones_*.json' \
-              --pattern 'merged_phones_*.csv' \
+              --pattern 'data/merged_phones_*.json' \
+              --pattern 'data/merged_phones_*.csv' \
               --pattern 'phones_with_root_info.json' >/dev/null 2>&1 || true
 
-            MERGED_JSON=$(ls release-files/merged_phones_*.json 2>/dev/null | head -n 1 || true)
+            MERGED_JSON=$(ls release-files/data/merged_phones_*.json 2>/dev/null | head -n 1 || true)
             if [ -z "$MERGED_JSON" ]; then
               continue
             fi
@@ -79,7 +79,7 @@ jobs:
             else
               cp "$MERGED_JSON" site/data/latest.json
             fi
-            cp release-files/merged_phones_*.csv "site/data/merged_phones_${DATE}.csv"
+            cp release-files/data/merged_phones_*.csv "site/data/merged_phones_${DATE}.csv"
 
             python - "$DATE" <<'PY'
           import json
