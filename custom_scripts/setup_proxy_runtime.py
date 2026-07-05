@@ -200,7 +200,7 @@ def write_runtime_files(proxy_config: Path, clash_config: Path,
     generator.save_config(config, str(clash_config))
 
 
-def wait_for_controller(timeout: int = 15) -> bool:
+def wait_for_controller(timeout: int = 30) -> bool:
     session = requests.Session()
     session.trust_env = False
     deadline = time.time() + timeout
@@ -300,11 +300,23 @@ def main() -> int:
 
     if not wait_for_controller():
         process.terminate()
+        # Print mihomo log for debugging
+        try:
+            log_content = log_path.read_text(errors="replace")[-3000:]
+            print(f"=== mihomo 日志 (最后3000字符) ===\n{log_content}")
+        except Exception:
+            pass
         return disable_proxy(args.github_env, "mihomo 控制端口未就绪")
 
     test_urls = args.test_url or DEFAULT_TEST_URLS
     if not test_local_proxy(test_urls):
         process.terminate()
+        # Print mihomo log for debugging
+        try:
+            log_content = log_path.read_text(errors="replace")[-3000:]
+            print(f"=== mihomo 日志 (最后3000字符) ===\n{log_content}")
+        except Exception:
+            pass
         return disable_proxy(args.github_env, "所有代理节点连通性测试失败")
 
     append_github_env(
