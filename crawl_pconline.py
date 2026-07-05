@@ -12,7 +12,7 @@ import csv
 import argparse
 import logging
 from datetime import datetime, date
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
@@ -552,33 +552,75 @@ def _get_existing_phone_ids() -> set:
     return existing
 
 
-def _scan_all_models(session: requests.Session) -> List[Dict]:
+def _scan_all_models(session: requests.Session, start_time: float) -> Tuple[List[Dict], bool, int, int]:
     """全量扫描所有品牌的所有型号（仅收集基础信息，不爬详情）"""
     logger.info("=" * 70)
     logger.info("增量扫描模式：全量扫描所有品牌型号...")
     logger.info("=" * 70)
 
     brands = crawl_brand_list(session)
-    brands = sort_brands_by_heat(brands)
+    if MAX_TIME_PER_STEP > 0 or MAX_PHONES_PER_RUN > 0:
+        heat_map = {b.strip().lower(): idx for idx, b in enumerate(PHONE_BRAND_HEAT_ORDER)}
+        brands = sorted(brands, key=lambda b: heat_map.get(b.strip().lower(), 999))
+        logger.info(f"预算扫描模式：跳过动态品牌热度探测，使用兜底热度排序: {brands[:10]}...")
+    else:
+        brands = sort_brands_by_heat(brands, session)
     logger.info(f"品牌列表 ({len(brands)}): {brands}")
 
     all_phones = []
-    for brand in brands:
-        page = 1
+    truncated = False
+    next_brand_index = len(brands)
+    next_page = 1
+    current_brand_idx = progress.get('current_brand_index', 0)
+    current_page = progress.get('current_page', 1)
+    # 扫描候选保留 3 倍余量，避免已存在机型过滤后拿不到足够新增详情。
+    scan_limit = MAX_PHONES_PER_RUN * 3 if MAX_PHONES_PER_RUN > 0 else 0
+
+    for bi in range(current_brand_idx, len(brands)):
+        brand = brands[bi]
+        page = current_page if bi == current_brand_idx else 1
         while True:
+            if MAX_TIME_PER_STEP > 0 and time.time() - start_time >= MAX_TIME_PER_STEP:
+                logger.info(f"增量型号扫描达到时间限制 ({MAX_TIME_PER_STEP}秒)，保存扫描游标")
+                truncated = True
+                next_brand_index = bi
+                next_page = page
+                break
+            if scan_limit > 0 and len(all_phones) >= scan_limit:
+                logger.info(f"达到增量扫描候选上限 ({scan_limit}个型号)，保存扫描游标")
+                truncated = True
+                next_brand_index = bi
+                next_page = page
+                break
+
             phones = crawl_list_page(session, brand, page)
             if not phones:
+                next_brand_index = bi + 1
+                next_page = 1
                 break
             all_phones.extend(phones)
             if len(phones) < 25:
+                next_brand_index = bi + 1
+                next_page = 1
                 break
             page += 1
-            # 调试/限制模式下：可以提前终止扫描
-            if MAX_PHONES_PER_RUN > 0 and len(all_phones) >= MAX_PHONES_PER_RUN * 3:
-                logger.info(f"接近数量限制，提前终止型号扫描（已扫描 {len(all_phones)} 个型号）")
+
+            if MAX_TIME_PER_STEP > 0 and time.time() - start_time >= MAX_TIME_PER_STEP:
+                logger.info(f"增量型号扫描达到时间限制 ({MAX_TIME_PER_STEP}秒)，保存扫描游标")
+                truncated = True
+                next_brand_index = bi
+                next_page = page
                 break
+            if scan_limit > 0 and len(all_phones) >= scan_limit:
+                logger.info(f"达到增量扫描候选上限 ({scan_limit}个型号)，保存扫描游标")
+                truncated = True
+                next_brand_index = bi
+                next_page = page
+                break
+        if truncated:
+            break
     logger.info(f"全量扫描完成：共 {len(all_phones)} 个型号")
-    return all_phones
+    return all_phones, truncated, next_brand_index, next_page
 
 
 def step1_crawl_list_and_detail():
@@ -593,16 +635,21 @@ def step1_crawl_list_and_detail():
 
     # 增量模式：先全量扫描所有型号，与本地已有对比，仅爬取新增
     if INCREMENTAL_MODE:
-        all_phones = _scan_all_models(session)
+        all_phones, scan_truncated, next_brand_index, next_page = _scan_all_models(session, start_time)
         existing_ids = _get_existing_phone_ids()
         new_phones = [p for p in all_phones if p['id'] not in existing_ids]
 
         logger.info(f"全量扫描完成：共 {len(all_phones)} 个型号，新增 {len(new_phones)} 个，已有 {len(all_phones) - len(new_phones)} 个")
 
         if not new_phones:
+            progress['current_brand_index'] = next_brand_index
+            progress['current_page'] = next_page
             logger.info("增量模式：未发现新增型号，无需爬取详情")
             progress['total_phones'] = 0
             save_progress()
+            if scan_truncated and AUTO_MODE:
+                logger.info('增量扫描未完成，等待下次继续扫描')
+                sys.exit(10)
             return
 
         # 仅对新增型号爬取详情
@@ -678,7 +725,14 @@ def step1_crawl_list_and_detail():
                 logger.warning(f"✗ 详情页爬取失败: {phone.get('name', phone.get('型号', '未知'))}")
 
         progress['total_phones'] = phones_crawled
+        progress['current_brand_index'] = next_brand_index
+        progress['current_page'] = next_page
         save_progress()
+        if scan_truncated:
+            logger.info("增量扫描未完成，本次已处理当前扫描片段，等待下次继续")
+            if AUTO_MODE:
+                sys.exit(10)
+            return
         logger.info(f"增量模式完成：新增 {phones_crawled} 个手机")
         return
 
