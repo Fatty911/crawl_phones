@@ -475,14 +475,28 @@ def model_key(row):
     if is_missing(name):
         return ''
     name = re.sub(r'\s+', '', name).lower()
-    # 去除存储容量后缀（括号形式）
-    name = re.sub(r'[（(]\d+gb(?:/\d+gb)?[）)]', '', name)
-    # 去除末尾裸存储容量后缀
-    name = re.sub(r'\d+gb$', '', name)
+    # 统一品牌名：中文→英文（以 ZOL 命名为准）
+    brand_map = {
+        '华为': 'huawei', '荣耀': 'honor', '小米': 'xiaomi', '红米': 'redmi',
+        '一加': 'oneplus', '真我': 'realme', '三星': 'samsung', '苹果': 'apple',
+        '努比亚': 'nubia', '摩托罗拉': 'motorola', '魅族': 'meizu',
+        '联想': 'lenovo', '索尼': 'sony', '谷歌': 'google', '中兴': 'zte',
+        '华硕': 'asus', '诺基亚': 'nokia', '夏普': 'sharp',
+    }
+    for cn, en in brand_map.items():
+        if name.startswith(cn):
+            name = en + name[len(cn):]
+            break
+    # 去除存储容量后缀（括号形式）：支持 12GB/256GB、8GB+128GB、12GB/512GB/全网通、1TB 等
+    name = re.sub(r'[（(][^)）]*\d+\s*[gt]b[^)）]*[)）]', '', name, flags=re.IGNORECASE)
+    # 去除末尾裸存储容量后缀（GB/TB，大小写不敏感）
+    name = re.sub(r'\d+[gt]b$', '', name, flags=re.IGNORECASE)
     # 去除常见后缀
-    for suffix in ['5g', '4g', 'wifi']:
+    for suffix in ['5g版', '4g版', '5g', '4g', 'wifi版', '全网通', 'wifi']:
         if name.endswith(suffix):
             name = name[:-len(suffix)]
+    # 去除末尾多余分隔符
+    name = name.rstrip('/-_')
     return name
 
 
