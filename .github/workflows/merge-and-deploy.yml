@@ -327,7 +327,7 @@ jobs:
           # 如果有生成合并文件，提交到仓库（供 push 触发后续发布）
           if [ -f "data/merged_phones_${DATE}.json" ]; then
             mkdir -p docs/phones/data
-            cp "merged_phones_${DATE}.json" docs/phones/data/latest.json
+            cp "data/merged_phones_${DATE}.json" docs/phones/data/latest.json
           fi
           git add -A
           if git diff --cached --quiet; then
@@ -349,8 +349,8 @@ jobs:
         with:
           name: phone-data-${{ steps.date.outputs.date }}-${{ steps.date.outputs.time }}
           path: |
-            merged_phones_${{ steps.date.outputs.date }}.csv
-            merged_phones_${{ steps.date.outputs.date }}.json
+            data/merged_phones_${{ steps.date.outputs.date }}.csv
+            data/merged_phones_${{ steps.date.outputs.date }}.json
           retention-days: 90
 
   search-root-info:
