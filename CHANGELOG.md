@@ -1,5 +1,13 @@
 ## 2026-07-06
 
+### Added
+- 新增 CNMO（手机中国）爬虫 `scripts/crawl_cnmo.py`：165页~15648款，参数页44项解析
+- 新增 CNMO 爬虫 workflow `crawl-cnmo.yml`
+
+### Fixed
+- merge_phones.py 型号匹配改进：品牌名统一(中文→英文)、存储正则支持TB/IgnoreCase
+- 双源匹配从 0 条提升到 189 条，双源率从 0% 提升到 29%
+
 ### Changed
 - 根目录 7 个 Python 脚本全部移入 `scripts/`（crawl_zol/crawl_pconline/merge_phones/search_root_info/ai_verify_root_status/proxy_manager/generate_clash_config）
 - `custom_scripts/` 合并入 `scripts/`（7 个文件），删除 `custom_scripts/` 目录
