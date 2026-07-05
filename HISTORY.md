@@ -1,3 +1,19 @@
+## 2026-07-05 — 代理修复 + 数据目录整理
+
+### 代理连通性修复（与 crawl_cars 同步）
+- `custom_scripts/setup_proxy_runtime.py`: mihomo 超时 15s→30s，失败时打印日志
+- `custom_scripts/generate_clash_config.py`: health-check URL → `baidu.com`
+- 代理连通性测试增加重试 + `trust_env=False`
+
+### 数据文件目录整理
+- 206个 JSON/CSV 数据文件从根目录移入 `data/`
+- `merge-and-deploy.yml`、`deploy-pages.yml`、`merge_phones.py` 所有引用路径更新
+- `.gitignore` 添加 `data/*.json`、`data/*.csv`
+- 根目录文件数：220→14
+
+### 上游同步工作流
+- 新增 `sync-upstream.yml`
+
 # History
 
 ## 2026-06-15
