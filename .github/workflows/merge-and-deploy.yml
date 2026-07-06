@@ -276,7 +276,6 @@ jobs:
           if compgen -G "data/zol_phones_*.json" > /dev/null || compgen -G "data/pconline_phones_*.json" > /dev/null; then
             echo "找到数据文件，开始合并..."
             echo "合并数据..."
-            cp data/*.json data/*.csv . 2>/dev/null || true
             python scripts/merge_phones.py
           else
             echo "没有找到数据文件，跳过合并"

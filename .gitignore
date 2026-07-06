@@ -19,6 +19,16 @@ ai_search/
 /diff_phones_*.csv
 /phones_with_root_info.json
 /root_status_cache.json
+/pconline_phones_*.csv
+/pconline_phones_*.json
+/zol_phones_*.csv
+/zol_phones_*.json
+/cnmo_phones_*.json
+/cnmo_products_*.json
+/*_pconline_phones_*.csv
+/*_pconline_phones_*.json
+/*_zol_phones_*.csv
+/*_zol_phones_*.json
 
 # 日志
 *.log
@@ -31,3 +41,4 @@ ai_search/
 # 只忽略超大临时文件
 data/tmp/
 .omo/run-continuation/
+.review-evidence/
