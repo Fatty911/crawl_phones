@@ -14,6 +14,7 @@ on:
           - all
           - zol
           - pconline
+          - cnmo
 
 jobs:
   trigger:
@@ -72,16 +73,28 @@ jobs:
               -f run_profile="$RUN_PROFILE"
           }
 
+          trigger_cnmo() {
+            echo "触发 crawl-cnmo.yml..."
+            gh workflow run "crawl-cnmo.yml" \
+              --repo "${{ github.repository }}" \
+              -f max_pages="0" \
+              -f max_phones="0"
+          }
+
           case "$CRAWLER" in
             all)
               trigger_workflow "crawl-zol.yml"
               trigger_workflow "crawl-pconline.yml"
+              trigger_cnmo
               ;;
             zol)
               trigger_workflow "crawl-zol.yml"
               ;;
             pconline)
               trigger_workflow "crawl-pconline.yml"
+              ;;
+            cnmo)
+              trigger_cnmo
               ;;
             *)
               echo "未知爬虫类型: $CRAWLER"
