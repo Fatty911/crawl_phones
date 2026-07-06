@@ -7,7 +7,7 @@ on:
         required: false
         default: 'false'
       trigger_source:
-        description: '触发来源（pconline-crawl/zol-crawl/schedule/manual）'
+        description: '触发来源（pconline-crawl/zol-crawl/cnmo-crawl/schedule/manual）'
         required: false
         default: 'manual'
       trigger_date:
@@ -18,6 +18,7 @@ on:
     paths:
       - 'data/zol_phones_*.json'
       - 'data/pconline_phones_*.json'
+      - 'data/cnmo_phones_*.json'
       - 'scripts/merge_phones.py'
       - 'scripts/ai_verify_root_status.py'
       - 'scripts/search_root_info.py'
@@ -181,10 +182,13 @@ jobs:
           download_all_artifacts "crawl-pconline.yml" "pconline-phone-data*" "太平洋电脑网" "pconline_phones_*.json" "pconline_phones_*.csv"
           rm -rf pconline-phone-data* 2>/dev/null || true
 
+          download_all_artifacts "crawl-cnmo.yml" "cnmo-phone-data*" "CNMO" "cnmo_phones_*.json" "cnmo_phones_*.csv"
+          rm -rf cnmo-phone-data* 2>/dev/null || true
+
           echo "当前目录数据文件:"
           ls -la data/*.json 2>/dev/null || echo "没有找到数据文件"
           echo "=== 文件行数统计 ==="
-          for f in data/zol_phones_*.json data/pconline_phones_*.json; do
+          for f in data/zol_phones_*.json data/pconline_phones_*.json data/cnmo_phones_*.json; do
             if [ -f "$f" ]; then
               ROWS=$(python3 -c "import json; print(len(json.load(open('$f'))))" 2>/dev/null || echo "0")
               echo "$f: $ROWS 行"
@@ -217,8 +221,10 @@ jobs:
           checks = [
               ("中关村在线", "data/zol_phones_*.json"),
               ("太平洋电脑网", "data/pconline_phones_*.json"),
+              ("CNMO", "data/cnmo_phones_*.json"),
           ]
           valid_sources = 0
+          primary_sources = 0
           for label, pattern in checks:
               files = sorted(glob.glob(pattern))
               if not files:
@@ -245,8 +251,12 @@ jobs:
                       pass
               else:
                   valid_sources += 1
-          ok = valid_sources > 0
-          if trigger_source in ["pconline-crawl", "zol-crawl"] and not ok:
+                  if label != "CNMO":
+                      primary_sources += 1
+          ok = valid_sources > 0 and primary_sources > 0
+          if valid_sources > 0 and primary_sources == 0:
+              print("仅找到 CNMO 数据，缺少 ZOL/PConline 主来源，本次跳过发布")
+          if trigger_source in ["pconline-crawl", "zol-crawl", "cnmo-crawl"] and not ok:
               print(f"被爬虫工作流 {trigger_source} 触发但未找到任何有效数据")
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
               f.write(f"ready={'true' if ok else 'false'}\n")

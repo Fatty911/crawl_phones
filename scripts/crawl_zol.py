@@ -153,7 +153,7 @@ if args.debug_limit > 0:
     MAX_PHONES_PER_RUN = args.debug_limit
     logger.info(f"调试模式：限制爬取 {args.debug_limit} 个手机，启用增量扫描模式")
 
-working_dir = os.path.dirname(os.path.abspath(__file__))
+working_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 zol_dir = os.path.join(working_dir, 'crawl_state', 'zol')
 zol_json_dir = os.path.join(zol_dir, 'json')
 data_dir = os.path.join(working_dir, 'data')

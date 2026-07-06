@@ -99,3 +99,23 @@ jobs:
           path: |
             data/cnmo_phones_*.json
           retention-days: 90
+
+      - name: Trigger merge-and-deploy workflow
+        if: steps.validate_data.outputs.has_data == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.ACTION_PAT }}
+        run: |
+          echo "触发合并分析工作流..."
+          gh api repos/${{ github.repository }}/actions/workflows/merge-and-deploy.yml/dispatches \
+            --method POST \
+            --input - <<EOF
+          {
+            "ref": "main",
+            "inputs": {
+              "force_merge": "false",
+              "trigger_source": "cnmo-crawl",
+              "trigger_date": "$(date +%Y%m%d)"
+            }
+          }
+          EOF
+          echo "合并分析工作流已触发"

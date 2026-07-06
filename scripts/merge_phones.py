@@ -784,6 +784,31 @@ def merge_verified_rows(zol_rows, pconline_rows, all_fields):
     return merged
 
 
+def append_unique_single_source(base_rows, extra_rows, source):
+    exact_keys = {model_key(row) for row in base_rows if model_key(row)}
+    fuzzy_keys = {fuzzy_model_key(row) for row in base_rows if fuzzy_model_key(row)}
+    appended = []
+    skipped = 0
+    for extra_row in extra_rows:
+        exact = model_key(extra_row)
+        fuzzy = fuzzy_model_key(extra_row)
+        if (exact and exact in exact_keys) or (fuzzy and fuzzy in fuzzy_keys):
+            skipped += 1
+            continue
+        row = dict(extra_row)
+        if '品牌' in row:
+            row['品牌'] = normalize_brand(row['品牌'])
+        row['数据来源'] = source
+        row['验证状态'] = '单源'
+        row.setdefault('交叉验证差异', '-')
+        appended.append(row)
+        if exact:
+            exact_keys.add(exact)
+        if fuzzy:
+            fuzzy_keys.add(fuzzy)
+    return appended, skipped
+
+
 def diff(zol_rows, pconline_rows, all_fields):
     index = {
         row.get('型号', '').replace(' ', ''): row
@@ -838,21 +863,30 @@ def main():
 
     zol_files = sorted(glob.glob(os.path.join(ROOT, "data/zol_phones_*.json")))
     pconline_files = sorted(glob.glob(os.path.join(ROOT, "data/pconline_phones_*.json")))
+    cnmo_files = sorted(glob.glob(os.path.join(ROOT, "data/cnmo_phones_*.json")))
     print(f"中关村在线数据文件 ({len(zol_files)}): {[os.path.basename(f) for f in zol_files]}")
     print(f"太平洋电脑网数据文件 ({len(pconline_files)}): {[os.path.basename(f) for f in pconline_files]}")
+    print(f"CNMO数据文件 ({len(cnmo_files)}): {[os.path.basename(f) for f in cnmo_files]}")
 
     zol_rows = norm_rows(load_all("data/zol_phones_*.json"), '中关村在线')
     pconline_rows = norm_rows(load_all("data/pconline_phones_*.json"), '太平洋电脑网')
+    cnmo_rows = norm_rows(load_all("data/cnmo_phones_*.json"), 'CNMO')
 
-    if not zol_rows and not pconline_rows:
+    if not zol_rows and not pconline_rows and not cnmo_rows:
         print("错误: 没有找到任何数据文件")
         return
+    if not zol_rows and not pconline_rows:
+        print("错误: 仅找到 CNMO 数据，缺少 ZOL/PConline 主来源，拒绝生成发布数据")
+        return
 
-    source_rows = zol_rows + pconline_rows
-    print(f"中关村在线:{len(zol_rows)} 太平洋电脑网:{len(pconline_rows)} 合计:{len(source_rows)}")
+    source_rows = zol_rows + pconline_rows + cnmo_rows
+    print(f"中关村在线:{len(zol_rows)} 太平洋电脑网:{len(pconline_rows)} CNMO:{len(cnmo_rows)} 合计:{len(source_rows)}")
 
     source_header = collect_fields(source_rows)
     all_rows = merge_verified_rows(zol_rows, pconline_rows, source_header)
+    cnmo_appended, cnmo_skipped = append_unique_single_source(all_rows, cnmo_rows, 'CNMO')
+    all_rows.extend(cnmo_appended)
+    print(f"CNMO单源追加:{len(cnmo_appended)} 重复跳过:{cnmo_skipped}")
     header = collect_fields(all_rows)
     dual_source_count = sum(1 for row in all_rows if row.get('验证状态', '').startswith('双源'))
     print(f"交叉验证后机型:{len(all_rows)} 双源记录:{dual_source_count} 单源记录:{len(all_rows) - dual_source_count}")
