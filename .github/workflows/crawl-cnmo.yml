@@ -46,7 +46,7 @@ jobs:
 
       - name: Configure git
         run: |
-          git config user.name "Hermes-Agent"
+          git config user.name "github-actions[bot]"
           git config user.email "xuerui911@gmail.com"
 
       - name: Run CNMO crawler - Step 1 (list pages)

@@ -173,7 +173,7 @@ jobs:
           set -e
           echo "PConline step1 exit code: $EXIT_CODE"
 
-          git config user.name "Hermes-Agent"
+          git config user.name "github-actions[bot]"
           git config user.email "xuerui911@gmail.com"
 
           if [ $EXIT_CODE -eq 10 ]; then
@@ -258,7 +258,7 @@ jobs:
           else
             echo "本次爬取未完成，仅同步进度"
           fi
-          git config user.name "Hermes-Agent"
+          git config user.name "github-actions[bot]"
           git config user.email "xuerui911@gmail.com"
           git add -A
           git diff --cached --quiet || git commit -m "chore: update PConline crawl data [skip ci]"
