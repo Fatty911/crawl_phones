@@ -322,8 +322,8 @@ jobs:
         env:
           DATE: ${{ steps.date.outputs.date }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "Hermes-Agent"
+          git config user.email "xuerui911@gmail.com"
           # 如果有生成合并文件，提交到仓库（供 push 触发后续发布）
           if [ -f "data/merged_phones_${DATE}.json" ]; then
             mkdir -p docs/phones/data

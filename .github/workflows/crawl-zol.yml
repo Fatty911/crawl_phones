@@ -177,8 +177,8 @@ jobs:
           set -e
           echo "ZOL step1 exit code: $EXIT_CODE"
 
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "Hermes-Agent"
+          git config user.email "xuerui911@gmail.com"
 
           if [ $EXIT_CODE -eq 10 ]; then
             echo "Step1 未完成，提交进度并正常结束本次运行"
@@ -262,8 +262,8 @@ jobs:
           else
             echo "本次爬取未完成，仅同步进度"
           fi
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "Hermes-Agent"
+          git config user.email "xuerui911@gmail.com"
           git add -A
           git diff --cached --quiet || git commit -m "chore: update ZOL crawl data [skip ci]"
           bash scripts/git_sync_progress.sh "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
