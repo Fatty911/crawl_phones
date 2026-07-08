@@ -1172,5 +1172,7 @@
   "三星Galaxy S26 Ultra(16GB+1TB)": "未知",
   "三星Galaxy Z Fold8(12GB+256GB)": "可永久root（无  ）",
   "三星Galaxy S27(12GB+256GB)": "未知",
-  "诺基亚3310": "不可root"
+  "诺基亚3310": "不可root",
+  "三星Galaxy Z Flip8(256GB)": "不可越狱",
+  "华为Mate XT2(256GB)": "不可越狱"
 }
