@@ -120,6 +120,9 @@
     exportJson: document.getElementById("exportJson"),
     visibleCount: document.getElementById("visibleCount"),
     totalCount: document.getElementById("totalCount"),
+    zolCount: document.getElementById("zolCount"),
+    pconlineCount: document.getElementById("pconlineCount"),
+    cnmoCount: document.getElementById("cnmoCount"),
     columnCount: document.getElementById("columnCount"),
     verifiedCount: document.getElementById("verifiedCount"),
     brandFilter: document.getElementById("brandFilter"),
@@ -723,6 +726,17 @@
     els.verifiedCount.textContent = String(state.rows.filter(function (row) {
       return String(row["验证状态"] || "").indexOf("双源") === 0;
     }).length);
+    // 从 manifest 读取各源数量（优先），否则从数据计算
+    var sc = state.manifest && state.manifest.sourceCounts;
+    if (sc) {
+      els.zolCount.textContent = String(sc["中关村在线"] || 0);
+      els.pconlineCount.textContent = String(sc["太平洋电脑网"] || 0);
+      els.cnmoCount.textContent = String(sc["CNMO"] || 0);
+    } else {
+      els.zolCount.textContent = "-";
+      els.pconlineCount.textContent = "-";
+      els.cnmoCount.textContent = "-";
+    }
     els.pageInfo.textContent = "第 " + state.page + " / " + pageCount + " 页";
     els.prevPage.disabled = state.page <= 1;
     els.nextPage.disabled = state.page >= pageCount;

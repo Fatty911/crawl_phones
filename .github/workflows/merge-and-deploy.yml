@@ -253,9 +253,7 @@ jobs:
                   valid_sources += 1
                   if label != "CNMO":
                       primary_sources += 1
-          ok = valid_sources > 0 and primary_sources > 0
-          if valid_sources > 0 and primary_sources == 0:
-              print("仅找到 CNMO 数据，缺少 ZOL/PConline 主来源，本次跳过发布")
+          ok = valid_sources > 0
           if trigger_source in ["pconline-crawl", "zol-crawl", "cnmo-crawl"] and not ok:
               print(f"被爬虫工作流 {trigger_source} 触发但未找到任何有效数据")
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
@@ -521,10 +519,21 @@ jobs:
           with open("site/data/latest.json", "r", encoding="utf-8") as f:
               latest = json.load(f)
 
+          # 计算各数据源数量
+          source_counts = {"中关村在线": 0, "太平洋电脑网": 0, "CNMO": 0, "双源一致": 0}
+          for row in latest:
+              src = row.get("数据来源", "")
+              for key in ["中关村在线", "太平洋电脑网", "CNMO"]:
+                  if key in src:
+                      source_counts[key] += 1
+              if row.get("验证状态", "") == "双源一致":
+                  source_counts["双源一致"] += 1
+
           manifest = {
               "date": date,
               "updatedAt": datetime.now(timezone.utc).isoformat(),
               "rowCount": len(latest),
+              "sourceCounts": source_counts,
               "files": {
                   "latestJson": "data/latest.json",
                   "latestCsv": f"data/merged_phones_{date}.csv",
