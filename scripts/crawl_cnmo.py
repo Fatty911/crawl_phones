@@ -19,6 +19,8 @@ import logging
 from datetime import datetime, date
 from typing import List, Dict, Optional
 from urllib.parse import urljoin
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 import requests
 from bs4 import BeautifulSoup
@@ -307,16 +309,21 @@ def crawl(args):
         logger.info(f"开始爬取详情页，共 {len(to_crawl)} 个产品")
 
         detailed_phones = []
-        for i, p in enumerate(to_crawl):
+        lock = threading.Lock()
+        save_counter = 0
+        step2_start = time.time()
+
+        def crawl_one_phone(p, idx):
+            """爬取单个手机详情，返回 (params, pid) 或 None"""
             pid = p["id"]
             main_url = DETAIL_URL.format(pid=pid)
-            logger.info(f"[{i+1}/{len(to_crawl)}] {p['name']} ({pid})")
+            logger.info(f"[{idx}/{len(to_crawl)}] {p['name']} ({pid})")
 
             # 先获取主页面（获取基本信息 + param URL）
             main_html = fetch_page(main_url)
             if not main_html:
                 logger.warning(f"主页面获取失败: {pid}")
-                continue
+                return None
 
             # 提取 param URL
             param_url = None
@@ -324,7 +331,7 @@ def crawl(args):
             for a_tag in soup.select('a[href*="param.shtml"]'):
                 href = a_tag.get("href", "")
                 if href:
-                    param_url = urljoin(BASE_URL, href)  # 不要 lstrip
+                    param_url = urljoin(BASE_URL, href)
                     break
 
             # 从主页面提取基本信息
@@ -354,13 +361,48 @@ def crawl(args):
                 params["上市时间"] = p.get("launch_time", "")
             params["数据来源"] = "CNMO"
 
-            detailed_phones.append(params)
-            completed_ids.add(pid)
-            progress["completed_ids"] = sorted(completed_ids)
-            progress["total_phones"] = len(detailed_phones)
-            save_progress(progress)
+            # 线程间延迟（并发下总请求间隔降低）
+            time.sleep(random.uniform(0.3, 0.8))
 
-            time.sleep(random.uniform(MIN_DELAY, MAX_DELAY))
+            return (params, pid)
+
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            futures = {}
+            for i, p in enumerate(to_crawl, 1):
+                futures[executor.submit(crawl_one_phone, p, i)] = p
+
+            for future in as_completed(futures):
+                # 时间限制检查
+                if args.time_limit and args.time_limit > 0:
+                    elapsed = time.time() - step2_start
+                    if elapsed > args.time_limit:
+                        logger.warning(
+                            f"达到时间限制 {args.time_limit}秒，"
+                            f"已处理 {len(detailed_phones)}/{len(to_crawl)}，提前退出"
+                        )
+                        for f in futures:
+                            f.cancel()
+                        break
+
+                result = future.result()
+                if result:
+                    params, pid = result
+                    with lock:
+                        detailed_phones.append(params)
+                        completed_ids.add(pid)
+                        save_counter += 1
+
+                        # 每 10 个产品保存一次进度
+                        if save_counter >= 10:
+                            progress["completed_ids"] = sorted(completed_ids)
+                            progress["total_phones"] = len(detailed_phones)
+                            save_progress(progress)
+                            save_counter = 0
+
+        # 最终保存进度
+        progress["completed_ids"] = sorted(completed_ids)
+        progress["total_phones"] = len(detailed_phones)
+        save_progress(progress)
 
         # 保存详情数据
         with open(output_file, "w", encoding="utf-8") as f:

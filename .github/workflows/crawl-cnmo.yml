@@ -55,7 +55,7 @@ jobs:
 
       - name: Run CNMO crawler - Step 2 (detail pages)
         run: |
-          python scripts/crawl_cnmo.py --step 2 --max-phones "${{ env.MAX_PHONES }}"
+          python scripts/crawl_cnmo.py --step 2 --max-phones "${{ env.MAX_PHONES }}" --time-limit 21000
 
       - name: Validate generated CNMO data
         id: validate_data
