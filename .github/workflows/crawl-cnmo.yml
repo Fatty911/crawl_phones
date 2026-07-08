@@ -3,10 +3,14 @@ name: CNMO手机爬虫
 on:
   workflow_dispatch:
     inputs:
-      max_pages:
-        description: '最大列表页数（0=全部165页）'
+      force_restart:
+        description: '强制重新开始'
         required: false
-        default: '0'
+        default: 'false'
+      run_profile:
+        description: '运行时长配置：auto/morning/afternoon'
+        required: false
+        default: 'auto'
       max_phones:
         description: '最多爬取手机数（调试用，0=不限制）'
         required: false
@@ -17,11 +21,18 @@ on:
         default: 'false'
 
 env:
-  MAX_PAGES: ${{ github.event.inputs.max_pages || '0' }}
+  RUN_TIME: 10800
+  MORNING_RUN_TIME: 10800
+  AFTERNOON_RUN_TIME: 21600
+  MAX_WORKFLOW_SECONDS: 21600
+  PROGRESS_COMMIT_BUFFER_SECONDS: 1800
+  WINDOW_END_BUFFER_SECONDS: 900
+  CRAWL_MIN_DELAY_SECONDS: "8"
+  CRAWL_MAX_DELAY_SECONDS: "20"
   MAX_PHONES: ${{ github.event.inputs.max_phones || '0' }}
 
 concurrency:
-  group: cnmo-phone-crawl-${{ github.ref }}
+  group: cnmo-phone-crawl-${{ github.ref }}-${{ github.event.inputs.run_profile || github.event_name }}
   cancel-in-progress: false
 
 jobs:
@@ -31,33 +42,175 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@main
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Prepare crawl period
+        id: period
+        run: |
+          mkdir -p crawl_state
+          echo "WORKFLOW_START_EPOCH=$(date +%s)" >> "$GITHUB_ENV"
+
+          CN_DAY=$(TZ=Asia/Shanghai date +%d)
+          CN_MONTH=$(TZ=Asia/Shanghai date +%Y%m)
+          if [ $((10#$CN_DAY)) -le 15 ]; then
+            CRAWL_PERIOD="${CN_MONTH}_H1"
+          else
+            CRAWL_PERIOD="${CN_MONTH}_H2"
+          fi
+          DONE_MARKER="crawl_state/cnmo_${CRAWL_PERIOD}.done"
+          CURRENT_PERIOD_FILE="crawl_state/cnmo_current_period"
+          echo "CRAWL_PERIOD=$CRAWL_PERIOD" >> "$GITHUB_ENV"
+          echo "CNMO_DONE_MARKER=$DONE_MARKER" >> "$GITHUB_ENV"
+
+          FORCE_RESTART="${{ github.event.inputs.force_restart }}"
+          DEBUG_MODE="${{ github.event.inputs.debug_mode }}"
+
+          if [ "$FORCE_RESTART" = "true" ]; then
+            rm -f "$DONE_MARKER"
+            echo "INCREMENTAL_MODE=false" >> "$GITHUB_ENV"
+            echo "强制重启，全量爬取模式"
+          elif [ "$DEBUG_MODE" = "true" ]; then
+            echo "INCREMENTAL_MODE=true" >> "$GITHUB_ENV"
+            echo "调试模式（不限时间窗口，限制爬取数量）"
+          else
+            echo "INCREMENTAL_MODE=true" >> "$GITHUB_ENV"
+            echo "增量模式（只爬新增手机）"
+          fi
+
+          if [ "$FORCE_RESTART" = "true" ]; then
+            echo "强制重启，重置进度"
+            rm -f crawl_state/cnmo/progress.json
+          elif [ ! -f "$CURRENT_PERIOD_FILE" ] || [ "$(cat "$CURRENT_PERIOD_FILE")" != "$CRAWL_PERIOD" ]; then
+            echo "进入新的半月周期 $CRAWL_PERIOD，保留已处理手机列表"
+            if [ -f crawl_state/cnmo/progress.json ]; then
+              python3 -c "import json; p=json.load(open('crawl_state/cnmo/progress.json')); p['current_page']=1; p['total_phones']=0; json.dump(p,open('crawl_state/cnmo/progress.json','w'),indent=2); print('已重置页码，保留已处理手机列表')"
+            fi
+          fi
+          echo "$CRAWL_PERIOD" > "$CURRENT_PERIOD_FILE"
+
+          if [ "$FORCE_RESTART" != "true" ] && [ "$DEBUG_MODE" != "true" ] && [ -f "$DONE_MARKER" ]; then
+            echo "半月周期 $CRAWL_PERIOD 已完成，跳过所有爬取步骤"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Configure crawl window
+        id: window
+        if: steps.period.outputs.skip != 'true'
+        env:
+          PROFILE_INPUT: ${{ github.event.inputs.run_profile || 'auto' }}
+        run: |
+          if [ "$DEBUG_MODE" = "true" ]; then
+            echo "调试模式：跳过时间窗口检查"
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "MAX_PHONES=${{ github.event.inputs.max_phones || '30' }}" >> "$GITHUB_ENV"
+            echo "DEBUG_LIMIT=${{ github.event.inputs.max_phones || '30' }}" >> "$GITHUB_ENV"
+          else
+            python scripts/crawl_budget.py configure
+            echo "MAX_PHONES=${{ github.event.inputs.max_phones || '0' }}" >> "$GITHUB_ENV"
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Set up Python
-        uses: actions/setup-python@v5
+        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true'
+        uses: actions/setup-python@main
         with:
-          python-version: '3.11'
+          python-version: '3.12'
 
       - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
+        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true'
+        run: pip install requests beautifulsoup4 lxml PyYAML
 
-      - name: Configure git
+      - name: Setup environment
+        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true'
         run: |
+          echo "MINIMAX_API_KEY=${{ secrets.MINIMAX_API_KEY }}" >> "$GITHUB_ENV"
+          echo "ZEN_API_KEY=${{ secrets.ZEN_API_KEY }}" >> "$GITHUB_ENV"
+          echo "XAI_API_KEY=${{ secrets.XAI_API_KEY }}" >> "$GITHUB_ENV"
+          echo "OPENROUTER_API_KEY=${{ secrets.OPENROUTER_API_KEY }}" >> "$GITHUB_ENV"
+
+      - name: Setup proxy if configured
+        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true'
+        env:
+          PROXY_SUBSCRIPTIONS: ${{ secrets.PROXY_SUBSCRIPTIONS }}
+        run: python scripts/setup_proxy_runtime.py --github-env "$GITHUB_ENV"
+
+      - name: Clamp step1 runtime to workflow budget
+        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true'
+        run: python scripts/crawl_budget.py clamp --step-label step1 --skip-env STEP1_SKIP
+
+      - name: Run CNMO crawler
+        id: step1
+        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true'
+        run: |
+          if [ "${STEP1_SKIP:-false}" = "true" ]; then
+            echo "step1 已因剩余安全时间不足跳过"
+            echo "complete=false" >> "$GITHUB_OUTPUT"
+            echo "failed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          INCREMENTAL_FLAG=""
+          if [ "$INCREMENTAL_MODE" = "true" ]; then
+            INCREMENTAL_FLAG="--incremental"
+          fi
+          DEBUG_LIMIT_FLAG=""
+          if [ "${DEBUG_LIMIT:-0}" -gt 0 ]; then
+            DEBUG_LIMIT_FLAG="--debug-limit $DEBUG_LIMIT"
+          fi
+          if [ "${PROXY_ENABLED:-false}" = "true" ]; then
+            echo "使用代理模式运行 CNMO 爬虫"
+          else
+            echo "无代理，直接运行 CNMO 爬虫"
+          fi
+
+          set +e
+          python scripts/crawl_cnmo.py --step 1 --time-limit "$RUN_TIME" --max-phones "$MAX_PHONES" --auto $INCREMENTAL_FLAG $DEBUG_LIMIT_FLAG
+          EXIT_CODE=$?
+          set -e
+          echo "CNMO step1 exit code: $EXIT_CODE"
+
           git config user.name "github-actions[bot]"
           git config user.email "xuerui911@gmail.com"
 
-      - name: Run CNMO crawler - Step 1 (list pages)
-        run: |
-          python scripts/crawl_cnmo.py --step 1 --max-pages "${{ env.MAX_PAGES }}" --max-phones "${{ env.MAX_PHONES }}"
+          if [ $EXIT_CODE -eq 10 ]; then
+            echo "Step1 未完成，提交进度并正常结束本次运行"
+            git add -A
+            git diff --cached --quiet || git commit -m "chore: update CNMO crawl progress [skip ci]"
+            bash scripts/git_sync_progress.sh "https://x-access-token:*** secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
+            echo "complete=false" >> "$GITHUB_OUTPUT"
+            echo "failed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          elif [ $EXIT_CODE -ne 0 ]; then
+            echo "Step1 失败"
+            echo "complete=false" >> "$GITHUB_OUTPUT"
+            echo "failed=true" >> "$GITHUB_OUTPUT"
+            exit $EXIT_CODE
+          fi
 
-      - name: Run CNMO crawler - Step 2 (detail pages)
-        run: |
-          python scripts/crawl_cnmo.py --step 2 --max-phones "${{ env.MAX_PHONES }}" --time-limit 21000
+          echo "complete=true" >> "$GITHUB_OUTPUT"
+          echo "failed=false" >> "$GITHUB_OUTPUT"
+
+      - name: Upload crawl data (early, after step1)
+        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true'
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: cnmo-phone-data-early-${{ github.run_id }}
+          path: |
+            crawl_state/cnmo/json/
+            crawl_state/cnmo/progress.json
+          retention-days: 90
+
+      - name: Parse and merge data
+        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true'
+        run: python scripts/crawl_cnmo.py --step 2
 
       - name: Validate generated CNMO data
+        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true'
         id: validate_data
         run: |
           TODAY=$(date +%Y%m%d)
@@ -65,43 +218,79 @@ jobs:
           echo "cnmo_data_file=$DATA_FILE" >> "$GITHUB_OUTPUT"
           if [ ! -f "$DATA_FILE" ]; then
             echo "未找到CNMO今日数据文件: $DATA_FILE"
+            echo "cnmo_row_count=0" >> "$GITHUB_OUTPUT"
             echo "has_data=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           ROW_COUNT=$(python3 -c "import json; print(len(json.load(open('$DATA_FILE', encoding='utf-8'))))" 2>/dev/null || echo "0")
           echo "cnmo_row_count=$ROW_COUNT" >> "$GITHUB_OUTPUT"
           if [ "$ROW_COUNT" -gt 0 ]; then
-            echo "CNMO今日数据有效: $DATA_FILE ($ROW_COUNT 行)"
-            echo "has_data=true" >> "$GITHUB_OUTPUT"
+            VALID_RATE=$(python3 -c "import json; rows=json.load(open('$DATA_FILE')); total=len(rows); key_fields=['处理器','内存','存储','屏幕','电池','摄像头参数','上市时间']; bad={'','-','N/A','暂无','无','null','未知','/','--'}; results={f:sum(1 for r in rows if str(r.get(f,'')).strip() not in bad) for f in key_fields}; print(int(min(results.values())/total*100) if total>0 else 0)")
+            if [ "$VALID_RATE" -ge 70 ]; then
+              echo "CNMO今日数据有效: $DATA_FILE ($ROW_COUNT 行, 关键字段完整率 ${VALID_RATE}%)"
+              echo "has_data=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "CNMO关键字段不完整（${VALID_RATE}% < 70%），不上传"
+              echo "has_data=false" >> "$GITHUB_OUTPUT"
+            fi
           else
-            echo "CNMO今日数据文件为空"
-            rm -f "$DATA_FILE"
+            echo "CNMO今日数据文件为空，不上传空 artifact，不触发合并"
+            rm -f "$DATA_FILE" "data/cnmo_phones_${TODAY}.csv"
             echo "has_data=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Generate summary
-        if: steps.validate_data.outputs.has_data == 'true'
+        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true'
         run: python scripts/crawl_cnmo.py --step 3
 
-      - name: Commit and push
-        if: steps.validate_data.outputs.has_data == 'true'
+      - name: Mark crawl complete and commit
+        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true'
         run: |
-          git add data/
+          DEBUG_MODE="${{ github.event.inputs.debug_mode || 'false' }}"
+          if [ "$DEBUG_MODE" = "true" ]; then
+            echo "调试模式：不标记周期完成"
+          elif [ "${{ steps.step1.outputs.complete }}" = "true" ]; then
+            touch "$CNMO_DONE_MARKER"
+            echo "爬取完成（扫描所有列表），标记半月周期"
+          elif [ "${{ steps.validate_data.outputs.has_data }}" = "true" ] && [ -f "data/cnmo_phones_$(date +%Y%m%d).json" ]; then
+            touch "$CNMO_DONE_MARKER"
+            echo "爬取完成（有有效数据），标记半月周期"
+          else
+            echo "本次爬取未完成，仅同步进度"
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "xuerui911@gmail.com"
+          git add -A
           git diff --cached --quiet || git commit -m "chore: update CNMO crawl data [skip ci]"
-          bash scripts/git_sync_progress.sh "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" || true
+          bash scripts/git_sync_progress.sh "https://x-access-token:*** secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
 
       - name: Upload crawl data
-        if: steps.validate_data.outputs.has_data == 'true'
+        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true'
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: cnmo-phone-data-${{ github.run_id }}
           path: |
             data/cnmo_phones_*.json
+            data/cnmo_phones_*.csv
           retention-days: 90
 
-      - name: Trigger merge-and-deploy workflow
-        if: steps.validate_data.outputs.has_data == 'true'
+      - name: 检测新增数据并触发合并分析
+        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true'
+        id: check_new_data
+        run: |
+          echo "cnmo_data_file=${{ steps.validate_data.outputs.cnmo_data_file }}" >> "$GITHUB_OUTPUT"
+          echo "cnmo_row_count=${{ steps.validate_data.outputs.cnmo_row_count }}" >> "$GITHUB_OUTPUT"
+          if [ "${{ steps.validate_data.outputs.has_data }}" = "true" ]; then
+            echo "检测到CNMO新增数据: ${{ steps.validate_data.outputs.cnmo_data_file }} (${{ steps.validate_data.outputs.cnmo_row_count }} 行)"
+            echo "has_new_data=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "CNMO本次没有有效新增数据"
+            echo "has_new_data=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 触发合并分析工作流
+        if: steps.check_new_data.outputs.has_new_data == 'true'
         env:
           GH_TOKEN: ${{ secrets.ACTION_PAT }}
         run: |
