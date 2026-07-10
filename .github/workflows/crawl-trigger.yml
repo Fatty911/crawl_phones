@@ -77,7 +77,8 @@ jobs:
             echo "触发 crawl-cnmo.yml..."
             gh workflow run "crawl-cnmo.yml" \
               --repo "${{ github.repository }}" \
-              -f max_pages="0" \
+              -f force_restart="false" \
+              -f run_profile="$RUN_PROFILE" \
               -f max_phones="0"
           }
 

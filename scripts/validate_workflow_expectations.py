@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CRAWLER_WORKFLOWS = [
     ROOT / ".github/workflows/crawl-zol.yml",
     ROOT / ".github/workflows/crawl-pconline.yml",
+    ROOT / ".github/workflows/crawl-cnmo.yml",
 ]
 
 
@@ -41,6 +42,11 @@ def check_crawler_workflow(path: Path, errors: list[str]) -> None:
     assert_condition("EXIT_CODE=$?" in text, f"{path.name} does not capture crawler exit code", errors)
     assert_condition("[ $EXIT_CODE -eq 10 ]" in text, f"{path.name} does not treat exit 10 as resumable", errors)
     assert_condition("scripts/git_sync_progress.sh" in text, f"{path.name} does not use robust progress sync", errors)
+    assert_condition(
+        "*** secrets.GITHUB_TOKEN }}" not in text,
+        f"{path.name} contains a corrupted GITHUB_TOKEN expression",
+        errors,
+    )
     assert_condition("steps.check_done.outputs.done" not in text, f"{path.name} references undefined check_done step", errors)
 
 
@@ -52,6 +58,8 @@ def check_trigger(path: Path, errors: list[str]) -> None:
     assert_condition("trigger-crawl" in dispatch_types, "crawl-trigger.yml missing trigger-crawl dispatch", errors)
     assert_condition("crawl-zol.yml" in text, "crawl-trigger.yml does not trigger ZOL", errors)
     assert_condition("crawl-pconline.yml" in text, "crawl-trigger.yml does not trigger PConline", errors)
+    assert_condition("crawl-cnmo.yml" in text, "crawl-trigger.yml does not trigger CNMO", errors)
+    assert_condition("max_pages" not in text, "crawl-trigger.yml passes unsupported max_pages to CNMO", errors)
     assert_condition("08:00-12:30" in text, "crawl-trigger.yml missing morning window text", errors)
     assert_condition("13:00-22:00" in text, "crawl-trigger.yml missing afternoon window text", errors)
 

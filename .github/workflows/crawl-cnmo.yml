@@ -180,7 +180,7 @@ jobs:
             echo "Step1 未完成，提交进度并正常结束本次运行"
             git add -A
             git diff --cached --quiet || git commit -m "chore: update CNMO crawl progress [skip ci]"
-            bash scripts/git_sync_progress.sh "https://x-access-token:*** secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
+            bash scripts/git_sync_progress.sh "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
             echo "complete=false" >> "$GITHUB_OUTPUT"
             echo "failed=false" >> "$GITHUB_OUTPUT"
             exit 0
@@ -262,7 +262,7 @@ jobs:
           git config user.email "xuerui911@gmail.com"
           git add -A
           git diff --cached --quiet || git commit -m "chore: update CNMO crawl data [skip ci]"
-          bash scripts/git_sync_progress.sh "https://x-access-token:*** secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
+          bash scripts/git_sync_progress.sh "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
 
       - name: Upload crawl data
         if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true'
