@@ -47,6 +47,9 @@ def check_crawler_workflow(path: Path, errors: list[str]) -> None:
         f"{path.name} contains a corrupted GITHUB_TOKEN expression",
         errors,
     )
+    if path.name == "crawl-cnmo.yml":
+        expected_fields = "key_fields=['处理器','内存','存储','屏幕','电池类型','后置相机','上市时间']"
+        assert_condition(expected_fields in text, "crawl-cnmo.yml does not validate CNMO schema fields", errors)
     assert_condition("steps.check_done.outputs.done" not in text, f"{path.name} references undefined check_done step", errors)
 
 
@@ -71,12 +74,22 @@ def check_budget_script(path: Path, errors: list[str]) -> None:
     assert_condition("PROGRESS_COMMIT_BUFFER_SECONDS" in text, "crawl_budget.py missing progress buffer", errors)
 
 
+def check_merge_workflow(path: Path, errors: list[str]) -> None:
+    text = path.read_text(encoding="utf-8")
+    assert_condition(
+        "timeout --signal=KILL 27m python scripts/ai_verify_root_status.py" in text,
+        "merge-and-deploy.yml missing AI verification hard timeout",
+        errors,
+    )
+
+
 def main() -> int:
     errors: list[str] = []
     for path in CRAWLER_WORKFLOWS:
         check_crawler_workflow(path, errors)
     check_trigger(ROOT / ".github/workflows/crawl-trigger.yml", errors)
     check_budget_script(ROOT / "scripts/crawl_budget.py", errors)
+    check_merge_workflow(ROOT / ".github/workflows/merge-and-deploy.yml", errors)
     assert_condition((ROOT / "scripts/configure_cron_job_org.py").exists(), "missing cron-job.org configuration script", errors)
 
     if errors:

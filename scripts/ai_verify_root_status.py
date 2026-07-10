@@ -20,13 +20,14 @@ import os
 import sys
 import re
 import time
-import hashlib
 import concurrent.futures
+import multiprocessing
+import queue
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from collections import defaultdict
 from urllib.request import Request, urlopen
-from urllib.error import URLError, HTTPError
+
 
 # ── 常量 ──────────────────────────────────────────────
 DATA_FILE = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(__file__), "merged_phones_20260626.json")
@@ -42,14 +43,18 @@ API_TIMEOUT = 30
 MAX_RETRIES = 3
 MAX_WORKERS = 2  # 并发请求数（保守：最多 2 个网络 worker）
 TOTAL_TIME_BUDGET = 25 * 60  # 25 分钟总时间预算
+FINALIZE_TIME_BUFFER = 30  # 为保存数据和缓存预留时间
 # 请求级 rate limiting：每秒最多发起 2 个请求
 MIN_REQUEST_INTERVAL = 0.5  # 秒
 _last_request_time = 0.0
 _request_lock = threading.Lock()
+_stderr_lock = threading.Lock()
 
 # ── API ──────────────────────────────────────────────
 NIM_KEY = os.environ.get("NVIDIA_NIM_API_KEY", "")
 OR_KEY = os.environ.get("OPENROUTER_API_KEY", "")
+NIM_ENDPOINT = "https://integrate.api.nvidia.com/v1/chat/completions"
+OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
 
 # NIM 可用模型（按优先级排序，首选大上下文 + 推理能力强的）
 NIM_MODELS = [
@@ -66,10 +71,50 @@ OR_FREE_MODELS = [
 ]
 
 
-def _try_nim(prompt, model, timeout=API_TIMEOUT):
+class RemoteAIError(RuntimeError):
+    def __init__(self, remote_type, message):
+        super().__init__(message)
+        self.remote_type = remote_type
+
+
+def _subprocess_entry(result_queue, target, args):
+    try:
+        result_queue.put((True, target(*args)))
+    except Exception as exc:
+        result_queue.put((False, type(exc).__name__, str(exc)))
+
+
+def _run_in_subprocess(target, args, timeout):
+    """Run one blocking request behind a process boundary with a hard timeout."""
+    context = multiprocessing.get_context("spawn")
+    result_queue = context.Queue(maxsize=1)
+    process = context.Process(target=_subprocess_entry, args=(result_queue, target, args))
+    process.start()
+    process.join(timeout)
+    try:
+        if process.is_alive():
+            process.terminate()
+            process.join(1)
+            if process.is_alive():
+                process.kill()
+                process.join()
+            raise TimeoutError(f"request exceeded hard timeout of {timeout:.3f}s")
+        try:
+            payload = result_queue.get(timeout=1)
+        except queue.Empty as exc:
+            raise RuntimeError(f"request process exited without a result (exit_code={process.exitcode})") from exc
+        if payload[0]:
+            return payload[1]
+        raise RemoteAIError(payload[1], payload[2])
+    finally:
+        result_queue.close()
+        result_queue.join_thread()
+
+
+def _request_nim(prompt, model, timeout):
     """尝试单个 NIM 模型"""
     req = Request(
-        "https://integrate.api.nvidia.com/v1/chat/completions",
+        NIM_ENDPOINT,
         data=json.dumps({
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
@@ -86,10 +131,14 @@ def _try_nim(prompt, model, timeout=API_TIMEOUT):
     return body["choices"][0]["message"]["content"].strip()
 
 
-def _try_or(prompt, model, timeout=API_TIMEOUT):
+def _try_nim(prompt, model, timeout: float = API_TIMEOUT):
+    return _run_in_subprocess(_request_nim, (prompt, model, timeout), timeout)
+
+
+def _request_or(prompt, model, timeout):
     """尝试单个 OpenRouter 模型"""
     req = Request(
-        "https://openrouter.ai/api/v1/chat/completions",
+        OPENROUTER_ENDPOINT,
         data=json.dumps({
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
@@ -108,37 +157,106 @@ def _try_or(prompt, model, timeout=API_TIMEOUT):
     return body["choices"][0]["message"]["content"].strip()
 
 
-def ai_query(prompt, model=None, retries=MAX_RETRIES):
+def _try_or(prompt, model, timeout: float = API_TIMEOUT):
+    return _run_in_subprocess(_request_or, (prompt, model, timeout), timeout)
+
+
+def _remaining_seconds(deadline):
+    if deadline is None:
+        return None
+    return max(0.0, deadline - time.monotonic())
+
+
+def _sleep_with_deadline(delay, deadline):
+    remaining = _remaining_seconds(deadline)
+    if remaining is None:
+        time.sleep(delay)
+    elif remaining > 0:
+        time.sleep(min(delay, remaining))
+
+
+def _request_timeout(deadline):
+    remaining = _remaining_seconds(deadline)
+    if remaining is not None and remaining <= 0:
+        return None
+    return API_TIMEOUT if remaining is None else min(API_TIMEOUT, remaining)
+
+
+def _safe_error_message(exc):
+    message = str(exc)
+    for secret in (NIM_KEY, OR_KEY):
+        if secret:
+            message = message.replace(secret, "***")
+    return message[:500]
+
+
+def _write_stderr_line(message):
+    with _stderr_lock:
+        sys.stderr.write(f"{message}\n")
+        sys.stderr.flush()
+
+
+def _log_ai_failure(provider, model, source_url, attempt, max_attempts, exc):
+    event = {
+        "event": "ai_request_failed",
+        "timestamp_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "provider": provider,
+        "model": model,
+        "source_url": source_url,
+        "attempt": attempt,
+        "max_attempts": max_attempts,
+        "retry_count": attempt - 1,
+        "error_type": getattr(exc, "remote_type", type(exc).__name__),
+        "error_message": _safe_error_message(exc),
+    }
+    _write_stderr_line(json.dumps(event, ensure_ascii=False, sort_keys=True))
+
+
+def ai_query(prompt, model=None, retries=MAX_RETRIES, deadline=None):
     """调用 AI 查询，自动 fallback NIM models → OpenRouter free models"""
     # Rate limiting: 请求发起前等待
     global _last_request_time
     with _request_lock:
-        now = time.time()
+        now = time.monotonic()
         wait = MIN_REQUEST_INTERVAL - (now - _last_request_time)
         if wait > 0:
+            remaining = _remaining_seconds(deadline)
+            if remaining is not None and wait >= remaining:
+                return None
             time.sleep(wait)
-        _last_request_time = time.time()
+        _last_request_time = time.monotonic()
 
     # 1) NIM 模型轮询（免费，优先）
     if NIM_KEY:
         models_to_try = [model] if model else NIM_MODELS
         for m in models_to_try:
+            timeout = _request_timeout(deadline)
+            if timeout is None:
+                return None
             try:
-                print(f"  尝试 NIM: {m}", file=sys.stderr)
-                return _try_nim(prompt, m)
+                _write_stderr_line(f"  尝试 NIM: {m}")
+                return _try_nim(prompt, m, timeout=timeout)
             except Exception as e:
-                print(f"  NIM {m} error: {e}", file=sys.stderr)
+                _log_ai_failure("nim", m, NIM_ENDPOINT, 1, 1, e)
 
     # 2) OpenRouter 免费模型轮询
     if OR_KEY:
         for m in OR_FREE_MODELS:
             for attempt in range(retries):
+                timeout = _request_timeout(deadline)
+                if timeout is None:
+                    return None
                 try:
-                    print(f"  尝试 OpenRouter: {m} (attempt {attempt+1})", file=sys.stderr)
-                    return _try_or(prompt, m)
+                    _write_stderr_line(f"  尝试 OpenRouter: {m} (attempt {attempt+1})")
+                    return _try_or(prompt, m, timeout=timeout)
                 except Exception as e:
-                    print(f"  OR {m} error (attempt {attempt+1}): {e}", file=sys.stderr)
-                    time.sleep(2 ** attempt)
+                    _log_ai_failure("openrouter", m, OPENROUTER_ENDPOINT, attempt + 1, retries, e)
+                    if attempt + 1 < retries:
+                        backoff = 2 ** attempt
+                        remaining = _remaining_seconds(deadline)
+                        if remaining is not None and backoff >= remaining:
+                            return None
+                        time.sleep(backoff)
 
     return None
 
@@ -209,7 +327,7 @@ def extract_soc(row):
     return soc.strip() if soc else "未知SOC"
 
 
-def verify_brand_soc_group(brand, soc, models, os_info):
+def verify_brand_soc_group(brand, soc, models, os_info, deadline=None):
     """查询某个品牌+SOC组合的通用 root/越狱漏洞"""
     model_list = ", ".join(models[:MAX_BATCH])
     prompt = f"""你是手机 root/越狱 数据库专家。请根据你的训练知识（截止2026年中的信息），回答以下问题——无需联网搜索，用你已有的知识即可。
@@ -231,7 +349,7 @@ SOC/处理器：{soc}
 说明：[简短说明]"""
 
     print(f"  AI 查询: {brand} {soc} ({len(models)} 机型)...")
-    resp = ai_query(prompt)
+    resp = ai_query(prompt, deadline=deadline)
     if not resp:
         return None
 
@@ -245,7 +363,7 @@ SOC/处理器：{soc}
     return result
 
 
-def verify_single_model(row):
+def verify_single_model(row, deadline=None):
     """查询单个机型的 root/越狱状态"""
     model = row.get("型号", "") or row.get("name", "")
     brand = row.get("品牌", "")
@@ -269,7 +387,7 @@ def verify_single_model(row):
 说明：[简短说明]"""
 
     print(f"  AI 查询单机型: {brand} {model[:40]}...")
-    resp = ai_query(prompt)
+    resp = ai_query(prompt, deadline=deadline)
     if not resp:
         return None
     return resp
@@ -277,7 +395,7 @@ def verify_single_model(row):
 
 # ── 主流程 ──────────────────────────────────────────────
 def main():
-    print(f"=== AI root/越狱 验证 ===")
+    print("=== AI root/越狱 验证 ===")
     print(f"时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"数据: {DATA_FILE}")
 
@@ -325,7 +443,9 @@ def main():
 
     # 先处理品牌+SOC组（跨型号漏洞）
     verified_count = 0
-    start_time = time.time()
+    start_time = time.monotonic()
+    deadline = start_time + TOTAL_TIME_BUDGET - FINALIZE_TIME_BUFFER
+    budget_exhausted = False
 
     # 并发处理品牌+SOC组
     def process_group(grp_key, grp_rows):
@@ -339,7 +459,7 @@ def main():
         if soc in ("未知SOC", ""):
             return None
 
-        result = verify_brand_soc_group(brand, soc, models, os_info)
+        result = verify_brand_soc_group(brand, soc, models, os_info, deadline=deadline)
         if not result or "不确定" in result.get("conclusion", ""):
             return None
         return (grp_key, grp_rows, result)
@@ -352,54 +472,37 @@ def main():
             for grp_key, grp_rows in sorted(groups.items())
         }
 
-        for future in concurrent.futures.as_completed(future_to_key):
-            # 检查时间预算
-            if time.time() - start_time > TOTAL_TIME_BUDGET:
-                print(f"⚠ 时间预算耗尽 ({TOTAL_TIME_BUDGET//60}分钟)，停止品牌SOC组查询并取消剩余任务")
-                # 取消所有未完成的 future
-                for f in future_to_key:
-                    if not f.done():
-                        f.cancel()
-                break
+        try:
+            for future in concurrent.futures.as_completed(
+                future_to_key,
+                timeout=max(_remaining_seconds(deadline) or 0.001, 0.001),
+            ):
+                result = future.result()
+                if result is None:
+                    continue
 
-            # future.result(timeout=...) 防止已在运行的 future 超时后仍阻塞
-            remaining_time = TOTAL_TIME_BUDGET - (time.time() - start_time)
-            if remaining_time <= 30:
-                print(f"⚠ 剩余时间不足 ({remaining_time:.0f}s)，停止品牌SOC组查询")
-                for f in future_to_key:
-                    if not f.done():
-                        f.cancel()
-                break
+                grp_key, grp_rows, group_result = result
+                brand, soc = grp_key.split("|", 1)
 
-            try:
-                result = future.result(timeout=min(remaining_time, 90))
-            except concurrent.futures.TimeoutError:
-                print("⚠ 品牌SOC组任务超时，取消剩余并退出")
-                for f in future_to_key:
-                    if not f.done():
-                        f.cancel()
-                break
+                conclusion = group_result.get("conclusion", "未知")
+                method = group_result.get("method", "")
+                status = f"{conclusion}"
+                if method and conclusion not in ("不可root", "不可越狱", "未知"):
+                    status += f"（{method}）"
 
-            if result is None:
-                continue
+                for row in grp_rows:
+                    row["root或越狱"] = status
+                    key = (row.get("型号", "") or row.get("name", "")).strip()
+                    cache[key] = status
+                    verified_count += 1
 
-            grp_key, grp_rows, group_result = result
-            brand, soc = grp_key.split("|", 1)
-
-            conclusion = group_result.get("conclusion", "未知")
-            method = group_result.get("method", "")
-            status = f"{conclusion}"
-            if method and conclusion not in ("不可root", "不可越狱", "未知"):
-                status += f"（{method}）"
-
-            for row in grp_rows:
-                row["root或越狱"] = status
-                key = (row.get("型号", "") or row.get("name", "")).strip()
-                cache[key] = status
-                verified_count += 1
-
-            print(f"  ✅ {brand} {soc}: {len(grp_rows)} 机型 → {status}")
-            time.sleep(0.5)  # 轻微延迟避免 rate limit
+                print(f"  ✅ {brand} {soc}: {len(grp_rows)} 机型 → {status}")
+                _sleep_with_deadline(0.5, deadline)  # 轻微延迟避免 rate limit
+        except concurrent.futures.TimeoutError:
+            budget_exhausted = True
+            print(f"⚠ 时间预算耗尽 ({TOTAL_TIME_BUDGET//60}分钟)，停止品牌SOC组查询并取消剩余任务")
+            for future in future_to_key:
+                future.cancel()
     finally:
         # 关键：shutdown(wait=False) 立即返回，不等待已取消/运行中的 futures
         # cancel_futures=True 需要 Python 3.9+，GitHub Actions runner 使用 Python 3.12
@@ -413,66 +516,47 @@ def main():
     remaining = [r for r in pending if r.get("root或越狱") in ("未知", "", None)]
     print(f"\n品牌SOC匹配后剩余: {len(remaining)} 个")
 
-    # 并发处理单机型
-    def process_single(row):
-        resp = verify_single_model(row)
-        if not resp:
-            return None
-        status = parse_ai_response(resp, row.get("品牌"), extract_soc(row), row.get("型号"))
-        key = (row.get("型号", "") or row.get("name", "")).strip()
-        return (row, key, status)
+    if budget_exhausted or (_remaining_seconds(deadline) or 0) <= 0:
+        budget_exhausted = True
+        print("⚠ 品牌SOC阶段已耗尽时间预算，跳过单机型查询")
+    elif remaining:
+        # 并发处理单机型
+        def process_single(row):
+            resp = verify_single_model(row, deadline=deadline)
+            if not resp:
+                return None
+            status = parse_ai_response(resp, row.get("品牌"), extract_soc(row), row.get("型号"))
+            key = (row.get("型号", "") or row.get("name", "")).strip()
+            return (row, key, status)
 
-    # 使用线程池并发处理 —— 手动管理 shutdown 以便超时时取消 pending futures
-    executor = concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS)
-    try:
-        future_to_row = {executor.submit(process_single, row): row for row in remaining}
-
-        for future in concurrent.futures.as_completed(future_to_row):
-            # 检查时间预算
-            if time.time() - start_time > TOTAL_TIME_BUDGET:
-                print(f"⚠ 时间预算耗尽 ({TOTAL_TIME_BUDGET//60}分钟)，停止单机型查询并取消剩余任务")
-                # 取消所有未完成的 future
-                for f in future_to_row:
-                    if not f.done():
-                        f.cancel()
-                break
-
-            # future.result(timeout=...) 防止已在运行的 future 超时后仍阻塞
-            # 计算剩余时间预算，留 30s 缓冲
-            remaining_time = TOTAL_TIME_BUDGET - (time.time() - start_time)
-            if remaining_time <= 30:
-                print(f"⚠ 剩余时间不足 ({remaining_time:.0f}s)，停止单机型查询")
-                for f in future_to_row:
-                    if not f.done():
-                        f.cancel()
-                break
-
-            try:
-                result = future.result(timeout=min(remaining_time, 60))
-            except concurrent.futures.TimeoutError:
-                print("⚠ 单任务超时，取消剩余并退出")
-                for f in future_to_row:
-                    if not f.done():
-                        f.cancel()
-                break
-
-            if result is None:
-                continue
-
-            row, key, status = result
-            row["root或越狱"] = status
-            cache[key] = status
-            verified_count += 1
-            print(f"  ✅ {row.get('品牌', '?')} {key[:40]}: {status}")
-            time.sleep(0.2)  # 极小延迟
-    finally:
-        # 关键：shutdown(wait=False) 立即返回，不等待已取消/运行中的 futures
-        # cancel_futures=True 需要 Python 3.9+，GitHub Actions runner 使用 Python 3.12
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS)
         try:
-            executor.shutdown(wait=False, cancel_futures=True)
-        except TypeError:
-            # 兼容旧版本：仅 wait=False
-            executor.shutdown(wait=False)
+            future_to_row = {executor.submit(process_single, row): row for row in remaining}
+            try:
+                for future in concurrent.futures.as_completed(
+                    future_to_row,
+                    timeout=max(_remaining_seconds(deadline) or 0.001, 0.001),
+                ):
+                    result = future.result()
+                    if result is None:
+                        continue
+
+                    row, key, status = result
+                    row["root或越狱"] = status
+                    cache[key] = status
+                    verified_count += 1
+                    print(f"  ✅ {row.get('品牌', '?')} {key[:40]}: {status}")
+                    _sleep_with_deadline(0.2, deadline)  # 极小延迟
+            except concurrent.futures.TimeoutError:
+                budget_exhausted = True
+                print(f"⚠ 时间预算耗尽 ({TOTAL_TIME_BUDGET//60}分钟)，停止单机型查询并取消剩余任务")
+                for future in future_to_row:
+                    future.cancel()
+        finally:
+            try:
+                executor.shutdown(wait=False, cancel_futures=True)
+            except TypeError:
+                executor.shutdown(wait=False)
 
     # 标记仍未确定的
     for row in pending:

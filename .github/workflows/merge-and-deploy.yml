@@ -301,8 +301,13 @@ jobs:
           MERGED="data/merged_phones_${MERGE_DATE}.json"
           if [ -s "$MERGED" ]; then
             echo "开始 AI root/越狱验证..."
-            python scripts/ai_verify_root_status.py "$MERGED"
-            echo "root/越狱验证完成"
+            if timeout --signal=KILL 27m python scripts/ai_verify_root_status.py "$MERGED"; then
+              echo "root/越狱验证完成"
+            else
+              EXIT_CODE=$?
+              echo "AI root/越狱验证失败: timestamp_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ) exit_code=$EXIT_CODE"
+              exit "$EXIT_CODE"
+            fi
           else
             echo "跳过 root/越狱验证（无合并文件）"
           fi

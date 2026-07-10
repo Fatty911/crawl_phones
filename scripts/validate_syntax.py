@@ -69,6 +69,7 @@ def default_files() -> list[Path]:
         ROOT / "scripts/merge_progress_json.py",
         ROOT / "scripts/validate_syntax.py",
         ROOT / "scripts/validate_workflow_expectations.py",
+        ROOT / "tests/test_ai_verify_root_status.py",
         ROOT / ".github/workflows/crawl-zol.yml",
         ROOT / ".github/workflows/crawl-pconline.yml",
         ROOT / ".github/workflows/crawl-cnmo.yml",
