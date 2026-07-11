@@ -488,8 +488,13 @@ def model_key(row):
         if name.startswith(cn):
             name = en + name[len(cn):]
             break
-    # 去除存储容量后缀（括号形式）：支持 12GB/256GB、8GB+128GB、12GB/512GB/全网通、1TB 等
-    name = re.sub(r'[（(][^)）]*\d+\s*[gt]b[^)）]*[)）]', '', name, flags=re.IGNORECASE)
+    # 去除纯存储容量后缀（括号形式）：支持 12GB/256GB、12+1T、8GB+128GB、1TB 等
+    name = re.sub(
+        r'[（(](?:\d+\s*(?:[gt]b)?\s*[+/]\s*\d+\s*[gt]b?|\d+\s*[gt]b)[)）]',
+        '',
+        name,
+        flags=re.IGNORECASE,
+    )
     # 去除末尾裸存储容量后缀（GB/TB，大小写不敏感）
     name = re.sub(r'\d+[gt]b$', '', name, flags=re.IGNORECASE)
     # 去除常见后缀
@@ -509,6 +514,27 @@ def fuzzy_model_key(row):
     key = re.sub(r'[（(].*?[）)]', '', key)
     key = key.replace('.', '').replace('-', '')
     return key
+
+
+def model_storage_signature(row):
+    raw_name = str(row.get('型号') or row.get('name') or '')
+    name = raw_name.replace('（', '(').replace('）', ')')
+    groups = re.findall(r'\(([^)]*(?:gb|tb|\d+\s*[+/]\s*\d+\s*[gt])[^)]*)\)', name, re.IGNORECASE)
+    values = []
+    for group in groups:
+        pair = re.search(r'(\d+)\s*[+/]\s*(\d+)\s*([gt])b?', group, re.IGNORECASE)
+        if pair:
+            values.append(int(pair.group(1)))
+            second = int(pair.group(2)) * (1024 if pair.group(3).lower() == 't' else 1)
+            values.append(second)
+            continue
+        for amount, unit in re.findall(r'(\d+)\s*(gb|tb)', group, re.IGNORECASE):
+            values.append(int(amount) * (1024 if unit.lower() == 'tb' else 1))
+    if not values:
+        trailing = re.search(r'(\d+)\s*(gb|tb)$', name, re.IGNORECASE)
+        if trailing:
+            values.append(int(trailing.group(1)) * (1024 if trailing.group(2).lower() == 'tb' else 1))
+    return tuple(values)
 
 
 def norm(header):
@@ -631,7 +657,7 @@ def find_latest(pattern):
     return max(data_files, key=os.path.getmtime)
 
 
-def load_all(pattern):
+def load_all(pattern, prefer_latest=False):
     """加载所有匹配文件并合并为去重列表（按手机ID去重）"""
     files = glob.glob(os.path.join(ROOT, pattern))
     if not files:
@@ -640,17 +666,27 @@ def load_all(pattern):
     if not data_files:
         data_files = files
 
+    def data_file_key(path):
+        basename = os.path.basename(path)
+        matches = re.findall(r'(\d{8})', basename)
+        crawl_date = matches[-1] if matches else ''
+        canonical = not re.match(r'^\d+_', basename)
+        return crawl_date, canonical, basename
+
     all_rows = []
-    seen_ids = set()
-    for path in sorted(data_files, key=os.path.getmtime):
+    seen_positions = {}
+    sort_key = data_file_key if prefer_latest else os.path.getmtime
+    for path in sorted(data_files, key=sort_key):
         rows = load(path)
         for row in rows:
             phone_id = row.get('手机ID') or row.get('id') or row.get('型号', '') or row.get('name', '')
             key = str(phone_id).strip().lower().replace(' ', '')
-            if key and key in seen_ids:
+            if key and key in seen_positions:
+                if prefer_latest:
+                    all_rows[seen_positions[key]] = row
                 continue
             if key:
-                seen_ids.add(key)
+                seen_positions[key] = len(all_rows)
             all_rows.append(row)
     return all_rows
 
@@ -785,15 +821,43 @@ def merge_verified_rows(zol_rows, pconline_rows, all_fields):
 
 
 def append_unique_single_source(base_rows, extra_rows, source):
-    exact_keys = {model_key(row) for row in base_rows if model_key(row)}
-    fuzzy_keys = {fuzzy_model_key(row) for row in base_rows if fuzzy_model_key(row)}
+    family_index = {}
+    for index, row in enumerate(base_rows):
+        family = model_key(row)
+        if family:
+            family_index.setdefault(family, []).append(index)
     appended = []
-    skipped = 0
+    matched = 0
+    appended_keys = set()
     for extra_row in extra_rows:
-        exact = model_key(extra_row)
-        fuzzy = fuzzy_model_key(extra_row)
-        if (exact and exact in exact_keys) or (fuzzy and fuzzy in fuzzy_keys):
-            skipped += 1
+        family = model_key(extra_row)
+        signature = model_storage_signature(extra_row)
+        candidates = family_index.get(family, [])
+        same_variant = [
+            index for index in candidates
+            if model_storage_signature(base_rows[index]) == signature
+        ]
+        matched_index = same_variant[0] if len(same_variant) == 1 else None
+        if matched_index is None and not signature:
+            no_capacity = [index for index in candidates if not model_storage_signature(base_rows[index])]
+            if len(no_capacity) == 1:
+                matched_index = no_capacity[0]
+
+        if matched_index is not None:
+            row = base_rows[matched_index]
+            sources = [item for item in str(row.get('数据来源', '')).split('+') if item]
+            if source not in sources:
+                sources.append(source)
+                row['数据来源'] = '+'.join(sources)
+            if row.get('验证状态') == '单源':
+                row['验证状态'] = '多源未校验'
+            matched += 1
+            continue
+
+        identity = str(extra_row.get('手机ID') or extra_row.get('id') or '').strip()
+        if not identity:
+            identity = re.sub(r'\s+', '', str(extra_row.get('型号') or extra_row.get('name') or '')).lower()
+        if identity and identity in appended_keys:
             continue
         row = dict(extra_row)
         if '品牌' in row:
@@ -802,11 +866,9 @@ def append_unique_single_source(base_rows, extra_rows, source):
         row['验证状态'] = '单源'
         row.setdefault('交叉验证差异', '-')
         appended.append(row)
-        if exact:
-            exact_keys.add(exact)
-        if fuzzy:
-            fuzzy_keys.add(fuzzy)
-    return appended, skipped
+        if identity:
+            appended_keys.add(identity)
+    return appended, matched
 
 
 def diff(zol_rows, pconline_rows, all_fields):
@@ -870,7 +932,7 @@ def main():
 
     zol_rows = norm_rows(load_all("data/zol_phones_*.json"), '中关村在线')
     pconline_rows = norm_rows(load_all("data/pconline_phones_*.json"), '太平洋电脑网')
-    cnmo_rows = norm_rows(load_all("data/cnmo_phones_*.json"), 'CNMO')
+    cnmo_rows = norm_rows(load_all("data/cnmo_phones_*.json", prefer_latest=True), 'CNMO')
 
     if not zol_rows and not pconline_rows and not cnmo_rows:
         print("错误: 没有找到任何数据文件")
@@ -884,12 +946,12 @@ def main():
 
     source_header = collect_fields(source_rows)
     all_rows = merge_verified_rows(zol_rows, pconline_rows, source_header)
-    cnmo_appended, cnmo_skipped = append_unique_single_source(all_rows, cnmo_rows, 'CNMO')
+    cnmo_appended, cnmo_matched = append_unique_single_source(all_rows, cnmo_rows, 'CNMO')
     all_rows.extend(cnmo_appended)
-    print(f"CNMO单源追加:{len(cnmo_appended)} 重复跳过:{cnmo_skipped}")
+    print(f"CNMO单源追加:{len(cnmo_appended)} 来源覆盖匹配:{cnmo_matched}")
     header = collect_fields(all_rows)
     dual_source_count = sum(1 for row in all_rows if row.get('验证状态', '').startswith('双源'))
-    print(f"交叉验证后机型:{len(all_rows)} 双源记录:{dual_source_count} 单源记录:{len(all_rows) - dual_source_count}")
+    print(f"交叉验证后机型:{len(all_rows)} 双源记录:{dual_source_count} 非双源记录:{len(all_rows) - dual_source_count}")
 
     merged_csv_path = os.path.join(ROOT, f"data/merged_phones_{today}.csv")
     merged_json_path = os.path.join(ROOT, f"data/merged_phones_{today}.json")

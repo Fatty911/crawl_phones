@@ -276,10 +276,11 @@ def crawl_list_page(session: requests.Session, page: int) -> List[Dict]:
     try:
         human_delay("列表页请求")
         resp = session.get(url, timeout=REQUEST_TIMEOUT)
+        resp.raise_for_status()
         resp.encoding = 'gbk'
     except Exception as e:
         logger.error(f"列表页请求失败: {e}")
-        return []
+        raise RuntimeError(f"CNMO列表页请求失败 page={page}: {e}") from e
 
     soup = BeautifulSoup(resp.text, 'html.parser')
     products = []
@@ -309,6 +310,9 @@ def crawl_list_page(session: requests.Session, page: int) -> List[Dict]:
             "launch_time": launch_time,
         })
 
+    if page == 1 and not products:
+        raise RuntimeError("CNMO列表首屏返回200但未解析到产品，拒绝当作扫描完成")
+
     return products
 
 
@@ -317,6 +321,7 @@ def crawl_detail_page(session: requests.Session, phone_id: str) -> Optional[Dict
     url = DETAIL_URL.format(pid=phone_id)
     try:
         resp = session.get(url, timeout=REQUEST_TIMEOUT)
+        resp.raise_for_status()
         resp.encoding = 'gbk'
     except Exception as e:
         logger.warning(f"详情页请求失败 {phone_id}: {e}")
@@ -364,6 +369,7 @@ def crawl_detail_page(session: requests.Session, phone_id: str) -> Optional[Dict
     if param_url:
         try:
             param_resp = session.get(param_url, timeout=REQUEST_TIMEOUT)
+            param_resp.raise_for_status()
             param_resp.encoding = 'gbk'
             param_soup = BeautifulSoup(param_resp.text, 'html.parser')
 
@@ -385,6 +391,7 @@ def crawl_detail_page(session: requests.Session, phone_id: str) -> Optional[Dict
                             params[name] = value
         except Exception as e:
             logger.warning(f"参数页爬取失败 {phone_id}: {e}")
+            return None
 
     return params if params else None
 
@@ -397,22 +404,36 @@ def step1_crawl_list_and_detail():
     start_time = time.time()
     session = get_session()
 
-    existing_ids = set(os.path.splitext(f)[0] for f in os.listdir(cnmo_json_dir) if f.endswith('.json'))
-    phones_crawled = progress.get('total_phones', 0)
+    previous_rows = load(find_latest("cnmo_phones_*.json"))
+    existing_ids = {os.path.splitext(f)[0] for f in os.listdir(cnmo_json_dir) if f.endswith('.json')}
+    existing_ids.update(str(row.get('手机ID') or row.get('id') or '').strip() for row in previous_rows)
+    existing_ids.update(str(phone_id).strip() for phone_id in progress.get('crawled_phones', []))
+    existing_ids.discard('')
+    phones_crawled = max(progress.get('total_phones', 0), len(existing_ids))
+    run_crawled = 0
 
     # 增量模式：扫描列表页，只爬新增
     if INCREMENTAL_MODE:
         logger.info("增量模式：扫描列表页，检测新增手机...")
         all_phones = []
-        page = 1
+        scan_start_page = max(1, int(progress.get('incremental_scan_page', 1)))
+        page = scan_start_page
+        pages_scanned_this_run = 0
+        scan_complete = False
         while True:
             products = crawl_list_page(session, page)
             if not products:
+                scan_complete = True
+                progress['incremental_scan_page'] = 1
+                save_progress()
                 break
             all_phones.extend(products)
             logger.info(f"第 {page} 页提取到 {len(products)} 个产品")
             page += 1
-            if MAX_PAGES_PER_RUN > 0 and page > MAX_PAGES_PER_RUN:
+            pages_scanned_this_run += 1
+            progress['incremental_scan_page'] = page
+            save_progress()
+            if MAX_PAGES_PER_RUN > 0 and pages_scanned_this_run >= MAX_PAGES_PER_RUN:
                 break
             if MAX_TIME_PER_STEP > 0 and (time.time() - start_time) >= MAX_TIME_PER_STEP * 0.3:
                 break
@@ -422,15 +443,20 @@ def step1_crawl_list_and_detail():
 
         if not new_phones:
             logger.info("未发现新增型号，无需爬取详情")
-            progress['total_phones'] = 0
+            progress['total_phones'] = phones_crawled
             save_progress()
+            if not scan_complete and AUTO_MODE:
+                logger.info("列表扫描受限，等待下次继续")
+                sys.exit(10)
             return
 
+        detail_failed = False
         for phone in new_phones:
             if MAX_TIME_PER_STEP > 0:
                 elapsed = time.time() - start_time
                 if elapsed >= MAX_TIME_PER_STEP:
                     logger.info(f"达到时间限制 ({MAX_TIME_PER_STEP}秒)，保存进度")
+                    progress['incremental_scan_page'] = scan_start_page
                     progress['total_phones'] = phones_crawled
                     save_progress()
                     if AUTO_MODE:
@@ -438,8 +464,9 @@ def step1_crawl_list_and_detail():
                         sys.exit(10)
                     return
 
-            if MAX_PHONES_PER_RUN > 0 and phones_crawled >= MAX_PHONES_PER_RUN:
+            if MAX_PHONES_PER_RUN > 0 and run_crawled >= MAX_PHONES_PER_RUN:
                 logger.info(f"达到手机数量限制 ({MAX_PHONES_PER_RUN}个)，保存进度")
+                progress['incremental_scan_page'] = scan_start_page
                 progress['total_phones'] = phones_crawled
                 save_progress()
                 if AUTO_MODE:
@@ -466,23 +493,37 @@ def step1_crawl_list_and_detail():
                         json.dump(phone, f, ensure_ascii=False, indent=2)
 
                     phones_crawled += 1
-                    progress.setdefault('crawled_phones', []).append(phone_id)
+                    run_crawled += 1
+                    if phone_id not in progress.setdefault('crawled_phones', []):
+                        progress['crawled_phones'].append(phone_id)
                     save_progress()
-                    logger.info(f"✓ 保存: {phone.get('型号', phone.get('name', '未知'))} ({release_year}年) - 共{phones_crawled}个")
+                    logger.info(f"✓ 保存: {phone.get('型号', phone.get('name', '未知'))} ({release_year}年) - 本次{run_crawled}个，累计{phones_crawled}个")
                 elif release_year:
                     logger.debug(f"跳过: {phone.get('name', '未知')} ({release_year}年) - 不在近五年范围内")
                 else:
                     logger.debug(f"跳过: {phone.get('name', '未知')} - 无法获取发布年份")
             else:
                 logger.warning(f"✗ 详情页爬取失败: {phone.get('name', '未知')}")
+                detail_failed = True
 
         progress['total_phones'] = phones_crawled
         save_progress()
-        logger.info(f"增量模式完成：新增 {phones_crawled} 个手机")
+        logger.info(f"增量模式完成：本次新增 {run_crawled} 个手机，累计 {phones_crawled} 个")
+        if detail_failed:
+            progress['incremental_scan_page'] = scan_start_page
+            save_progress()
+            if AUTO_MODE:
+                logger.info("存在详情页失败，等待下次重试")
+                sys.exit(10)
+            return
+        if not scan_complete and AUTO_MODE:
+            logger.info("列表扫描受限，等待下次继续")
+            sys.exit(10)
         return
 
     # 全量模式
     page = progress.get('current_page', 1)
+    pages_crawled_this_run = 0
     logger.info(f"从进度恢复: total_phones={phones_crawled}, page={page}")
 
     while True:
@@ -496,14 +537,18 @@ def step1_crawl_list_and_detail():
                     sys.exit(10)
                 return
 
-        if MAX_PAGES_PER_RUN > 0 and page > MAX_PAGES_PER_RUN:
+        if MAX_PAGES_PER_RUN > 0 and pages_crawled_this_run >= MAX_PAGES_PER_RUN:
             logger.info(f"达到页数限制，保存进度")
             save_progress()
+            if AUTO_MODE:
+                sys.exit(10)
             return
 
-        if MAX_PHONES_PER_RUN > 0 and phones_crawled >= MAX_PHONES_PER_RUN:
+        if MAX_PHONES_PER_RUN > 0 and run_crawled >= MAX_PHONES_PER_RUN:
             logger.info(f"达到手机数量限制，保存进度")
             save_progress()
+            if AUTO_MODE:
+                sys.exit(10)
             return
 
         products = crawl_list_page(session, page)
@@ -511,6 +556,7 @@ def step1_crawl_list_and_detail():
             logger.info("列表页为空，停止爬取")
             break
 
+        page_failed = False
         for phone in products:
             if MAX_TIME_PER_STEP > 0:
                 elapsed = time.time() - start_time
@@ -523,10 +569,12 @@ def step1_crawl_list_and_detail():
                         sys.exit(10)
                     return
 
-            if MAX_PHONES_PER_RUN > 0 and phones_crawled >= MAX_PHONES_PER_RUN:
+            if MAX_PHONES_PER_RUN > 0 and run_crawled >= MAX_PHONES_PER_RUN:
                 progress['current_page'] = page
                 progress['total_phones'] = phones_crawled
                 save_progress()
+                if AUTO_MODE:
+                    sys.exit(10)
                 return
 
             phone_id = phone['id']
@@ -549,6 +597,7 @@ def step1_crawl_list_and_detail():
                         json.dump(phone, f, ensure_ascii=False, indent=2)
 
                     phones_crawled += 1
+                    run_crawled += 1
                     progress['crawled_phones'].append(phone_id)
                     save_progress()
                     logger.info(f"✓ 保存: {phone.get('型号', phone.get('name', '未知'))} ({release_year}年) - 共{phones_crawled}个")
@@ -558,11 +607,22 @@ def step1_crawl_list_and_detail():
                     logger.debug(f"跳过: {phone.get('name', '未知')} - 无法获取发布年份")
             else:
                 logger.warning(f"✗ 详情页爬取失败: {phone.get('name', '未知')}")
+                page_failed = True
+
+        if page_failed:
+            progress['current_page'] = page
+            progress['total_phones'] = phones_crawled
+            save_progress()
+            if AUTO_MODE:
+                logger.info("本页存在详情失败，保留页码等待下次重试")
+                sys.exit(10)
+            return
 
         progress['crawled_pages'].append(page)
         progress['current_page'] = page + 1
         progress['total_phones'] = phones_crawled
         save_progress()
+        pages_crawled_this_run += 1
         page += 1
 
     logger.info(f"步骤1完成！共爬取 {phones_crawled} 个手机")
@@ -573,7 +633,7 @@ def step2_parse_and_merge():
     logger.info("步骤2：解析和合并数据")
     logger.info("=" * 70)
 
-    all_phones = []
+    fresh_phones = []
     for filename in os.listdir(cnmo_json_dir):
         if filename.endswith('.json'):
             filepath = os.path.join(cnmo_json_dir, filename)
@@ -581,17 +641,25 @@ def step2_parse_and_merge():
                 with open(filepath, 'r', encoding='utf-8') as f:
                     phone_data = json.load(f)
                     phone_data = normalize_phone_fields(phone_data)
-                    all_phones.append(phone_data)
+                    fresh_phones.append(phone_data)
             except Exception as e:
                 logger.error(f"读取文件失败: {filepath} - {e}")
 
-    logger.info(f"总共读取 {len(all_phones)} 个手机数据")
+    logger.info(f"本次缓存读取 {len(fresh_phones)} 个手机数据")
 
-    if not all_phones:
-        prev_file = find_latest("cnmo_phones_*.json")
-        if prev_file:
-            all_phones = load(prev_file)
-            logger.info(f"cnmo/json/ 为空，复用上次数据: {os.path.basename(prev_file)} ({len(all_phones)} 条)")
+    prev_file = find_latest("cnmo_phones_*.json")
+    previous_phones = load(prev_file)
+    merged = {}
+    order = []
+    for phone in previous_phones + fresh_phones:
+        normalized = normalize_phone_fields(phone)
+        key = cnmo_row_identity(normalized)
+        if key not in merged:
+            order.append(key)
+        merged[key] = normalized
+    all_phones = [merged[key] for key in order]
+    if prev_file:
+        logger.info(f"累积上次数据: {os.path.basename(prev_file)} ({len(previous_phones)} 条)，本次缓存优先覆盖")
     if not all_phones:
         logger.warning("没有任何手机数据，将输出空文件")
 
@@ -657,7 +725,22 @@ def find_latest(pattern):
     data_files = [f for f in files if 'progress' not in f and 'manifest' not in f]
     if not data_files:
         data_files = files
-    return max(data_files, key=os.path.getmtime)
+    def sort_key(path):
+        basename = os.path.basename(path)
+        match = re.search(r'cnmo_phones_(\d{8})\.json$', basename)
+        crawl_date = match.group(1) if match else ''
+        canonical = basename.startswith('cnmo_phones_')
+        return crawl_date, canonical, basename
+
+    return max(data_files, key=sort_key)
+
+
+def cnmo_row_identity(phone):
+    phone_id = str(phone.get('手机ID') or phone.get('id') or '').strip()
+    if phone_id:
+        return f"id:{phone_id}"
+    model = re.sub(r'\s+', '', str(phone.get('型号') or phone.get('name') or '')).lower()
+    return f"model:{model}"
 
 
 def load(path):

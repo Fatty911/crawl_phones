@@ -34,6 +34,7 @@
   ];
 
   var DEFAULT_HIDDEN_COLUMNS = new Set(["手机ID", "source"]);
+  var MIN_RELEASE_YEAR = 2022;
 
   var SAMPLE_ROWS = [
     {
@@ -218,6 +219,17 @@
     return columns;
   }
 
+  function releaseYear(row) {
+    var fields = ["上市时间", "国内发布时间", "发布时间", "发布日期", "上市日期"];
+    for (var index = 0; index < fields.length; index += 1) {
+      var match = String(row[fields[index]] || "").match(/(^|[^\d])((?:19|20)\d{2})(?!\d)/);
+      if (match) {
+        return Number(match[2]);
+      }
+    }
+    return null;
+  }
+
   function normalizeText(value) {
     return String(value == null ? "" : value).toLowerCase();
   }
@@ -309,7 +321,12 @@
   }
 
   function setDataset() {
-    state.rows = state.latestRows;
+    state.rows = state.latestRows.filter(function (row) {
+      var year = releaseYear(row);
+      return year !== null && year >= MIN_RELEASE_YEAR;
+    });
+    var dateText = state.manifest && state.manifest.date ? "数据日期 " + state.manifest.date : "最新数据";
+    els.dataMeta.textContent = dateText + " · 展示 " + state.rows.length + " / 原始 " + state.latestRows.length + " 条记录（上市年份≥" + MIN_RELEASE_YEAR + "）";
     state.columns = buildColumns(state.rows);
     state.visibleColumns = new Set();
     CORE_COLUMNS.forEach(function (column) {
@@ -726,17 +743,14 @@
     els.verifiedCount.textContent = String(state.rows.filter(function (row) {
       return String(row["验证状态"] || "").indexOf("双源") === 0;
     }).length);
-    // 从 manifest 读取各源数量（优先），否则从数据计算
-    var sc = state.manifest && state.manifest.sourceCounts;
-    if (sc) {
-      els.zolCount.textContent = String(sc["中关村在线"] || 0);
-      els.pconlineCount.textContent = String(sc["太平洋电脑网"] || 0);
-      els.cnmoCount.textContent = String(sc["CNMO"] || 0);
-    } else {
-      els.zolCount.textContent = "-";
-      els.pconlineCount.textContent = "-";
-      els.cnmoCount.textContent = "-";
+    function sourceCoverage(source) {
+      return state.rows.filter(function (row) {
+        return String(row["数据来源"] || "").indexOf(source) !== -1;
+      }).length;
     }
+    els.zolCount.textContent = String(sourceCoverage("中关村在线"));
+    els.pconlineCount.textContent = String(sourceCoverage("太平洋电脑网"));
+    els.cnmoCount.textContent = String(sourceCoverage("CNMO"));
     els.pageInfo.textContent = "第 " + state.page + " / " + pageCount + " 页";
     els.prevPage.disabled = state.page <= 1;
     els.nextPage.disabled = state.page >= pageCount;
@@ -1259,8 +1273,6 @@
       })
       .then(function (data) {
         state.latestRows = Array.isArray(data) ? data : [];
-        var dateText = state.manifest && state.manifest.date ? "数据日期 " + state.manifest.date : "最新数据";
-        els.dataMeta.textContent = dateText + " · 共 " + state.latestRows.length + " 条记录";
       })
       .catch(function () {
         state.manifest = null;

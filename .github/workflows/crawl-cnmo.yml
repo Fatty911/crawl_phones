@@ -85,7 +85,7 @@ jobs:
           elif [ ! -f "$CURRENT_PERIOD_FILE" ] || [ "$(cat "$CURRENT_PERIOD_FILE")" != "$CRAWL_PERIOD" ]; then
             echo "进入新的半月周期 $CRAWL_PERIOD，保留已处理手机列表"
             if [ -f crawl_state/cnmo/progress.json ]; then
-              python3 -c "import json; p=json.load(open('crawl_state/cnmo/progress.json')); p['current_page']=1; p['total_phones']=0; json.dump(p,open('crawl_state/cnmo/progress.json','w'),indent=2); print('已重置页码，保留已处理手机列表')"
+              python3 -c "import json; p=json.load(open('crawl_state/cnmo/progress.json')); p['current_page']=1; p['incremental_scan_page']=1; p['total_phones']=0; json.dump(p,open('crawl_state/cnmo/progress.json','w'),indent=2); print('已重置页码，保留已处理手机列表')"
             fi
           fi
           echo "$CRAWL_PERIOD" > "$CURRENT_PERIOD_FILE"
@@ -102,12 +102,16 @@ jobs:
         if: steps.period.outputs.skip != 'true'
         env:
           PROFILE_INPUT: ${{ github.event.inputs.run_profile || 'auto' }}
+          DEBUG_MODE: ${{ github.event.inputs.debug_mode || 'false' }}
         run: |
           if [ "$DEBUG_MODE" = "true" ]; then
             echo "调试模式：跳过时间窗口检查"
             echo "skip=false" >> "$GITHUB_OUTPUT"
-            echo "MAX_PHONES=${{ github.event.inputs.max_phones || '30' }}" >> "$GITHUB_ENV"
-            echo "DEBUG_LIMIT=${{ github.event.inputs.max_phones || '30' }}" >> "$GITHUB_ENV"
+            if [ "$DEBUG_MODE" = "true" ] && [ "${MAX_PHONES:-0}" -le 0 ]; then
+              MAX_PHONES=30
+            fi
+            echo "MAX_PHONES=$MAX_PHONES" >> "$GITHUB_ENV"
+            echo "DEBUG_LIMIT=$MAX_PHONES" >> "$GITHUB_ENV"
           else
             python scripts/crawl_budget.py configure
             echo "MAX_PHONES=${{ github.event.inputs.max_phones || '0' }}" >> "$GITHUB_ENV"
@@ -136,7 +140,7 @@ jobs:
         if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true'
         env:
           PROXY_SUBSCRIPTIONS: ${{ secrets.PROXY_SUBSCRIPTIONS }}
-        run: python scripts/setup_proxy_runtime.py --github-env "$GITHUB_ENV"
+        run: python scripts/setup_proxy_runtime.py --github-env "$GITHUB_ENV" --test-url "https://product.cnmo.com/all/product_t1_p1.html"
 
       - name: Clamp step1 runtime to workflow budget
         if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true'
@@ -177,10 +181,7 @@ jobs:
           git config user.email "xuerui911@gmail.com"
 
           if [ $EXIT_CODE -eq 10 ]; then
-            echo "Step1 未完成，提交进度并正常结束本次运行"
-            git add -A
-            git diff --cached --quiet || git commit -m "chore: update CNMO crawl progress [skip ci]"
-            bash scripts/git_sync_progress.sh "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
+            echo "Step1 未完成，延后到数据合并后原子提交进度与累计数据"
             echo "complete=false" >> "$GITHUB_OUTPUT"
             echo "failed=false" >> "$GITHUB_OUTPUT"
             exit 0
@@ -252,9 +253,6 @@ jobs:
           elif [ "${{ steps.step1.outputs.complete }}" = "true" ]; then
             touch "$CNMO_DONE_MARKER"
             echo "爬取完成（扫描所有列表），标记半月周期"
-          elif [ "${{ steps.validate_data.outputs.has_data }}" = "true" ] && [ -f "data/cnmo_phones_$(date +%Y%m%d).json" ]; then
-            touch "$CNMO_DONE_MARKER"
-            echo "爬取完成（有有效数据），标记半月周期"
           else
             echo "本次爬取未完成，仅同步进度"
           fi

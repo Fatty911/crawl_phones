@@ -10,6 +10,7 @@ crawl_state/zol/json/
 crawl_state/zol/exception/
 crawl_state/pconline/json/
 crawl_state/pconline/exception/
+crawl_state/cnmo/json/
 ai_search/
 
 # 生成的临时数据文件（爬虫运行时临时输出，已归入 data/ 目录）
