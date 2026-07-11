@@ -29,11 +29,13 @@ from bs4 import BeautifulSoup
 
 # 字段标准化映射（与 merge_phones.py 保持一致）
 HEADER_MAP = {
+    'launch_time': '上市时间',
     '国内发布时间': '上市时间',
     '发布时间': '上市时间',
     '发布日期': '上市时间',
     '上市日期': '上市时间',
     '上市时间': '上市时间',
+    'price': '价格',
     '电商报价': '价格',
     '参考报价': '价格',
     '售价': '价格',
@@ -151,7 +153,7 @@ def derive_brand_from_name(name):
 
 def extract_release_year(phone):
     """从手机数据中提取发布年份"""
-    for key in ['上市时间', '国内发布时间', '发布时间', '发布日期', '上市日期']:
+    for key in ['上市时间', 'launch_time', '国内发布时间', '发布时间', '发布日期', '上市日期']:
         value = phone.get(key, '')
         if value:
             match = re.search(r'(\d{4})', str(value))

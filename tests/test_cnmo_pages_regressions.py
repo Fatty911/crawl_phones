@@ -127,6 +127,72 @@ class CnmoCrawlerTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 self.cnmo.crawl_list_page(session, 1)
 
+    def test_list_launch_time_is_used_for_release_year(self) -> None:
+        self.assertEqual(
+            2026,
+            self.cnmo.extract_release_year({"launch_time": "2026年09月"}),
+        )
+
+    def test_list_fields_are_normalized_for_output(self) -> None:
+        normalized = self.cnmo.normalize_phone_fields(
+            {"launch_time": "2026年09月", "price": "暂无报价"}
+        )
+        self.assertEqual("2026年09月", normalized["上市时间"])
+        self.assertEqual("暂无报价", normalized["价格"])
+        self.assertNotIn("launch_time", normalized)
+        self.assertNotIn("price", normalized)
+
+    def test_step1_saves_list_launch_time_when_detail_has_no_date(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data_dir = root / "data"
+            json_dir = root / "json"
+            data_dir.mkdir()
+            json_dir.mkdir()
+            progress_path = root / "progress.json"
+            progress = {"crawled_pages": [], "crawled_phones": [], "current_page": 1, "total_phones": 0}
+            with (
+                mock.patch.object(self.cnmo, "data_dir", str(data_dir)),
+                mock.patch.object(self.cnmo, "cnmo_json_dir", str(json_dir)),
+                mock.patch.object(self.cnmo, "progress_file", str(progress_path)),
+                mock.patch.object(self.cnmo, "progress", progress),
+                mock.patch.object(self.cnmo, "INCREMENTAL_MODE", True),
+                mock.patch.object(self.cnmo, "MAX_PAGES_PER_RUN", 0),
+                mock.patch.object(self.cnmo, "MAX_PHONES_PER_RUN", 1),
+                mock.patch.object(self.cnmo, "MAX_TIME_PER_STEP", 0),
+                mock.patch.object(self.cnmo, "AUTO_MODE", False),
+                mock.patch.object(self.cnmo, "get_session", return_value=mock.Mock()),
+                mock.patch.object(
+                    self.cnmo,
+                    "crawl_list_page",
+                    side_effect=[
+                        [
+                            {
+                                "id": "new",
+                                "name": "新机",
+                                "price": "暂无报价",
+                                "launch_time": "2026年09月",
+                            }
+                        ],
+                        [],
+                    ],
+                ),
+                mock.patch.object(
+                    self.cnmo,
+                    "crawl_detail_page",
+                    return_value={"CPU型号": "测试处理器"},
+                ),
+            ):
+                self.cnmo.step1_crawl_list_and_detail()
+
+            saved = json.loads((json_dir / "new.json").read_text(encoding="utf-8"))
+            self.assertEqual("2026年09月", saved["上市时间"])
+            self.assertEqual("暂无报价", saved["价格"])
+            self.assertNotIn("launch_time", saved)
+            self.assertNotIn("price", saved)
+            self.assertEqual(["new"], progress["crawled_phones"])
+            self.assertEqual(1, progress["total_phones"])
+
     def test_incremental_mode_seeds_existing_ids_from_previous_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
