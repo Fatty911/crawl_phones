@@ -107,12 +107,12 @@ setTimeout(() => {
             timeout=30,
         )
         metrics = json.loads(result.stdout)
-        self.assertEqual("1046", metrics["totalCount"])
+        self.assertEqual("1065", metrics["totalCount"])
         self.assertEqual("931", metrics["zolCount"])
-        self.assertEqual("677", metrics["pconlineCount"])
-        self.assertEqual("5", metrics["cnmoCount"])
-        self.assertEqual("567", metrics["verifiedCount"])
-        self.assertIn("1046", metrics["dataMeta"])
+        self.assertEqual("663", metrics["pconlineCount"])
+        self.assertEqual("35", metrics["cnmoCount"])
+        self.assertEqual("547", metrics["verifiedCount"])
+        self.assertIn("1065", metrics["dataMeta"])
 
 
 class CnmoCrawlerTests(unittest.TestCase):
@@ -392,6 +392,135 @@ class CnmoCrawlerTests(unittest.TestCase):
                 self.assertEqual(1, progress["current_page"])
                 self.assertEqual(1, progress["incremental_scan_page"])
                 self.assertNotIn("failed", progress["crawled_phones"])
+
+
+class CnmoParamUrlResolutionTests(unittest.TestCase):
+    """Regression: parameter page href from CNMO list/detail page can be
+    protocol-relative (//product.cnmo.com/...) or path-absolute with
+    duplicated domain (/product.cnmo.com/...). Naive BASE_URL + href
+    concatenation produced https://product.cnmo.com//product.cnmo.com/...
+    causing all 6700 detail fetches to 404."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.cnmo = load_script_module("crawl_cnmo_paramurl", ROOT / "scripts" / "crawl_cnmo.py")
+
+    def test_protocol_relative_href_resolves_without_duplicated_domain(self) -> None:
+        """href='//product.cnmo.com/1628/1627858/param.shtml' must NOT
+        become https://product.cnmo.com//product.cnmo.com/..."""
+        resolved = self.cnmo.resolve_param_url(
+            "//product.cnmo.com/1628/1627858/param.shtml"
+        )
+        self.assertEqual(
+            "https://product.cnmo.com/1628/1627858/param.shtml",
+            resolved,
+        )
+
+    def test_absolute_href_returned_as_is(self) -> None:
+        resolved = self.cnmo.resolve_param_url(
+            "https://product.cnmo.com/cell_phone/123/param.shtml"
+        )
+        self.assertEqual(
+            "https://product.cnmo.com/cell_phone/123/param.shtml",
+            resolved,
+        )
+
+    def test_path_absolute_with_domain_stripped(self) -> None:
+        """href='/product.cnmo.com/1628/1627858/param.shtml' must NOT
+        produce https://product.cnmo.com/product.cnmo.com/..."""
+        resolved = self.cnmo.resolve_param_url(
+            "/product.cnmo.com/1628/1627858/param.shtml"
+        )
+        self.assertEqual(
+            "https://product.cnmo.com/1628/1627858/param.shtml",
+            resolved,
+        )
+
+    def test_simple_relative_href_joins_to_base(self) -> None:
+        resolved = self.cnmo.resolve_param_url("cell_phone/123/param.shtml")
+        self.assertEqual(
+            "https://product.cnmo.com/cell_phone/123/param.shtml",
+            resolved,
+        )
+
+    def test_directory_relative_href_joins_against_detail_page(self) -> None:
+        resolved = self.cnmo.resolve_param_url(
+            "123/param.shtml",
+            "https://product.cnmo.com/cell_phone/index123.shtml",
+        )
+        self.assertEqual(
+            "https://product.cnmo.com/cell_phone/123/param.shtml",
+            resolved,
+        )
+
+    def test_path_absolute_without_domain_joins(self) -> None:
+        resolved = self.cnmo.resolve_param_url("/cell_phone/123/param.shtml")
+        self.assertEqual(
+            "https://product.cnmo.com/cell_phone/123/param.shtml",
+            resolved,
+        )
+
+    def test_http_absolute_url_preserved(self) -> None:
+        resolved = self.cnmo.resolve_param_url(
+            "http://product.cnmo.com/cell_phone/123/param.shtml"
+        )
+        self.assertEqual(
+            "http://product.cnmo.com/cell_phone/123/param.shtml",
+            resolved,
+        )
+
+    def test_cross_origin_absolute_and_protocol_relative_urls_are_rejected(self) -> None:
+        self.assertIsNone(
+            self.cnmo.resolve_param_url("https://evil.example/123/param.shtml")
+        )
+        self.assertIsNone(
+            self.cnmo.resolve_param_url("//evil.example/123/param.shtml")
+        )
+
+    def test_embedded_domain_prefix_requires_path_boundary(self) -> None:
+        self.assertIsNone(
+            self.cnmo.resolve_param_url(
+                "/product.cnmo.com.evil/123/param.shtml"
+            )
+        )
+
+    def test_query_and_fragment_are_preserved_for_param_path(self) -> None:
+        resolved = self.cnmo.resolve_param_url(
+            "//product.cnmo.com/123/param.shtml?from=detail#specs"
+        )
+        self.assertEqual(
+            "https://product.cnmo.com/123/param.shtml?from=detail#specs",
+            resolved,
+        )
+
+    def test_param_name_in_query_does_not_make_non_param_path_valid(self) -> None:
+        self.assertIsNone(
+            self.cnmo.resolve_param_url(
+                "https://product.cnmo.com/redirect.shtml?next=param.shtml"
+            )
+        )
+
+    def test_empty_or_blank_href_returns_none(self) -> None:
+        self.assertIsNone(self.cnmo.resolve_param_url(""))
+        self.assertIsNone(self.cnmo.resolve_param_url("   "))
+
+    def test_parameter_http_failure_returns_none(self) -> None:
+        detail_response = requests.Response()
+        detail_response.status_code = 200
+        detail_response._content = (
+            b'<html><h1>Test Phone</h1>'
+            b'<a href="//product.cnmo.com/123/param.shtml">params</a></html>'
+        )
+        parameter_response = requests.Response()
+        parameter_response.status_code = 404
+        session = mock.Mock()
+        session.get.side_effect = [detail_response, parameter_response]
+
+        self.assertIsNone(self.cnmo.crawl_detail_page(session, "123"))
+        self.assertEqual(
+            "https://product.cnmo.com/123/param.shtml",
+            session.get.call_args_list[1].args[0],
+        )
 
 
 class MergeCnmoCoverageTests(unittest.TestCase):

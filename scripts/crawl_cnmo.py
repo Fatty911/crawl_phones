@@ -24,6 +24,7 @@ from typing import List, Dict, Optional
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup
 
 # 字段标准化映射（与 merge_phones.py 保持一致）
@@ -232,6 +233,32 @@ LIST_URL = f"{BASE_URL}/all/product_t1_p{{page}}.html"
 DETAIL_URL = f"{BASE_URL}/cell_phone/index{{pid}}.shtml"
 PARAM_URL = f"{BASE_URL}/cell_phone/{{pid}}/param.shtml"
 
+_DOMAIN = urlparse(BASE_URL).netloc
+
+
+def resolve_param_url(href: str, page_url: str = f"{BASE_URL}/") -> Optional[str]:
+    """Resolve a param.shtml href from a CNMO page to an absolute URL.
+
+    Handles protocol-relative (//product.cnmo.com/...), path-absolute with
+    duplicated domain (/product.cnmo.com/...), absolute, and relative hrefs.
+    """
+    if not href or not href.strip():
+        return None
+    href = href.strip()
+    domain_path_prefix = f"/{_DOMAIN}"
+    if href.startswith(domain_path_prefix):
+        if not href.startswith(f"{domain_path_prefix}/"):
+            return None
+        href = href[len(domain_path_prefix):]
+
+    resolved = urljoin(page_url, href)
+    parsed = urlparse(resolved)
+    if parsed.scheme not in {"http", "https"} or parsed.netloc.lower() != _DOMAIN:
+        return None
+    if not parsed.path.endswith("/param.shtml"):
+        return None
+    return resolved
+
 
 def save_progress():
     with open(progress_file, 'w', encoding='utf-8') as f:
@@ -357,12 +384,10 @@ def crawl_detail_page(session: requests.Session, phone_id: str) -> Optional[Dict
     # 查找参数页链接
     param_url = None
     for a_tag in soup.select('a[href*="param.shtml"]'):
-        href = a_tag.get("href", "")
-        if href:
-            if href.startswith("http"):
-                param_url = href
-            else:
-                param_url = BASE_URL + href
+        href = str(a_tag.get("href") or "")
+        resolved = resolve_param_url(href, url)
+        if resolved:
+            param_url = resolved
             break
 
     # 爬取参数页
