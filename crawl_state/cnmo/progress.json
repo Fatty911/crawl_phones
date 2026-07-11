@@ -2,5 +2,6 @@
   "crawled_pages": [],
   "crawled_phones": [],
   "current_page": 1,
-  "total_phones": 0
+  "total_phones": 50,
+  "incremental_scan_page": 1
 }
