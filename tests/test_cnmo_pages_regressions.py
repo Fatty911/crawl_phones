@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -107,12 +108,24 @@ setTimeout(() => {
             timeout=30,
         )
         metrics = json.loads(result.stdout)
-        self.assertEqual("1065", metrics["totalCount"])
-        self.assertEqual("931", metrics["zolCount"])
-        self.assertEqual("663", metrics["pconlineCount"])
-        self.assertEqual("35", metrics["cnmoCount"])
-        self.assertEqual("547", metrics["verifiedCount"])
-        self.assertIn("1065", metrics["dataMeta"])
+        rows = json.loads((ROOT / "docs/phones/data/latest.json").read_text(encoding="utf-8"))
+
+        def release_year(row):
+            for field in ["上市时间", "国内发布时间", "发布时间", "发布日期", "上市日期"]:
+                match = re.search(r"(^|[^\d])((?:19|20)\d{2})(?!\d)", str(row.get(field, "")))
+                if match:
+                    return int(match.group(2))
+            return None
+
+        filtered = [row for row in rows if (release_year(row) or 0) >= 2022]
+        source_count = lambda source: sum(source in str(row.get("数据来源", "")) for row in filtered)
+        verified_count = sum(str(row.get("验证状态", "")).startswith("双源") for row in filtered)
+        self.assertEqual(str(len(filtered)), metrics["totalCount"])
+        self.assertEqual(str(source_count("中关村在线")), metrics["zolCount"])
+        self.assertEqual(str(source_count("太平洋电脑网")), metrics["pconlineCount"])
+        self.assertEqual(str(source_count("CNMO")), metrics["cnmoCount"])
+        self.assertEqual(str(verified_count), metrics["verifiedCount"])
+        self.assertIn(str(len(filtered)), metrics["dataMeta"])
 
 
 class CnmoCrawlerTests(unittest.TestCase):
@@ -138,9 +151,30 @@ class CnmoCrawlerTests(unittest.TestCase):
             {"launch_time": "2026年09月", "price": "暂无报价"}
         )
         self.assertEqual("2026年09月", normalized["上市时间"])
-        self.assertEqual("暂无报价", normalized["价格"])
+        self.assertEqual("", normalized["价格"])
         self.assertNotIn("launch_time", normalized)
         self.assertNotIn("price", normalized)
+
+    def test_cnmo_price_is_numeric_or_empty(self) -> None:
+        cases = {
+            "￥3,999": "3999",
+            "3999.00": "3999.00",
+            "2026年09月": "",
+            "暂无报价": "",
+            "3999元起": "",
+        }
+        for raw, expected in cases.items():
+            with self.subTest(raw=raw):
+                self.assertEqual(expected, self.cnmo.normalize_cnmo_price(raw))
+
+    def test_future_release_uses_available_date_precision(self) -> None:
+        run_day = self.cnmo.date(2026, 7, 12)
+        self.assertFalse(self.cnmo.is_future_release({"上市时间": "2026年07月12日"}, run_day))
+        self.assertTrue(self.cnmo.is_future_release({"上市时间": "2026年07月13日"}, run_day))
+        self.assertFalse(self.cnmo.is_future_release({"上市时间": "2026年07月"}, run_day))
+        self.assertTrue(self.cnmo.is_future_release({"上市时间": "2026年08月"}, run_day))
+        self.assertTrue(self.cnmo.is_future_release({"上市时间": "2027年"}, run_day))
+        self.assertFalse(self.cnmo.is_future_release({"上市时间": "待定"}, run_day))
 
     def test_step1_saves_list_launch_time_when_detail_has_no_date(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -171,7 +205,7 @@ class CnmoCrawlerTests(unittest.TestCase):
                                 "id": "new",
                                 "name": "新机",
                                 "price": "暂无报价",
-                                "launch_time": "2026年09月",
+                                "launch_time": "2026年06月",
                             }
                         ],
                         [],
@@ -186,8 +220,8 @@ class CnmoCrawlerTests(unittest.TestCase):
                 self.cnmo.step1_crawl_list_and_detail()
 
             saved = json.loads((json_dir / "new.json").read_text(encoding="utf-8"))
-            self.assertEqual("2026年09月", saved["上市时间"])
-            self.assertEqual("暂无报价", saved["价格"])
+            self.assertEqual("2026年06月", saved["上市时间"])
+            self.assertEqual("", saved["价格"])
             self.assertNotIn("launch_time", saved)
             self.assertNotIn("price", saved)
             self.assertEqual(["new"], progress["crawled_phones"])
@@ -278,15 +312,15 @@ class CnmoCrawlerTests(unittest.TestCase):
             (data_dir / "cnmo_phones_20260710.json").write_text(
                 json.dumps(
                     [
-                        {"手机ID": "keep", "型号": "保留", "上市时间": "2025", "价格": "1"},
-                        {"手机ID": "update", "型号": "更新", "上市时间": "2026", "价格": "old"},
+                        {"手机ID": "keep", "型号": "保留", "上市时间": "2025", "价格": "100"},
+                        {"手机ID": "update", "型号": "更新", "上市时间": "2026", "价格": "150"},
                     ],
                     ensure_ascii=False,
                 ),
                 encoding="utf-8",
             )
             (json_dir / "update.json").write_text(
-                json.dumps({"手机ID": "update", "型号": "更新", "上市时间": "2026", "价格": "new"}, ensure_ascii=False),
+                json.dumps({"手机ID": "update", "型号": "更新", "上市时间": "2026", "价格": "200"}, ensure_ascii=False),
                 encoding="utf-8",
             )
             with (
@@ -297,7 +331,7 @@ class CnmoCrawlerTests(unittest.TestCase):
 
             by_id = {row["手机ID"]: row for row in rows}
             self.assertEqual({"keep", "update"}, set(by_id))
-            self.assertEqual("new", by_id["update"]["价格"])
+            self.assertEqual("200", by_id["update"]["价格"])
 
     def test_full_scan_page_limit_is_resumable_not_complete(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -701,6 +735,29 @@ class MergeCnmoCoverageTests(unittest.TestCase):
 
             self.assertEqual(1, len(rows))
             self.assertEqual("new", rows[0]["价格"])
+
+    def test_publish_guard_drops_future_rows_and_sanitizes_cnmo_price(self) -> None:
+        run_day = self.merge.date(2026, 7, 12)
+        rows = [
+            {"型号": "今天", "上市时间": "2026年07月12日", "价格": "￥3999"},
+            {"型号": "未来月", "上市时间": "2026年08月", "价格": "2026年08月"},
+            {"型号": "未知", "上市时间": "待定", "价格": "暂无报价"},
+        ]
+        guarded = self.merge.guard_publish_rows(rows, source="CNMO", today=run_day)
+        self.assertEqual(["今天", "未知"], [row["型号"] for row in guarded])
+        self.assertEqual(["3999", ""], [row["价格"] for row in guarded])
+
+
+class PagesPaginationContractTests(unittest.TestCase):
+    def test_pages_keep_adjacent_buttons_and_add_jump_controls(self) -> None:
+        html = (ROOT / "docs/phones/index.html").read_text(encoding="utf-8")
+        script = (ROOT / "docs/phones/app.js").read_text(encoding="utf-8")
+        self.assertIn('id="prevPage"', html)
+        self.assertIn('id="nextPage"', html)
+        self.assertIn('id="pageJump"', html)
+        self.assertIn('id="jumpPage"', html)
+        self.assertIn("function jumpToPage()", script)
+        self.assertIn("多源未校验", script)
 
 
 class CnmoWorkflowTests(unittest.TestCase):

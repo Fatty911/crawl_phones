@@ -84,6 +84,51 @@ HEADER_MAP = {
     '机身重量': '机身重量',
 }
 
+
+_PRICE_PATTERN = re.compile(r"\d+(?:\.\d+)?")
+_RELEASE_DATE_PATTERN = re.compile(
+    r"(?<!\d)((?:19|20)\d{2})(?:\s*[年\-/.]\s*(\d{1,2}))?(?:\s*[月\-/.]\s*(\d{1,2}))?"
+)
+
+
+def normalize_cnmo_price(value):
+    if value is None:
+        return ''
+    text = str(value).strip().replace('￥', '').replace('¥', '').replace(',', '')
+    return text if _PRICE_PATTERN.fullmatch(text) else ''
+
+
+def is_future_release(row, today=None):
+    today = today or date.today()
+    for key in ['上市时间', '国内发布时间', '发布时间', '发布日期', '上市日期']:
+        match = _RELEASE_DATE_PATTERN.search(str(row.get(key, '') or ''))
+        if not match:
+            continue
+        year = int(match.group(1))
+        month = int(match.group(2)) if match.group(2) else None
+        day = int(match.group(3)) if match.group(3) else None
+        if month is None:
+            return year > today.year
+        if day is None:
+            return (year, month) > (today.year, today.month)
+        try:
+            return date(year, month, day) > today
+        except ValueError:
+            return False
+    return False
+
+
+def guard_publish_rows(rows, source=None, today=None):
+    guarded = []
+    for row in rows:
+        if is_future_release(row, today):
+            continue
+        clean = dict(row)
+        if source == 'CNMO':
+            clean['价格'] = normalize_cnmo_price(clean.get('价格'))
+        guarded.append(clean)
+    return guarded
+
 # 手机品牌别名映射（归一化到标准品牌名）
 BRAND_ALIASES = {
     # vivo 系列
@@ -930,9 +975,11 @@ def main():
     print(f"太平洋电脑网数据文件 ({len(pconline_files)}): {[os.path.basename(f) for f in pconline_files]}")
     print(f"CNMO数据文件 ({len(cnmo_files)}): {[os.path.basename(f) for f in cnmo_files]}")
 
-    zol_rows = norm_rows(load_all("data/zol_phones_*.json"), '中关村在线')
-    pconline_rows = norm_rows(load_all("data/pconline_phones_*.json"), '太平洋电脑网')
-    cnmo_rows = norm_rows(load_all("data/cnmo_phones_*.json", prefer_latest=True), 'CNMO')
+    zol_rows = guard_publish_rows(norm_rows(load_all("data/zol_phones_*.json"), '中关村在线'))
+    pconline_rows = guard_publish_rows(norm_rows(load_all("data/pconline_phones_*.json"), '太平洋电脑网'))
+    raw_cnmo_rows = norm_rows(load_all("data/cnmo_phones_*.json", prefer_latest=True), 'CNMO')
+    cnmo_rows = guard_publish_rows(raw_cnmo_rows, source='CNMO')
+    print(f"发布防御丢弃未来上市: CNMO {len(raw_cnmo_rows) - len(cnmo_rows)} 条；CNMO价格仅保留数值或空")
 
     if not zol_rows and not pconline_rows and not cnmo_rows:
         print("错误: 没有找到任何数据文件")
@@ -948,7 +995,10 @@ def main():
     all_rows = merge_verified_rows(zol_rows, pconline_rows, source_header)
     cnmo_appended, cnmo_matched = append_unique_single_source(all_rows, cnmo_rows, 'CNMO')
     all_rows.extend(cnmo_appended)
+    before_final_guard = len(all_rows)
+    all_rows = guard_publish_rows(all_rows)
     print(f"CNMO单源追加:{len(cnmo_appended)} 来源覆盖匹配:{cnmo_matched}")
+    print(f"最终发布防御再次丢弃未来上市: {before_final_guard - len(all_rows)} 条")
     header = collect_fields(all_rows)
     dual_source_count = sum(1 for row in all_rows if row.get('验证状态', '').startswith('双源'))
     print(f"交叉验证后机型:{len(all_rows)} 双源记录:{dual_source_count} 非双源记录:{len(all_rows) - dual_source_count}")

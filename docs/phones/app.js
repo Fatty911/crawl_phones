@@ -126,6 +126,7 @@
     cnmoCount: document.getElementById("cnmoCount"),
     columnCount: document.getElementById("columnCount"),
     verifiedCount: document.getElementById("verifiedCount"),
+    coverageNote: document.getElementById("coverageNote"),
     brandFilter: document.getElementById("brandFilter"),
     rootFilter: document.getElementById("rootFilter"),
     blFilter: document.getElementById("blFilter"),
@@ -136,6 +137,8 @@
     prevPage: document.getElementById("prevPage"),
     nextPage: document.getElementById("nextPage"),
     pageInfo: document.getElementById("pageInfo"),
+    pageJump: document.getElementById("pageJump"),
+    jumpPage: document.getElementById("jumpPage"),
     advancedFilterList: document.getElementById("advancedFilterList"),
     addAdvancedFilter: document.getElementById("addAdvancedFilter"),
     activeFilters: document.getElementById("activeFilters"),
@@ -743,6 +746,10 @@
     els.verifiedCount.textContent = String(state.rows.filter(function (row) {
       return String(row["验证状态"] || "").indexOf("双源") === 0;
     }).length);
+    var multiUnverifiedCount = state.rows.filter(function (row) {
+      return String(row["验证状态"] || "") === "多源未校验";
+    }).length;
+    els.coverageNote.textContent = "来源卡片按记录覆盖统计；双源仅统计已实际比对记录。另有 " + multiUnverifiedCount + " 条多源未校验，仅表示来源命中，不计为双源验证。";
     function sourceCoverage(source) {
       return state.rows.filter(function (row) {
         return String(row["数据来源"] || "").indexOf(source) !== -1;
@@ -752,6 +759,8 @@
     els.pconlineCount.textContent = String(sourceCoverage("太平洋电脑网"));
     els.cnmoCount.textContent = String(sourceCoverage("CNMO"));
     els.pageInfo.textContent = "第 " + state.page + " / " + pageCount + " 页";
+    els.pageJump.max = String(pageCount);
+    els.pageJump.value = String(state.page);
     els.prevPage.disabled = state.page <= 1;
     els.nextPage.disabled = state.page >= pageCount;
 
@@ -759,6 +768,17 @@
     renderColumnList();
     renderActiveFilters();
     renderDownloads();
+  }
+
+  function jumpToPage() {
+    var requested = Number(els.pageJump.value);
+    var pageCount = Math.max(1, Math.ceil(getFilteredRows().length / state.pageSize));
+    if (!Number.isInteger(requested)) {
+      els.pageJump.value = String(state.page);
+      return;
+    }
+    state.page = Math.min(pageCount, Math.max(1, requested));
+    renderDataViews();
   }
 
   function scheduleRender() {
@@ -1225,6 +1245,13 @@
     els.nextPage.addEventListener("click", function () {
       state.page += 1;
       renderDataViews();
+    });
+
+    els.jumpPage.addEventListener("click", jumpToPage);
+    els.pageJump.addEventListener("keydown", function (event) {
+      if (event.key === "Enter") {
+        jumpToPage();
+      }
     });
 
     els.saveHistory.addEventListener("click", saveHistory);

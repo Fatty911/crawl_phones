@@ -97,6 +97,41 @@ HEADER_MAP = {
 }
 
 
+_PRICE_PATTERN = re.compile(r"\d+(?:\.\d+)?")
+_RELEASE_DATE_PATTERN = re.compile(
+    r"(?<!\d)((?:19|20)\d{2})(?:\s*[年\-/.]\s*(\d{1,2}))?(?:\s*[月\-/.]\s*(\d{1,2}))?"
+)
+
+
+def normalize_cnmo_price(value) -> str:
+    """Return a numeric CNMO price string, or empty for non-price text."""
+    if value is None:
+        return ''
+    text = str(value).strip().replace('￥', '').replace('¥', '').replace(',', '')
+    return text if _PRICE_PATTERN.fullmatch(text) else ''
+
+
+def is_future_release(phone: Dict, today: Optional[date] = None) -> bool:
+    """Compare a release value with today using only the precision it provides."""
+    today = today or date.today()
+    for key in ['上市时间', 'launch_time', '国内发布时间', '发布时间', '发布日期', '上市日期']:
+        match = _RELEASE_DATE_PATTERN.search(str(phone.get(key, '') or ''))
+        if not match:
+            continue
+        year = int(match.group(1))
+        month = int(match.group(2)) if match.group(2) else None
+        day = int(match.group(3)) if match.group(3) else None
+        if month is None:
+            return year > today.year
+        if day is None:
+            return (year, month) > (today.year, today.month)
+        try:
+            return date(year, month, day) > today
+        except ValueError:
+            return False
+    return False
+
+
 def normalize_phone_fields(phone: Dict) -> Dict:
     """将手机数据的字段名标准化为统一格式"""
     normalized = {}
@@ -110,6 +145,8 @@ def normalize_phone_fields(phone: Dict) -> Dict:
         elif value and normalized[new_key]:
             if len(str(value)) > len(str(normalized[new_key])):
                 normalized[new_key] = value
+    if '价格' in normalized:
+        normalized['价格'] = normalize_cnmo_price(normalized['价格'])
     return normalized
 
 
@@ -465,8 +502,13 @@ def step1_crawl_list_and_detail():
             if MAX_TIME_PER_STEP > 0 and (time.time() - start_time) >= MAX_TIME_PER_STEP * 0.3:
                 break
 
-        new_phones = [p for p in all_phones if p['id'] not in existing_ids]
-        logger.info(f"增量扫描完成：共 {len(all_phones)} 个型号，新增 {len(new_phones)} 个")
+        unseen_phones = [p for p in all_phones if p['id'] not in existing_ids]
+        new_phones = [p for p in unseen_phones if not is_future_release(p)]
+        future_count = len(unseen_phones) - len(new_phones)
+        logger.info(
+            f"增量扫描完成：共 {len(all_phones)} 个型号，新增 {len(new_phones)} 个，"
+            f"丢弃未来上市 {future_count} 个"
+        )
 
         if not new_phones:
             logger.info("未发现新增型号，无需爬取详情")
@@ -507,6 +549,9 @@ def step1_crawl_list_and_detail():
             detail = crawl_detail_page(session, phone_id)
             if detail:
                 phone.update(detail)
+                if is_future_release(phone):
+                    logger.info(f"丢弃未来上市机型: {phone.get('型号', phone.get('name', '未知'))} ({phone.get('上市时间') or phone.get('launch_time', '')})")
+                    continue
                 release_year = extract_release_year(phone)
 
                 if release_year and release_year >= MIN_YEAR:
@@ -611,6 +656,9 @@ def step1_crawl_list_and_detail():
             detail = crawl_detail_page(session, phone_id)
             if detail:
                 phone.update(detail)
+                if is_future_release(phone):
+                    logger.info(f"丢弃未来上市机型: {phone.get('型号', phone.get('name', '未知'))} ({phone.get('上市时间') or phone.get('launch_time', '')})")
+                    continue
                 release_year = extract_release_year(phone)
 
                 if release_year and release_year >= MIN_YEAR:
@@ -685,6 +733,13 @@ def step2_parse_and_merge():
             order.append(key)
         merged[key] = normalized
     all_phones = [merged[key] for key in order]
+    before_guard = len(all_phones)
+    all_phones = [
+        normalize_phone_fields(phone)
+        for phone in all_phones
+        if not is_future_release(phone)
+    ]
+    logger.info(f"发布防御：丢弃未来上市 {before_guard - len(all_phones)} 条，CNMO价格已规范为数值或空")
     if prev_file:
         logger.info(f"累积上次数据: {os.path.basename(prev_file)} ({len(previous_phones)} 条)，本次缓存优先覆盖")
     if not all_phones:
