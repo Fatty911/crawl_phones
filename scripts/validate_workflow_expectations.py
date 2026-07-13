@@ -60,8 +60,12 @@ def check_crawler_workflow(path: Path, errors: list[str]) -> None:
         errors,
     )
     if path.name == "crawl-cnmo.yml":
-        expected_fields = "key_fields=['处理器','内存','存储','屏幕','电池类型','后置相机','上市时间']"
-        assert_condition(expected_fields in text, "crawl-cnmo.yml does not validate CNMO schema fields", errors)
+        assert_condition(
+            'python3 scripts/validate_cnmo_dataset.py "$DATA_FILE" --debug' in text
+            and 'python3 scripts/validate_cnmo_dataset.py "$DATA_FILE"' in text,
+            "crawl-cnmo.yml does not use alias-aware CNMO dataset validation",
+            errors,
+        )
     assert_condition("steps.check_done.outputs.done" not in text, f"{path.name} references undefined check_done step", errors)
     assert_condition(
         data.get("concurrency", {}).get("group") == f"{source}-phone-crawl-${{{{ github.ref }}}}",
@@ -153,6 +157,13 @@ def check_merge_workflow(path: Path, errors: list[str]) -> None:
     data = load_yaml(path)
     text = path.read_text(encoding="utf-8")
     assert_condition(
+        'CNMO_DONE="crawl_state/cnmo_${CRAWL_PERIOD}.done"' in text
+        and '[ -f "$CNMO_DONE" ]' in text
+        and "CNMO完成:" in text,
+        "merge half-month completion must require CNMO done marker",
+        errors,
+    )
+    assert_condition(
         "timeout --signal=KILL 27m python scripts/ai_verify_root_status.py" in text,
         "merge-and-deploy.yml missing AI verification hard timeout",
         errors,
@@ -218,6 +229,46 @@ def check_merge_workflow(path: Path, errors: list[str]) -> None:
     )
 
 
+def check_deploy_pages_workflow(path: Path, errors: list[str]) -> None:
+    text = path.read_text(encoding="utf-8")
+    rows_marker = 'if [ "$ROWS" -lt 10 ]; then'
+    date_marker = 'DATE=$(basename "$MERGED_JSON"'
+    has_rows_marker = rows_marker in text
+    has_date_marker = date_marker in text
+    tiny_release_block = ""
+    if has_rows_marker and has_date_marker:
+        tiny_release_block = text[text.index(rows_marker):text.index(date_marker)]
+    assert_condition(
+        has_rows_marker
+        and has_date_marker
+        and "continue" in tiny_release_block,
+        "deploy-pages.yml must skip releases with fewer than 10 merged rows",
+        errors,
+    )
+    assert_condition(
+        "scripts/verify_publish_superset.py /tmp/phones-pages-baseline.json site/data/latest.json" in text
+        and "https://phones.jiucai.eu.org/data/latest.json" in text,
+        "deploy-pages.yml must verify candidate latest.json is a superset of current Pages data",
+        errors,
+    )
+    assert_condition(
+        "--pattern 'merged_phones_*.json'" in text
+        and "--pattern 'merged_phones_*.csv'" in text
+        and "release-files/merged_phones_*.json" in text
+        and "release-files/merged_phones_*.csv" in text
+        and "release-files/data/merged_phones_" not in text,
+        "deploy-pages.yml must use the flat merged_phones release asset paths",
+        errors,
+    )
+    assert_condition(
+        "python scripts/verify_publish_superset.py docs/phones/data/latest.json site/data/latest.json" in text
+        and "拒绝发布以避免缩小稳定数据" in text
+        and "跳过超集校验" not in text,
+        "deploy-pages.yml must fail closed or use repository baseline when Pages baseline cannot be fetched",
+        errors,
+    )
+
+
 def main() -> int:
     errors: list[str] = []
     for path in CRAWLER_WORKFLOWS:
@@ -225,6 +276,7 @@ def main() -> int:
     check_trigger(ROOT / ".github/workflows/crawl-trigger.yml", errors)
     check_budget_script(ROOT / "scripts/crawl_budget.py", errors)
     check_merge_workflow(ROOT / ".github/workflows/merge-and-deploy.yml", errors)
+    check_deploy_pages_workflow(ROOT / ".github/workflows/deploy-pages.yml", errors)
     assert_condition((ROOT / "scripts/configure_cron_job_org.py").exists(), "missing cron-job.org configuration script", errors)
 
     if errors:

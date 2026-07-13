@@ -238,12 +238,21 @@ jobs:
           ROW_COUNT=$(python3 -c "import json; print(len(json.load(open('$DATA_FILE', encoding='utf-8'))))" 2>/dev/null || echo "0")
           echo "cnmo_row_count=$ROW_COUNT" >> "$GITHUB_OUTPUT"
           if [ "$ROW_COUNT" -gt 0 ]; then
-            VALID_RATE=$(python3 -c "import json; rows=json.load(open('$DATA_FILE')); total=len(rows); key_fields=['处理器','内存','存储','屏幕','电池类型','后置相机','上市时间']; bad={'','-','N/A','暂无','无','null','未知','/','--'}; results={f:sum(1 for r in rows if str(r.get(f,'')).strip() not in bad) for f in key_fields}; print(int(min(results.values())/total*100) if total>0 else 0)")
-            if [ "$VALID_RATE" -ge 70 ]; then
-              echo "CNMO今日数据有效: $DATA_FILE ($ROW_COUNT 行, 关键字段完整率 ${VALID_RATE}%)"
+            if [ "${{ github.event.inputs.debug_mode || 'false' }}" = "true" ]; then
+              if python3 scripts/validate_cnmo_dataset.py "$DATA_FILE" --debug; then
+                echo "CNMO debug 数据有效: $DATA_FILE ($ROW_COUNT 行)"
+                echo "has_data=true" >> "$GITHUB_OUTPUT"
+              else
+                echo "CNMO debug 数据必须为 20 到 30 行、型号完整且七个关键字段完整率不低于 70%，实际 $ROW_COUNT 行"
+                echo "has_data=false" >> "$GITHUB_OUTPUT"
+              fi
+              exit 0
+            fi
+            if python3 scripts/validate_cnmo_dataset.py "$DATA_FILE"; then
+              echo "CNMO今日数据有效: $DATA_FILE ($ROW_COUNT 行)"
               echo "has_data=true" >> "$GITHUB_OUTPUT"
             else
-              echo "CNMO关键字段不完整（${VALID_RATE}% < 70%），不上传"
+              echo "CNMO关键字段完整率低于 70%，不上传"
               echo "has_data=false" >> "$GITHUB_OUTPUT"
             fi
           else
@@ -259,9 +268,16 @@ jobs:
       - name: Mark crawl complete and commit
         if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true' && github.event.inputs.debug_mode != 'true'
         run: |
+          MIN_CNMO_COMPLETE_ROWS=200
           if [ "${{ steps.step1.outputs.complete }}" = "true" ]; then
-            touch "$CNMO_DONE_MARKER"
-            echo "爬取完成（扫描所有列表），标记半月周期"
+            CNMO_ROW_COUNT="${{ steps.validate_data.outputs.cnmo_row_count }}"
+            if [ "$CNMO_ROW_COUNT" -ge "$MIN_CNMO_COMPLETE_ROWS" ] && [ "${{ steps.validate_data.outputs.has_data }}" = "true" ]; then
+              touch "$CNMO_DONE_MARKER"
+              echo "爬取完成（扫描所有列表，CNMO累计 $CNMO_ROW_COUNT 行），标记半月周期"
+            else
+              rm -f "$CNMO_DONE_MARKER"
+              echo "CNMO累计 $CNMO_ROW_COUNT 行低于完成门槛 $MIN_CNMO_COMPLETE_ROWS 或质量校验未通过，拒绝标记半月周期完成"
+            fi
           else
             echo "本次爬取未完成，仅同步进度"
           fi

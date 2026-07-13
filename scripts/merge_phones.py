@@ -6,6 +6,7 @@ import glob
 import json
 import os
 import re
+import unicodedata
 from datetime import date
 
 DIR = os.path.dirname(os.path.abspath(__file__))
@@ -25,6 +26,10 @@ FIXED = [
     '摄像头参数',
     '超广角缩放倍数',
 ]
+
+VALIDATION_FIELDS = ('处理器', '内存', '存储', '屏幕', '电池', '摄像头参数', '上市时间')
+VALIDATION_MISSING_VALUES = {'', '-', '--', '/', 'n/a', 'null', '暂无', '无', '未知'}
+SOURCE_VALIDATION_ROWS_FIELD = '_source_validation_rows'
 
 HEADER_MAP = {
     '国内发布时间': '上市时间',
@@ -51,8 +56,10 @@ HEADER_MAP = {
     '主屏分辨率': '屏幕分辨率',
     '屏幕分辨率': '屏幕分辨率',
     '后置摄像头': '摄像头参数',
+    '后置相机': '摄像头参数',
     '后置摄像头像素': '摄像头参数',
     '前置摄像头': '摄像头参数',
+    '前置相机': '摄像头参数',
     '前置摄像头像素': '摄像头参数',
     '摄像头名称': '摄像头参数',
     '摄像头总数': '摄像头参数',
@@ -513,6 +520,71 @@ def semantic_value_equal(a, b):
     return False
 
 
+def is_validation_missing(value):
+    if value is None:
+        return True
+    return str(value).strip().casefold() in VALIDATION_MISSING_VALUES
+
+
+def normalize_validation_value(field, value):
+    text = unicodedata.normalize('NFKC', str(value)).strip().casefold()
+    text = text.replace('纠错', '')
+    if field == '上市时间':
+        match = re.search(r'((?:19|20)\d{2})\D*(\d{1,2})?\D*(\d{1,2})?', text)
+        if match:
+            return tuple(int(part) if part else 0 for part in match.groups())
+    return re.sub(r'\s+', '', text)
+
+
+def validation_value_equal(field, left, right):
+    return normalize_validation_value(field, left) == normalize_validation_value(field, right)
+
+
+def classify_source_agreement(source_rows):
+    """按七个关键字段保守判定一至三源的一致性。"""
+    names = list(source_rows)
+    if len(names) < 2:
+        return '单源', '-'
+    if len(names) > 3:
+        return '多源未校验', '来源数量超过三源判定范围'
+
+    missing = []
+    for name, row in source_rows.items():
+        for field in VALIDATION_FIELDS:
+            if is_validation_missing(row.get(field)):
+                missing.append(f'{name}缺失{field}')
+    if missing:
+        return '多源未校验', '；'.join(missing)
+
+    def rows_equal(left, right):
+        return all(
+            validation_value_equal(field, left.get(field), right.get(field))
+            for field in VALIDATION_FIELDS
+        )
+
+    equal_pairs = []
+    for left_index, left_name in enumerate(names):
+        for right_name in names[left_index + 1:]:
+            if rows_equal(source_rows[left_name], source_rows[right_name]):
+                equal_pairs.append((left_name, right_name))
+
+    differences = []
+    for field in VALIDATION_FIELDS:
+        values = [source_rows[name].get(field) for name in names]
+        if not all(validation_value_equal(field, values[0], value) for value in values[1:]):
+            detail = '; '.join(f'{name}={source_rows[name].get(field)}' for name in names)
+            differences.append(f'{field}: {detail}')
+    difference_text = '；'.join(differences) if differences else '-'
+
+    if len(names) == 2:
+        return ('双源一致', '-') if equal_pairs else ('双源差异', difference_text)
+    if len(equal_pairs) == 3:
+        return '三源一致', '-'
+    if equal_pairs:
+        return '双源一致', difference_text
+    return '三源差异', difference_text
+
+
 def model_key(row):
     raw_name = row.get('型号') or row.get('name') or ''
     if is_missing(raw_name):
@@ -828,9 +900,15 @@ def merge_verified_rows(zol_rows, pconline_rows, all_fields):
                 combined[field] = f"中关村在线: {zol_val} | 太平洋电脑网: {pc_val}"
                 differences.append(f"{field}: 中关村在线={zol_val}; 太平洋电脑网={pc_val}")
 
+        source_rows = {
+            '中关村在线': zol_row,
+            '太平洋电脑网': pconline_row,
+        }
+        status, validation_differences = classify_source_agreement(source_rows)
         combined['数据来源'] = '中关村在线+太平洋电脑网'
-        combined['验证状态'] = '双源差异' if differences else '双源一致'
-        combined['交叉验证差异'] = '；'.join(differences) if differences else '-'
+        combined['验证状态'] = status
+        combined['交叉验证差异'] = validation_differences
+        combined[SOURCE_VALIDATION_ROWS_FIELD] = source_rows
         return combined
 
     for zol_row in zol_rows:
@@ -847,6 +925,7 @@ def merge_verified_rows(zol_rows, pconline_rows, all_fields):
         row['数据来源'] = '中关村在线'
         row['验证状态'] = '单源'
         row.setdefault('交叉验证差异', '-')
+        row[SOURCE_VALIDATION_ROWS_FIELD] = {'中关村在线': zol_row}
         merged.append(row)
 
     for pconline_row in pconline_rows:
@@ -860,6 +939,7 @@ def merge_verified_rows(zol_rows, pconline_rows, all_fields):
         row['数据来源'] = '太平洋电脑网'
         row['验证状态'] = '单源'
         row.setdefault('交叉验证差异', '-')
+        row[SOURCE_VALIDATION_ROWS_FIELD] = {'太平洋电脑网': pconline_row}
         merged.append(row)
 
     return merged
@@ -894,8 +974,14 @@ def append_unique_single_source(base_rows, extra_rows, source):
             if source not in sources:
                 sources.append(source)
                 row['数据来源'] = '+'.join(sources)
-            if row.get('验证状态') == '单源':
-                row['验证状态'] = '多源未校验'
+            source_rows = dict(row.get(SOURCE_VALIDATION_ROWS_FIELD) or {})
+            if not source_rows:
+                source_rows = {name: row for name in sources if name != source}
+            source_rows[source] = extra_row
+            status, validation_differences = classify_source_agreement(source_rows)
+            row['验证状态'] = status
+            row['交叉验证差异'] = validation_differences
+            row[SOURCE_VALIDATION_ROWS_FIELD] = source_rows
             matched += 1
             continue
 
@@ -910,6 +996,7 @@ def append_unique_single_source(base_rows, extra_rows, source):
         row['数据来源'] = source
         row['验证状态'] = '单源'
         row.setdefault('交叉验证差异', '-')
+        row[SOURCE_VALIDATION_ROWS_FIELD] = {source: extra_row}
         appended.append(row)
         if identity:
             appended_keys.add(identity)
@@ -995,6 +1082,8 @@ def main():
     all_rows = merge_verified_rows(zol_rows, pconline_rows, source_header)
     cnmo_appended, cnmo_matched = append_unique_single_source(all_rows, cnmo_rows, 'CNMO')
     all_rows.extend(cnmo_appended)
+    for row in all_rows:
+        row.pop(SOURCE_VALIDATION_ROWS_FIELD, None)
     before_final_guard = len(all_rows)
     all_rows = guard_publish_rows(all_rows)
     print(f"CNMO单源追加:{len(cnmo_appended)} 来源覆盖匹配:{cnmo_matched}")

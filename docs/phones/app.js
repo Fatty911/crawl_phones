@@ -744,12 +744,12 @@
     els.totalCount.textContent = String(state.rows.length);
     els.columnCount.textContent = String(state.visibleColumns.size);
     els.verifiedCount.textContent = String(state.rows.filter(function (row) {
-      return String(row["验证状态"] || "").indexOf("双源") === 0;
+      return /^[双三]源(?:一致|差异)$/.test(String(row["验证状态"] || ""));
     }).length);
     var multiUnverifiedCount = state.rows.filter(function (row) {
       return String(row["验证状态"] || "") === "多源未校验";
     }).length;
-    els.coverageNote.textContent = "来源卡片按记录覆盖统计；双源仅统计已实际比对记录。另有 " + multiUnverifiedCount + " 条多源未校验，仅表示来源命中，不计为双源验证。";
+    els.coverageNote.textContent = "来源卡片按记录覆盖统计；双源或三源仅统计已实际比对记录。另有 " + multiUnverifiedCount + " 条多源未校验，仅表示来源命中，不计为已验证。";
     function sourceCoverage(source) {
       return state.rows.filter(function (row) {
         return String(row["数据来源"] || "").indexOf(source) !== -1;

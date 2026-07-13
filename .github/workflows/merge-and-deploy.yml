@@ -69,14 +69,16 @@ jobs:
           
           ZOL_DONE="crawl_state/zol_${CRAWL_PERIOD}.done"
           PCONLINE_DONE="crawl_state/pconline_${CRAWL_PERIOD}.done"
+          CNMO_DONE="crawl_state/cnmo_${CRAWL_PERIOD}.done"
           
-          if [ -f "$ZOL_DONE" ] && [ -f "$PCONLINE_DONE" ]; then
-            echo "半月周期 $CRAWL_PERIOD 两个爬虫都已完成"
+          if [ -f "$ZOL_DONE" ] && [ -f "$PCONLINE_DONE" ] && [ -f "$CNMO_DONE" ]; then
+            echo "半月周期 $CRAWL_PERIOD 三个爬虫都已完成"
             echo "is_complete=true" >> $GITHUB_OUTPUT
           else
             echo "半月周期 $CRAWL_PERIOD 尚未完成全部爬取"
             echo "ZOL完成: $([ -f "$ZOL_DONE" ] && echo '是' || echo '否')"
             echo "PConline完成: $([ -f "$PCONLINE_DONE" ] && echo '是' || echo '否')"
+            echo "CNMO完成: $([ -f "$CNMO_DONE" ] && echo '是' || echo '否')"
             echo "is_complete=false" >> $GITHUB_OUTPUT
           fi
 

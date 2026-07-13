@@ -51,11 +51,11 @@ jobs:
             gh release download "$TAG" \
               --repo "${{ github.repository }}" \
               --dir release-files \
-              --pattern 'data/merged_phones_*.json' \
-              --pattern 'data/merged_phones_*.csv' \
+              --pattern 'merged_phones_*.json' \
+              --pattern 'merged_phones_*.csv' \
               --pattern 'phones_with_root_info.json' >/dev/null 2>&1 || true
 
-            MERGED_JSON=$(ls release-files/data/merged_phones_*.json 2>/dev/null | head -n 1 || true)
+            MERGED_JSON=$(ls release-files/merged_phones_*.json 2>/dev/null | head -n 1 || true)
             if [ -z "$MERGED_JSON" ]; then
               continue
             fi
@@ -70,7 +70,8 @@ jobs:
           )
 
             if [ "$ROWS" -lt 10 ]; then
-              echo "警告：$TAG 的 merged 数据只有 $ROWS 行，网页仍使用这份最近 Release 数据"
+              echo "跳过：$TAG 的 merged 数据只有 $ROWS 行，低于 Pages 发布门槛"
+              continue
             fi
 
             DATE=$(basename "$MERGED_JSON" | sed -E 's/merged_phones_([0-9]+)\.json/\1/')
@@ -79,7 +80,17 @@ jobs:
             else
               cp "$MERGED_JSON" site/data/latest.json
             fi
-            cp release-files/data/merged_phones_*.csv "site/data/merged_phones_${DATE}.csv"
+            cp release-files/merged_phones_*.csv "site/data/merged_phones_${DATE}.csv"
+
+            if curl -fsSL "https://phones.jiucai.eu.org/data/latest.json" -o /tmp/phones-pages-baseline.json; then
+              python scripts/verify_publish_superset.py /tmp/phones-pages-baseline.json site/data/latest.json
+            elif [ -f "docs/phones/data/latest.json" ]; then
+              echo "未能读取线上 Pages 基线，改用仓库内 Pages 基线校验"
+              python scripts/verify_publish_superset.py docs/phones/data/latest.json site/data/latest.json
+            else
+              echo "未能读取线上 Pages 基线且仓库内无基线，拒绝发布以避免缩小稳定数据"
+              exit 1
+            fi
 
             python - "$DATE" <<'PY'
           import json

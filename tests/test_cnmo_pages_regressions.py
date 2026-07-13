@@ -73,6 +73,7 @@ rows.push(
   {"型号": "非法年份前缀", "上市时间": "12022", "数据来源": "CNMO", "验证状态": "单源"},
   {"型号": "非法年份后缀", "上市时间": "20220", "数据来源": "CNMO", "验证状态": "单源"},
   {"型号": "缺失年份", "上市时间": "", "数据来源": "CNMO", "验证状态": "单源"},
+  {"型号": "三源计数样本", "上市时间": "2026年07月", "数据来源": "中关村在线+太平洋电脑网+CNMO", "验证状态": "三源一致"},
 );
 const staleManifest = {
   date: "test",
@@ -109,6 +110,14 @@ setTimeout(() => {
         )
         metrics = json.loads(result.stdout)
         rows = json.loads((ROOT / "docs/phones/data/latest.json").read_text(encoding="utf-8"))
+        rows.append(
+            {
+                "型号": "三源计数样本",
+                "上市时间": "2026年07月",
+                "数据来源": "中关村在线+太平洋电脑网+CNMO",
+                "验证状态": "三源一致",
+            }
+        )
 
         def release_year(row):
             for field in ["上市时间", "国内发布时间", "发布时间", "发布日期", "上市日期"]:
@@ -119,7 +128,10 @@ setTimeout(() => {
 
         filtered = [row for row in rows if (release_year(row) or 0) >= 2022]
         source_count = lambda source: sum(source in str(row.get("数据来源", "")) for row in filtered)
-        verified_count = sum(str(row.get("验证状态", "")).startswith("双源") for row in filtered)
+        verified_count = sum(
+            re.fullmatch(r"[双三]源(?:一致|差异)", str(row.get("验证状态", ""))) is not None
+            for row in filtered
+        )
         self.assertEqual(str(len(filtered)), metrics["totalCount"])
         self.assertEqual(str(source_count("中关村在线")), metrics["zolCount"])
         self.assertEqual(str(source_count("太平洋电脑网")), metrics["pconlineCount"])
@@ -623,6 +635,116 @@ class CnmoParamUrlResolutionTests(unittest.TestCase):
         )
 
 
+class ThreeSourceValidationStatusTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.merge = load_script_module("merge_phones_three_source", ROOT / "scripts" / "merge_phones.py")
+
+    @staticmethod
+    def source_row(seed: str, **overrides: str) -> dict[str, str]:
+        row = {
+            "处理器": f"处理器-{seed}",
+            "内存": f"内存-{seed}",
+            "存储": f"存储-{seed}",
+            "屏幕": f"屏幕-{seed}",
+            "电池": f"电池-{seed}",
+            "摄像头参数": f"摄像头-{seed}",
+            "上市时间": f"2026年0{seed}月01日",
+        }
+        row.update(overrides)
+        return row
+
+    def test_three_complete_equal_sources_are_three_source_consistent(self) -> None:
+        rows = {
+            "中关村在线": self.source_row("1"),
+            "太平洋电脑网": self.source_row("1"),
+            "CNMO": self.source_row("1"),
+        }
+
+        status, differences = self.merge.classify_source_agreement(rows)
+
+        self.assertEqual("三源一致", status)
+        self.assertEqual("-", differences)
+
+    def test_each_possible_equal_pair_is_dual_source_consistent(self) -> None:
+        source_names = ("中关村在线", "太平洋电脑网", "CNMO")
+        for equal_pair in ((0, 1), (0, 2), (1, 2)):
+            with self.subTest(equal_pair=equal_pair):
+                rows = {
+                    name: self.source_row("1" if index in equal_pair else "2")
+                    for index, name in enumerate(source_names)
+                }
+
+                status, differences = self.merge.classify_source_agreement(rows)
+
+                self.assertEqual("双源一致", status)
+                self.assertNotEqual("-", differences)
+
+    def test_three_complete_different_sources_are_three_source_different(self) -> None:
+        rows = {
+            "中关村在线": self.source_row("1"),
+            "太平洋电脑网": self.source_row("2"),
+            "CNMO": self.source_row("3"),
+        }
+
+        status, differences = self.merge.classify_source_agreement(rows)
+
+        self.assertEqual("三源差异", status)
+        self.assertIn("处理器", differences)
+
+    def test_missing_key_field_never_counts_as_source_consistency(self) -> None:
+        rows = {
+            "中关村在线": self.source_row("1"),
+            "太平洋电脑网": self.source_row("1", 电池="暂无"),
+            "CNMO": self.source_row("1"),
+        }
+
+        status, differences = self.merge.classify_source_agreement(rows)
+
+        self.assertEqual("多源未校验", status)
+        self.assertIn("太平洋电脑网缺失电池", differences)
+
+
+    def test_cnmo_match_reclassifies_from_actual_three_source_values(self) -> None:
+        shared = self.source_row("1")
+        zol = [{"型号": "测试 Pro（12GB/512GB）", **shared}]
+        pconline = [{"型号": "测试 Pro（12GB/512GB）", **shared}]
+        cnmo = [{"型号": "测试 Pro(12GB+512GB)", **shared}]
+        fields = self.merge.FIXED + list(self.merge.VALIDATION_FIELDS)
+
+        merged = self.merge.merge_verified_rows(zol, pconline, fields)
+        appended, matched = self.merge.append_unique_single_source(merged, cnmo, "CNMO")
+
+        self.assertEqual([], appended)
+        self.assertEqual(1, matched)
+        self.assertEqual("中关村在线+太平洋电脑网+CNMO", merged[0]["数据来源"])
+        self.assertEqual("三源一致", merged[0]["验证状态"])
+        self.assertEqual("-", merged[0]["交叉验证差异"])
+
+
+    def test_raw_cnmo_aliases_are_normalized_before_three_source_classification(self) -> None:
+        shared = self.source_row("1")
+        raw_cnmo = {
+            "型号": "测试 Pro(12GB+512GB)",
+            **{key: value for key, value in shared.items() if key not in {"电池", "摄像头参数"}},
+            "电池类型": shared["电池"],
+            "后置相机": shared["摄像头参数"],
+        }
+        normalized_cnmo = self.merge.norm_rows([raw_cnmo], "CNMO")[0]
+        zol = [{"型号": "测试 Pro（12GB/512GB）", **shared}]
+        pconline = [{"型号": "测试 Pro（12GB/512GB）", **shared}]
+        fields = self.merge.FIXED + list(self.merge.VALIDATION_FIELDS)
+
+        merged = self.merge.merge_verified_rows(zol, pconline, fields)
+        appended, matched = self.merge.append_unique_single_source(merged, [normalized_cnmo], "CNMO")
+
+        self.assertEqual([], appended)
+        self.assertEqual(1, matched)
+        self.assertEqual(shared["电池"], normalized_cnmo["电池"])
+        self.assertEqual(shared["摄像头参数"], normalized_cnmo["摄像头参数"])
+        self.assertEqual("三源一致", merged[0]["验证状态"])
+
+
 class MergeCnmoCoverageTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -759,6 +881,66 @@ class PagesPaginationContractTests(unittest.TestCase):
         self.assertIn("function jumpToPage()", script)
         self.assertIn("多源未校验", script)
 
+    def test_pages_count_two_and_three_source_comparisons_as_verified(self) -> None:
+        script = (ROOT / "docs/phones/app.js").read_text(encoding="utf-8")
+        self.assertIn('/^[双三]源(?:一致|差异)$/', script)
+        self.assertIn("双源或三源仅统计已实际比对记录", script)
+
+
+class CnmoDatasetValidationTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.validator = load_script_module(
+            "validate_cnmo_dataset_regression",
+            ROOT / "scripts" / "validate_cnmo_dataset.py",
+        )
+
+    @staticmethod
+    def complete_raw_row(index: int) -> dict[str, str]:
+        return {
+            "型号": f"测试手机 {index}",
+            "处理器": "处理器",
+            "内存": "12GB",
+            "存储": "256GB",
+            "屏幕": "6.7英寸",
+            "电池类型": "锂聚合物电池,5000mAh",
+            "后置相机": "5000万像素",
+            "上市时间": "2026年07月",
+        }
+
+    def test_raw_cnmo_aliases_satisfy_normalized_key_fields(self) -> None:
+        rows = [self.complete_raw_row(index) for index in range(20)]
+
+        report = self.validator.dataset_quality(rows)
+
+        self.assertEqual(100, report["valid_rate"])
+        self.assertEqual(20, report["model_count"])
+        self.assertEqual(20, report["field_counts"]["电池"])
+        self.assertEqual(20, report["field_counts"]["摄像头参数"])
+        self.assertTrue(self.validator.is_valid_dataset(rows, debug=True))
+
+    def test_debug_dataset_rejects_model_and_date_only_rows(self) -> None:
+        rows = [
+            {"型号": f"测试手机 {index}", "上市时间": "2026年07月"}
+            for index in range(20)
+        ]
+
+        self.assertFalse(self.validator.is_valid_dataset(rows, debug=True))
+
+    def test_debug_dataset_enforces_twenty_to_thirty_rows(self) -> None:
+        self.assertFalse(
+            self.validator.is_valid_dataset(
+                [self.complete_raw_row(index) for index in range(19)],
+                debug=True,
+            )
+        )
+        self.assertFalse(
+            self.validator.is_valid_dataset(
+                [self.complete_raw_row(index) for index in range(31)],
+                debug=True,
+            )
+        )
+
 
 class CnmoWorkflowTests(unittest.TestCase):
     def test_workflow_targets_cnmo_proxy_and_marks_done_only_on_complete_scan(self) -> None:
@@ -768,14 +950,42 @@ class CnmoWorkflowTests(unittest.TestCase):
             text,
         )
         mark_step = text.split("- name: Mark crawl complete and commit", 1)[1].split("- name: Upload crawl data", 1)[0]
-        self.assertNotIn("steps.validate_data.outputs.has_data", mark_step)
+        self.assertIn("steps.validate_data.outputs.has_data", mark_step)
+        self.assertIn("MIN_CNMO_COMPLETE_ROWS=200", mark_step)
+        self.assertIn('CNMO_ROW_COUNT="${{ steps.validate_data.outputs.cnmo_row_count }}"', mark_step)
+        self.assertIn('if [ "$CNMO_ROW_COUNT" -ge "$MIN_CNMO_COMPLETE_ROWS" ] && [ "${{ steps.validate_data.outputs.has_data }}" = "true" ]; then', mark_step)
         self.assertIn('if [ "$DEBUG_LIMIT" = "0" ]; then DEBUG_LIMIT=30; fi', text)
         configure_step = text.split("- name: Configure crawl window", 1)[1].split("- name: Set up Python", 1)[0]
         self.assertIn("DEBUG_MODE: ${{ github.event.inputs.debug_mode || 'false' }}", configure_step)
+        validate_step = text.split("- name: Validate generated CNMO data", 1)[1].split("- name: Generate summary", 1)[0]
+        self.assertIn('if [ "${{ github.event.inputs.debug_mode || \'false\' }}" = "true" ]; then', validate_step)
+        self.assertIn('python3 scripts/validate_cnmo_dataset.py "$DATA_FILE" --debug', validate_step)
+        self.assertIn('python3 scripts/validate_cnmo_dataset.py "$DATA_FILE"', validate_step)
+        self.assertIn("七个关键字段完整率不低于 70%", validate_step)
         self.assertIn("p['incremental_scan_page']=1", text)
         resumable_block = text.split("if [ $EXIT_CODE -eq 10 ]; then", 1)[1].split("elif [ $EXIT_CODE -ne 0 ]; then", 1)[0]
         self.assertNotIn("git add", resumable_block)
         self.assertNotIn("git_sync_progress.sh", resumable_block)
+
+    def test_merge_completion_requires_cnmo_done_marker(self) -> None:
+        text = (ROOT / ".github/workflows/merge-and-deploy.yml").read_text(encoding="utf-8")
+        check_step = text.split("- name: 检查半月周期是否完成", 1)[1].split("  merge-data:", 1)[0]
+        self.assertIn('CNMO_DONE="crawl_state/cnmo_${CRAWL_PERIOD}.done"', check_step)
+        self.assertIn('[ -f "$ZOL_DONE" ] && [ -f "$PCONLINE_DONE" ] && [ -f "$CNMO_DONE" ]', check_step)
+        self.assertIn("三个爬虫都已完成", check_step)
+        self.assertIn("CNMO完成:", check_step)
+
+    def test_independent_pages_deploy_rejects_tiny_or_shrinking_release(self) -> None:
+        text = (ROOT / ".github/workflows/deploy-pages.yml").read_text(encoding="utf-8")
+        self.assertIn('if [ "$ROWS" -lt 10 ]; then', text)
+        tiny_release_block = text.split('if [ "$ROWS" -lt 10 ]; then', 1)[1].split('DATE=$(basename "$MERGED_JSON"', 1)[0]
+        self.assertIn("continue", tiny_release_block)
+        self.assertIn("--pattern 'merged_phones_*.json'", text)
+        self.assertIn("MERGED_JSON=$(ls release-files/merged_phones_*.json", text)
+        self.assertIn('cp release-files/merged_phones_*.csv "site/data/merged_phones_${DATE}.csv"', text)
+        self.assertIn("scripts/verify_publish_superset.py /tmp/phones-pages-baseline.json site/data/latest.json", text)
+        self.assertIn("scripts/verify_publish_superset.py docs/phones/data/latest.json site/data/latest.json", text)
+        self.assertNotIn("跳过超集校验", text)
 
 
 if __name__ == "__main__":
