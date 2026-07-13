@@ -14,6 +14,18 @@ on:
         description: '触发日期（YYYYMMDD格式）'
         required: false
         default: ''
+      debug_mode:
+        description: '是否合并指定爬虫运行的调试 artifact'
+        required: false
+        default: 'false'
+      crawler_run_id:
+        description: '触发合并的爬虫 workflow run ID'
+        required: false
+        default: ''
+      crawler_run_attempt:
+        description: '触发合并的爬虫 workflow run attempt'
+        required: false
+        default: ''
   push:
     paths:
       - 'data/zol_phones_*.json'
@@ -87,6 +99,8 @@ jobs:
           echo "触发事件: ${{ github.event_name }}"
           echo "触发来源: ${{ github.event.inputs.trigger_source || 'push' }}"
           echo "触发日期: ${{ github.event.inputs.trigger_date || '未指定' }}"
+          echo "调试模式: ${{ github.event.inputs.debug_mode || 'false' }}"
+          echo "爬虫运行: ${{ github.event.inputs.crawler_run_id || '未指定' }} attempt=${{ github.event.inputs.crawler_run_attempt || '未指定' }}"
           echo "当前日期: $(date +%Y%m%d)"
           echo "半月周期完成状态: ${{ needs.check-half-month-complete.outputs.is_complete }}"
 
@@ -108,29 +122,52 @@ jobs:
       - name: 下载所有增量爬虫数据
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEBUG_MODE: ${{ github.event.inputs.debug_mode || 'false' }}
+          CRAWLER_RUN_ID: ${{ github.event.inputs.crawler_run_id || '' }}
+          CRAWLER_RUN_ATTEMPT: ${{ github.event.inputs.crawler_run_attempt || '' }}
+          TRIGGER_SOURCE: ${{ github.event.inputs.trigger_source || 'push' }}
         run: |
+          set -euo pipefail
           echo "下载当前半月所有增量爬虫数据 artifact..."
 
-          download_all_artifacts() {
+          CN_DAY=$(TZ=Asia/Shanghai date +%d)
+          CN_MONTH=$(TZ=Asia/Shanghai date +%Y-%m)
+          if [ $((10#$CN_DAY)) -le 15 ]; then
+            PERIOD_START="${CN_MONTH}-01T00:00:00%2B08:00"
+            PERIOD_START_DATE="$(echo "$CN_MONTH" | tr -d '-')01"
+          else
+            PERIOD_START="${CN_MONTH}-16T00:00:00%2B08:00"
+            PERIOD_START_DATE="$(echo "$CN_MONTH" | tr -d '-')16"
+          fi
+
+          download_stable_artifacts() {
             local workflow="$1"
-            local pattern="$2"
+            local source="$2"
             local label="$3"
             local json_glob="$4"
             local csv_glob="$5"
-            local run_ids
+            local runs
             local total_downloaded=0
 
-            run_ids=$(gh run list --repo "${{ github.repository }}" --workflow "$workflow" --status success --limit 50 --json databaseId --jq '.[].databaseId' 2>/dev/null || true)
-            if [ -z "$run_ids" ]; then
+            runs=$(gh api --paginate "repos/${{ github.repository }}/actions/workflows/${workflow}/runs?status=success&created=%3E%3D${PERIOD_START}&per_page=100" \
+              --jq '.workflow_runs[] | [.id, .run_attempt] | @tsv')
+            if [ -z "$runs" ]; then
               echo "未找到成功的 ${label} 爬虫运行"
               return 0
             fi
 
-            while IFS= read -r run_id; do
+            while IFS=$'\t' read -r run_id run_attempt; do
               [ -n "$run_id" ] || continue
-              echo "尝试下载 ${label} artifact，run=${run_id}"
+              artifact_name="${source}-phone-data-${run_id}-${run_attempt}"
+              artifact_count=$(gh api "repos/${{ github.repository }}/actions/runs/${run_id}/artifacts?name=${artifact_name}&per_page=100" \
+                --jq '[.artifacts[] | select(.expired == false and .name == "'"$artifact_name"'")] | length')
+              if [ "$artifact_count" -ne 1 ]; then
+                echo "run=${run_id} 没有唯一稳定 artifact ${artifact_name}，跳过"
+                continue
+              fi
+              echo "下载 ${label} 稳定 artifact，run=${run_id} attempt=${run_attempt}"
               tmp_dir="$(mktemp -d)"
-              if gh run download "$run_id" --repo "${{ github.repository }}" --pattern "$pattern" --dir "$tmp_dir" 2>/tmp/${workflow}_artifact_error.txt; then
+              if gh run download "$run_id" --repo "${{ github.repository }}" --name "$artifact_name" --dir "$tmp_dir"; then
                 if TMP_DIR="$tmp_dir" JSON_GLOB="$json_glob" LABEL="$label" python3 - <<'PY'
           import glob
           import json
@@ -158,8 +195,12 @@ jobs:
           sys.exit(1)
           PY
                 then
-                  # 不覆盖同名文件——给每个 artifact 加上 run_id 前缀以累积
-                  find "$tmp_dir" -type f \( -name "$json_glob" -o -name "$csv_glob" \) -exec sh -c 'for f; do base="$(basename "$f")"; if [ -f "./data/$base" ]; then cp "$f" "./data/'${run_id}'_$base"; else cp "$f" ./data/; fi; done' _ {} \; 2>/dev/null || true
+                  while IFS= read -r file; do
+                    base=$(basename "$file")
+                    prefix="${source}_phones_"
+                    suffix="${base#"$prefix"}"
+                    cp "$file" "data/${source}_phones_${run_id}_${suffix}"
+                  done < <(find "$tmp_dir" -type f \( -name "$json_glob" -o -name "$csv_glob" \) -print)
                   total_downloaded=$((total_downloaded + 1))
                   echo "已下载 ${label} artifact，run=${run_id}（累积 #${total_downloaded}）"
                 else
@@ -168,22 +209,109 @@ jobs:
                 rm -rf "$tmp_dir"
               else
                 rm -rf "$tmp_dir"
-                echo "run=${run_id} 没有匹配 ${pattern} 的 artifact，跳过"
+                echo "run=${run_id} 下载稳定 artifact 失败，跳过"
               fi
-            done <<< "$run_ids"
+            done <<< "$runs"
 
             echo "${label} 共下载 ${total_downloaded} 个有效 artifact"
           }
 
           mkdir -p data
-          download_all_artifacts "crawl-zol.yml" "zol-phone-data*" "中关村在线" "zol_phones_*.json" "zol_phones_*.csv"
-          rm -rf zol-phone-data* 2>/dev/null || true
+          download_stable_artifacts "crawl-zol.yml" "zol" "中关村在线" "zol_phones_*.json" "zol_phones_*.csv"
+          download_stable_artifacts "crawl-pconline.yml" "pconline" "太平洋电脑网" "pconline_phones_*.json" "pconline_phones_*.csv"
+          download_stable_artifacts "crawl-cnmo.yml" "cnmo" "CNMO" "cnmo_phones_*.json" "cnmo_phones_*.csv"
 
-          download_all_artifacts "crawl-pconline.yml" "pconline-phone-data*" "太平洋电脑网" "pconline_phones_*.json" "pconline_phones_*.csv"
-          rm -rf pconline-phone-data* 2>/dev/null || true
+          if [ "$DEBUG_MODE" = "true" ]; then
+            if ! [[ "$CRAWLER_RUN_ID" =~ ^[0-9]+$ ]] || ! [[ "$CRAWLER_RUN_ATTEMPT" =~ ^[0-9]+$ ]]; then
+              echo "debug merge 必须提供数字 crawler_run_id 和 crawler_run_attempt"
+              exit 1
+            fi
+            case "$TRIGGER_SOURCE" in
+              zol-crawl) source=zol; workflow_path=.github/workflows/crawl-zol.yml ;;
+              pconline-crawl) source=pconline; workflow_path=.github/workflows/crawl-pconline.yml ;;
+              cnmo-crawl) source=cnmo; workflow_path=.github/workflows/crawl-cnmo.yml ;;
+              *) echo "debug merge 的 trigger_source 无效: $TRIGGER_SOURCE"; exit 1 ;;
+            esac
 
-          download_all_artifacts "crawl-cnmo.yml" "cnmo-phone-data*" "CNMO" "cnmo_phones_*.json" "cnmo_phones_*.csv"
-          rm -rf cnmo-phone-data* 2>/dev/null || true
+            run_json=$(gh api "repos/${{ github.repository }}/actions/runs/${CRAWLER_RUN_ID}")
+            RUN_JSON="$run_json" EXPECTED_PATH="$workflow_path" EXPECTED_ATTEMPT="$CRAWLER_RUN_ATTEMPT" python3 - <<'PY'
+          import json
+          import os
+          import sys
+
+          run = json.loads(os.environ["RUN_JSON"])
+          expected_path = os.environ["EXPECTED_PATH"]
+          expected_attempt = int(os.environ["EXPECTED_ATTEMPT"])
+          actual_path = str(run.get("path", "")).split("@", 1)[0]
+          if actual_path != expected_path:
+              sys.exit(f"workflow path 不匹配: {actual_path} != {expected_path}")
+          if run.get("run_attempt") != expected_attempt:
+              sys.exit(f"run_attempt 不匹配: {run.get('run_attempt')} != {expected_attempt}")
+          if run.get("status") != "completed" or run.get("conclusion") != "success":
+              sys.exit("指定 debug workflow run 未成功完成")
+          PY
+
+            debug_artifact="${source}-phone-debug-data-${CRAWLER_RUN_ID}-${CRAWLER_RUN_ATTEMPT}"
+            debug_count=$(gh api "repos/${{ github.repository }}/actions/runs/${CRAWLER_RUN_ID}/artifacts?name=${debug_artifact}&per_page=100" \
+              --jq '[.artifacts[] | select(.expired == false and .name == "'"$debug_artifact"'")] | length')
+            if [ "$debug_count" -ne 1 ]; then
+              echo "必须恰好找到一个未过期 debug artifact ${debug_artifact}，实际 ${debug_count}"
+              exit 1
+            fi
+            debug_dir=$(mktemp -d)
+            gh run download "$CRAWLER_RUN_ID" --repo "${{ github.repository }}" --name "$debug_artifact" --dir "$debug_dir"
+            debug_json=$(find "$debug_dir" -type f -name "${source}_phones_*.json" -print -quit)
+            if [ -z "$debug_json" ]; then
+              echo "debug artifact 中没有 ${source} JSON"
+              exit 1
+            fi
+            base=$(basename "$debug_json")
+            selected_debug="data/${CRAWLER_RUN_ID}_${base}"
+            cp "$debug_json" "$selected_debug"
+            SOURCE="$source" SELECTED_DEBUG="$selected_debug" python3 - <<'PY'
+          import glob
+          import json
+          import os
+          import re
+          import unicodedata
+
+          source = os.environ["SOURCE"]
+          selected_path = os.environ["SELECTED_DEBUG"]
+          stable_files = sorted(glob.glob(f"data/{source}_phones_*.json"))
+          stable_rows = []
+          for path in stable_files:
+              with open(path, "r", encoding="utf-8") as handle:
+                  rows = json.load(handle)
+              if isinstance(rows, list):
+                  stable_rows.extend(row for row in rows if isinstance(row, dict))
+          with open(selected_path, "r", encoding="utf-8") as handle:
+              debug_rows = json.load(handle)
+          if not isinstance(debug_rows, list) or not debug_rows:
+              raise SystemExit("指定 debug artifact JSON 为空或格式错误")
+
+          def identity(row):
+              value = str(row.get("手机ID") or row.get("id") or "").strip()
+              if value:
+                  return f"id:{value}"
+              model = unicodedata.normalize("NFKC", str(row.get("型号") or row.get("name") or "")).casefold()
+              model = re.sub(r"\s+", " ", model).strip()
+              if not model:
+                  raise SystemExit("debug 数据存在无身份记录")
+              return f"model:{model}"
+
+          combined = []
+          seen = set()
+          for row in stable_rows + debug_rows:
+              key = identity(row)
+              if key not in seen:
+                  seen.add(key)
+                  combined.append(row)
+          output = f"data/{source}_phones_debug_selected.json"
+          with open(output, "w", encoding="utf-8") as handle:
+              json.dump(combined, handle, ensure_ascii=False, indent=2)
+          print(f"已选择 debug 样本: {selected_path}; stable={len(stable_rows)} debug={len(debug_rows)} combined={len(combined)}")
+          PY
+          fi
 
           echo "当前目录数据文件:"
           ls -la data/*.json 2>/dev/null || echo "没有找到数据文件"
@@ -329,8 +457,19 @@ jobs:
             exit 1
           fi
 
-      - name: 提交合并产物到仓库
+      - name: 发布前校验线上基线超集
         if: steps.validate.outputs.ready == 'true'
+        env:
+          DATE: ${{ steps.date.outputs.date }}
+        run: |
+          set -euo pipefail
+          curl --fail --show-error --silent --location --retry 3 --max-time 120 \
+            https://phones.jiucai.eu.org/data/latest.json --output /tmp/phones-pages-baseline.json
+          python3 scripts/verify_publish_superset.py \
+            /tmp/phones-pages-baseline.json "data/merged_phones_${DATE}.json"
+
+      - name: 提交合并产物到仓库
+        if: steps.validate.outputs.ready == 'true' && github.event.inputs.debug_mode != 'true'
         env:
           DATE: ${{ steps.date.outputs.date }}
         run: |
@@ -357,13 +496,14 @@ jobs:
 
       - name: 上传合并产物
         if: steps.validate.outputs.ready == 'true'
-        uses: actions/upload-artifact@main
+        uses: actions/upload-artifact@v4
         with:
           name: phone-data-${{ steps.date.outputs.date }}-${{ steps.date.outputs.time }}
           path: |
             data/merged_phones_${{ steps.date.outputs.date }}.csv
             data/merged_phones_${{ steps.date.outputs.date }}.json
           retention-days: 90
+          if-no-files-found: error
 
   search-root-info:
     runs-on: ubuntu-latest
@@ -412,7 +552,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     needs: [merge-data, search-root-info, check-half-month-complete]
-    if: always() && needs.merge-data.outputs.ready == 'true'
+    if: always() && needs.merge-data.result == 'success' && needs.merge-data.outputs.ready == 'true'
     permissions:
       contents: write
       actions: read
@@ -443,7 +583,7 @@ jobs:
       - name: 创建发布
         uses: softprops/action-gh-release@master
         with:
-          tag_name: v${{ needs.merge-data.outputs.crawl_date }}-${{ needs.merge-data.outputs.crawl_time }}
+          tag_name: v${{ needs.merge-data.outputs.crawl_date }}-${{ needs.merge-data.outputs.crawl_time }}-${{ github.run_id }}
           name: 手机数据 ${{ needs.merge-data.outputs.crawl_date }}-${{ needs.merge-data.outputs.crawl_time }}
           files: |
             release-files/merged_phones_${{ needs.merge-data.outputs.crawl_date }}.csv
@@ -458,8 +598,8 @@ jobs:
   deploy-pages:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [merge-data, search-root-info, check-half-month-complete]
-    if: always() && needs.merge-data.outputs.ready == 'true'
+    needs: [merge-data, search-root-info, check-half-month-complete, create-release]
+    if: always() && needs.create-release.result == 'success' && needs.merge-data.outputs.ready == 'true'
     permissions:
       contents: read
       actions: read
@@ -552,6 +692,14 @@ jobs:
 
       - name: 配置 GitHub Pages
         uses: actions/configure-pages@v6
+
+      - name: 部署前再次校验线上基线超集
+        run: |
+          set -euo pipefail
+          curl --fail --show-error --silent --location --retry 3 --max-time 120 \
+            https://phones.jiucai.eu.org/data/latest.json --output /tmp/phones-pages-baseline.json
+          python3 scripts/verify_publish_superset.py \
+            /tmp/phones-pages-baseline.json site/data/latest.json
 
       - name: 上传 Pages artifact
         uses: actions/upload-pages-artifact@v5

@@ -32,7 +32,7 @@ env:
   MAX_PHONES: ${{ github.event.inputs.max_phones || '0' }}
 
 concurrency:
-  group: pconline-phone-crawl-${{ github.ref }}-${{ github.event.inputs.run_profile || github.event_name }}
+  group: pconline-phone-crawl-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -66,6 +66,15 @@ jobs:
 
           FORCE_RESTART="${{ github.event.inputs.force_restart }}"
           DEBUG_MODE="${{ github.event.inputs.debug_mode }}"
+
+          if [ "$DEBUG_MODE" = "true" ]; then
+            rm -rf crawl_state/pconline
+            mkdir -p crawl_state/pconline
+            rm -f data/pconline_phones_*.json data/pconline_phones_*.csv
+            DONE_MARKER="crawl_state/pconline_debug_${CRAWL_PERIOD}.done"
+            CURRENT_PERIOD_FILE="crawl_state/pconline_debug_current_period"
+            echo "PCONLINE_DONE_MARKER=$DONE_MARKER" >> "$GITHUB_ENV"
+          fi
 
           if [ "$FORCE_RESTART" = "true" ]; then
             rm -f "$DONE_MARKER"
@@ -106,8 +115,14 @@ jobs:
           if [ "$DEBUG_MODE" = "true" ]; then
             echo "调试模式：跳过时间窗口检查"
             echo "skip=false" >> "$GITHUB_OUTPUT"
-            echo "MAX_PHONES=${{ github.event.inputs.max_phones || '30' }}" >> "$GITHUB_ENV"
-            echo "DEBUG_LIMIT=${{ github.event.inputs.max_phones || '30' }}" >> "$GITHUB_ENV"
+            DEBUG_LIMIT="${{ github.event.inputs.max_phones }}"
+            if [ "$DEBUG_LIMIT" = "0" ]; then DEBUG_LIMIT=30; fi
+            if ! [[ "$DEBUG_LIMIT" =~ ^[0-9]+$ ]] || [ "$DEBUG_LIMIT" -lt 20 ] || [ "$DEBUG_LIMIT" -gt 30 ]; then
+              echo "错误: debug max_phones 必须是 20 到 30 的整数（0 表示默认 30）"
+              exit 1
+            fi
+            echo "MAX_PHONES=$DEBUG_LIMIT" >> "$GITHUB_ENV"
+            echo "DEBUG_LIMIT=$DEBUG_LIMIT" >> "$GITHUB_ENV"
           else
             python scripts/crawl_budget.py configure
             echo "MAX_PHONES=${{ github.event.inputs.max_phones || '0' }}" >> "$GITHUB_ENV"
@@ -177,10 +192,12 @@ jobs:
           git config user.email "xuerui911@gmail.com"
 
           if [ $EXIT_CODE -eq 10 ]; then
-            echo "Step1 未完成，提交进度并正常结束本次运行"
-            git add -A
-            git diff --cached --quiet || git commit -m "chore: update PConline crawl progress [skip ci]"
-            bash scripts/git_sync_progress.sh "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
+            echo "Step1 未完成，正常结束本次运行"
+            if [ "${{ github.event.inputs.debug_mode || 'false' }}" != "true" ]; then
+              git add -A
+              git diff --cached --quiet || git commit -m "chore: update PConline crawl progress [skip ci]"
+              bash scripts/git_sync_progress.sh "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
+            fi
             echo "complete=false" >> "$GITHUB_OUTPUT"
             echo "failed=false" >> "$GITHUB_OUTPUT"
             exit 0
@@ -195,11 +212,11 @@ jobs:
           echo "failed=false" >> "$GITHUB_OUTPUT"
 
       - name: Upload crawl data (early, after step1)
-        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true'
+        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && github.event.inputs.debug_mode != 'true'
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
-          name: pconline-phone-data-early-${{ github.run_id }}
+          name: pconline-phone-data-early-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             crawl_state/pconline/json/
             crawl_state/pconline/progress.json
@@ -244,12 +261,9 @@ jobs:
         run: python scripts/crawl_pconline.py --step 3
 
       - name: Mark crawl complete and commit
-        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true'
+        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true' && github.event.inputs.debug_mode != 'true'
         run: |
-          DEBUG_MODE="${{ github.event.inputs.debug_mode || 'false' }}"
-          if [ "$DEBUG_MODE" = "true" ]; then
-            echo "调试模式：不标记周期完成"
-          elif [ "${{ steps.step1.outputs.complete }}" = "true" ]; then
+          if [ "${{ steps.step1.outputs.complete }}" = "true" ]; then
             touch "$PCONLINE_DONE_MARKER"
             echo "爬取完成（扫描所有品牌），标记半月周期"
           elif [ "${{ steps.validate_data.outputs.has_data }}" = "true" ] && [ -f "data/pconline_phones_$(date +%Y%m%d).json" ]; then
@@ -266,14 +280,15 @@ jobs:
 
       - name: Upload crawl data
         if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true'
-        continue-on-error: true
+        id: upload_data
         uses: actions/upload-artifact@v4
         with:
-          name: pconline-phone-data-${{ github.run_id }}
+          name: ${{ github.event.inputs.debug_mode == 'true' && format('pconline-phone-debug-data-{0}-{1}', github.run_id, github.run_attempt) || format('pconline-phone-data-{0}-{1}', github.run_id, github.run_attempt) }}
           path: |
             data/pconline_phones_*.json
             data/pconline_phones_*.csv
           retention-days: 90
+          if-no-files-found: error
 
       - name: 检测新增数据并触发合并分析
         if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true'
@@ -290,7 +305,7 @@ jobs:
           fi
 
       - name: 触发合并分析工作流
-        if: steps.check_new_data.outputs.has_new_data == 'true'
+        if: steps.upload_data.outcome == 'success' && steps.validate_data.outputs.has_data == 'true'
         env:
           GH_TOKEN: ${{ secrets.ACTION_PAT }}
         run: |
@@ -302,6 +317,9 @@ jobs:
             "ref": "main",
             "inputs": {
               "force_merge": "false",
+              "debug_mode": "${{ github.event.inputs.debug_mode || 'false' }}",
+              "crawler_run_id": "${{ github.run_id }}",
+              "crawler_run_attempt": "${{ github.run_attempt }}",
               "trigger_source": "pconline-crawl",
               "trigger_date": "$(date +%Y%m%d)"
             }

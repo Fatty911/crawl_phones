@@ -32,7 +32,7 @@ env:
   MAX_PHONES: ${{ github.event.inputs.max_phones || '0' }}
 
 concurrency:
-  group: cnmo-phone-crawl-${{ github.ref }}-${{ github.event.inputs.run_profile || github.event_name }}
+  group: cnmo-phone-crawl-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -66,6 +66,15 @@ jobs:
 
           FORCE_RESTART="${{ github.event.inputs.force_restart }}"
           DEBUG_MODE="${{ github.event.inputs.debug_mode }}"
+
+          if [ "$DEBUG_MODE" = "true" ]; then
+            rm -rf crawl_state/cnmo
+            mkdir -p crawl_state/cnmo
+            rm -f data/cnmo_phones_*.json data/cnmo_phones_*.csv
+            DONE_MARKER="crawl_state/cnmo_debug_${CRAWL_PERIOD}.done"
+            CURRENT_PERIOD_FILE="crawl_state/cnmo_debug_current_period"
+            echo "CNMO_DONE_MARKER=$DONE_MARKER" >> "$GITHUB_ENV"
+          fi
 
           if [ "$FORCE_RESTART" = "true" ]; then
             rm -f "$DONE_MARKER"
@@ -107,11 +116,14 @@ jobs:
           if [ "$DEBUG_MODE" = "true" ]; then
             echo "调试模式：跳过时间窗口检查"
             echo "skip=false" >> "$GITHUB_OUTPUT"
-            if [ "$DEBUG_MODE" = "true" ] && [ "${MAX_PHONES:-0}" -le 0 ]; then
-              MAX_PHONES=30
+            DEBUG_LIMIT="${{ github.event.inputs.max_phones }}"
+            if [ "$DEBUG_LIMIT" = "0" ]; then DEBUG_LIMIT=30; fi
+            if ! [[ "$DEBUG_LIMIT" =~ ^[0-9]+$ ]] || [ "$DEBUG_LIMIT" -lt 20 ] || [ "$DEBUG_LIMIT" -gt 30 ]; then
+              echo "错误: debug max_phones 必须是 20 到 30 的整数（0 表示默认 30）"
+              exit 1
             fi
-            echo "MAX_PHONES=$MAX_PHONES" >> "$GITHUB_ENV"
-            echo "DEBUG_LIMIT=$MAX_PHONES" >> "$GITHUB_ENV"
+            echo "MAX_PHONES=$DEBUG_LIMIT" >> "$GITHUB_ENV"
+            echo "DEBUG_LIMIT=$DEBUG_LIMIT" >> "$GITHUB_ENV"
           else
             python scripts/crawl_budget.py configure
             echo "MAX_PHONES=${{ github.event.inputs.max_phones || '0' }}" >> "$GITHUB_ENV"
@@ -196,11 +208,11 @@ jobs:
           echo "failed=false" >> "$GITHUB_OUTPUT"
 
       - name: Upload crawl data (early, after step1)
-        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true'
+        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && github.event.inputs.debug_mode != 'true'
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
-          name: cnmo-phone-data-early-${{ github.run_id }}
+          name: cnmo-phone-data-early-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             crawl_state/cnmo/json/
             crawl_state/cnmo/progress.json
@@ -245,12 +257,9 @@ jobs:
         run: python scripts/crawl_cnmo.py --step 3
 
       - name: Mark crawl complete and commit
-        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true'
+        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true' && github.event.inputs.debug_mode != 'true'
         run: |
-          DEBUG_MODE="${{ github.event.inputs.debug_mode || 'false' }}"
-          if [ "$DEBUG_MODE" = "true" ]; then
-            echo "调试模式：不标记周期完成"
-          elif [ "${{ steps.step1.outputs.complete }}" = "true" ]; then
+          if [ "${{ steps.step1.outputs.complete }}" = "true" ]; then
             touch "$CNMO_DONE_MARKER"
             echo "爬取完成（扫描所有列表），标记半月周期"
           else
@@ -264,14 +273,15 @@ jobs:
 
       - name: Upload crawl data
         if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true'
-        continue-on-error: true
+        id: upload_data
         uses: actions/upload-artifact@v4
         with:
-          name: cnmo-phone-data-${{ github.run_id }}
+          name: ${{ github.event.inputs.debug_mode == 'true' && format('cnmo-phone-debug-data-{0}-{1}', github.run_id, github.run_attempt) || format('cnmo-phone-data-{0}-{1}', github.run_id, github.run_attempt) }}
           path: |
             data/cnmo_phones_*.json
             data/cnmo_phones_*.csv
           retention-days: 90
+          if-no-files-found: error
 
       - name: 检测新增数据并触发合并分析
         if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true'
@@ -288,7 +298,7 @@ jobs:
           fi
 
       - name: 触发合并分析工作流
-        if: steps.check_new_data.outputs.has_new_data == 'true'
+        if: steps.upload_data.outcome == 'success' && steps.validate_data.outputs.has_data == 'true'
         env:
           GH_TOKEN: ${{ secrets.ACTION_PAT }}
         run: |
@@ -300,6 +310,9 @@ jobs:
             "ref": "main",
             "inputs": {
               "force_merge": "false",
+              "debug_mode": "${{ github.event.inputs.debug_mode || 'false' }}",
+              "crawler_run_id": "${{ github.run_id }}",
+              "crawler_run_attempt": "${{ github.run_attempt }}",
               "trigger_source": "cnmo-crawl",
               "trigger_date": "$(date +%Y%m%d)"
             }
