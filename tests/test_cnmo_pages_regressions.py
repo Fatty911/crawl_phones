@@ -769,7 +769,7 @@ class CnmoWorkflowTests(unittest.TestCase):
         )
         mark_step = text.split("- name: Mark crawl complete and commit", 1)[1].split("- name: Upload crawl data", 1)[0]
         self.assertNotIn("steps.validate_data.outputs.has_data", mark_step)
-        self.assertIn('if [ "$DEBUG_MODE" = "true" ] && [ "${MAX_PHONES:-0}" -le 0 ]; then', text)
+        self.assertIn('if [ "$DEBUG_LIMIT" = "0" ]; then DEBUG_LIMIT=30; fi', text)
         configure_step = text.split("- name: Configure crawl window", 1)[1].split("- name: Set up Python", 1)[0]
         self.assertIn("DEBUG_MODE: ${{ github.event.inputs.debug_mode || 'false' }}", configure_step)
         self.assertIn("p['incremental_scan_page']=1", text)
