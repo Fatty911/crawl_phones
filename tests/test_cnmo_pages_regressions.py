@@ -801,7 +801,10 @@ class MergeCnmoCoverageTests(unittest.TestCase):
             {"品牌": "苹果", "型号": "苹果iPhone16 Pro Max(1TB)"},
             {"品牌": "三星", "型号": "三星Galaxy S26 Ultra(16GB+1TB)"},
             {"品牌": "", "型号": "WIKO Hi 畅享 60s(256GB)"},
+            {"品牌": "", "型号": "Hi畅享60s(256GB)"},
             {"品牌": "", "型号": "ROG游戏手机9 Pro(24+1TB)"},
+            {"品牌": "", "型号": "Hi nova 10 Pro(8+256GB)"},
+            {"品牌": "", "型号": "天翼铂顿S9 5G"},
         ]
 
         for row in allowed_rows:
@@ -813,6 +816,8 @@ class MergeCnmoCoverageTests(unittest.TestCase):
             {"品牌": "谷歌", "型号": "谷歌Pixel 8 Pro"},
             {"品牌": "索尼", "型号": "索尼Xperia 1 V(12GB+512GB)"},
             {"品牌": "传音", "型号": "Infinix GT 20 Pro"},
+            {"品牌": "诺基亚", "型号": "Nokia 105 4G"},
+            {"品牌": "LG", "型号": "LG G9"},
             {"品牌": "", "型号": "ObscureLand X1(4GB+128GB)"},
         ]
 

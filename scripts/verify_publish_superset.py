@@ -16,7 +16,7 @@ CNMO_SINGLE_SOURCE_ALLOWED_BRANDS = {
     "苹果", "三星", "华为", "荣耀", "OPPO", "vivo", "小米", "红米", "iQOO",
     "一加", "真我", "魅族", "中兴", "努比亚", "联想", "摩托罗拉",
     "乐视", "金立", "蔚来", "鼎桥", "魅蓝", "酷派", "海信", "WIKO",
-    "麦芒", "华硕", "黑鲨", "NZONE",
+    "麦芒", "华硕", "黑鲨", "NZONE", "Hi nova", "天翼铂顿",
 }
 
 BRAND_PATTERNS = [
@@ -43,8 +43,10 @@ BRAND_PATTERNS = [
     ("魅蓝", ["魅蓝"]),
     ("酷派", ["酷派", "coolpad", "cool "]),
     ("海信", ["海信", "hisense"]),
-    ("WIKO", ["wiko"]),
+    ("WIKO", ["wiko", "hi 畅享", "hi畅享"]),
     ("麦芒", ["麦芒"]),
+    ("Hi nova", ["hi nova", "hinova"]),
+    ("天翼铂顿", ["天翼铂顿"]),
     ("华硕", ["华硕", "asus", "rog游戏手机"]),
     ("黑鲨", ["黑鲨", "black shark"]),
     ("NZONE", ["nzone"]),
