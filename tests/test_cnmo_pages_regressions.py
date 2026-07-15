@@ -764,6 +764,37 @@ class MergeCnmoCoverageTests(unittest.TestCase):
         self.assertEqual("中关村在线+CNMO", base[1]["数据来源"])
         self.assertEqual("多源未校验", base[1]["验证状态"])
 
+    def test_conflicting_source_ids_keep_cnmo_baseline_identity(self) -> None:
+        base = [
+            {
+                "手机ID": "1397100",
+                "品牌": "荣耀",
+                "型号": "荣耀Magic3",
+                "存储": "128GB•手机rom是什么•查看所有128GB荣耀,256GB",
+                "内存": "8GB",
+                "数据来源": "太平洋电脑网",
+                "验证状态": "单源",
+            }
+        ]
+        extra = [
+            {
+                "手机ID": "1624724",
+                "品牌": "荣耀",
+                "型号": "荣耀Magic3(8+128GB)",
+                "存储": "128GB",
+                "内存": "8GB",
+                "数据来源": "CNMO",
+                "验证状态": "单源",
+            }
+        ]
+        appended, matched = self.merge.append_unique_single_source(base, extra, "CNMO")
+
+        self.assertEqual([], appended)
+        self.assertEqual(1, matched)
+        self.assertEqual("1397100", base[0]["手机ID"])
+        self.assertEqual("太平洋电脑网+CNMO", base[0]["数据来源"])
+        self.assertEqual("1397100|1624724", base[0]["关联手机ID"])
+
     def test_cnmo_capacity_shorthand_matches_full_unit_variant(self) -> None:
         base = [
             {

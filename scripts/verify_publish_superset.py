@@ -18,15 +18,37 @@ def normalize_model(value: Any) -> str:
 
 
 def identity_key(row: dict[str, Any]) -> str:
+    keys = identity_keys(row)
+    if not keys:
+        raise ValueError("记录缺少可用身份键（手机ID/id/型号/name）")
+    return keys[0]
+
+
+def identity_keys(row: dict[str, Any]) -> list[str]:
+    keys = []
     for field in ("手机ID", "id"):
         value = str(row.get(field, "")).strip()
         if value:
-            return f"id:{value}"
+            keys.append(f"id:{value}")
+            break
+    related = row.get("关联手机ID")
+    if isinstance(related, list):
+        related_values = related
+    else:
+        related_values = re.split(r"[|,，\s]+", str(related or ""))
+    for value in related_values:
+        value = str(value).strip()
+        if value:
+            key = f"id:{value}"
+            if key not in keys:
+                keys.append(key)
+    if keys:
+        return keys
     for field in ("型号", "name"):
         value = normalize_model(row.get(field, ""))
         if value:
-            return f"model:{value}"
-    raise ValueError("记录缺少可用身份键（手机ID/id/型号/name）")
+            return [f"model:{value}"]
+    return []
 
 
 def load_rows(path: Path) -> list[dict[str, Any]]:
@@ -47,7 +69,7 @@ def verify_superset(
     if len(candidate) < len(baseline):
         raise ValueError(f"候选行数减少: baseline={len(baseline)} candidate={len(candidate)}")
     baseline_ids = {identity_key(row) for row in baseline}
-    candidate_ids = {identity_key(row) for row in candidate}
+    candidate_ids = {key for row in candidate for key in identity_keys(row)}
     missing = sorted(baseline_ids - candidate_ids)
     if missing:
         preview = ", ".join(missing[:10])

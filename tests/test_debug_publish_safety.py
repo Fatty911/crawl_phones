@@ -43,6 +43,21 @@ class PublishSupersetTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "缺少基线身份"):
             self.verify.verify_superset(baseline, [{"手机ID": "1"}, {"id": "3"}])
 
+    def test_candidate_related_phone_ids_preserve_merged_source_identities(self) -> None:
+        baseline = [{"手机ID": "1624724", "型号": "荣耀Magic3(8+128GB)"}]
+        candidate = [
+            {
+                "手机ID": "1397100",
+                "型号": "荣耀Magic3",
+                "数据来源": "太平洋电脑网+CNMO",
+                "关联手机ID": "1397100|1624724",
+            }
+        ]
+        self.verify.verify_superset(baseline, candidate)
+
+        with self.assertRaisesRegex(ValueError, "缺少基线身份"):
+            self.verify.verify_superset(baseline, [{"手机ID": "1397100", "型号": "荣耀Magic3"}])
+
     def test_cli_rejects_invalid_or_non_list_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)

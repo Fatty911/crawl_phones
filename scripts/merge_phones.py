@@ -1024,6 +1024,13 @@ def append_unique_single_source(base_rows, extra_rows, source):
             if not source_rows:
                 source_rows = {name: row for name in sources if name != source}
             source_rows[source] = extra_row
+            related_ids = {item.strip() for item in str(row.get('关联手机ID', '')).split('|') if item.strip()}
+            for source_row in source_rows.values():
+                source_id = str(source_row.get('手机ID') or source_row.get('id') or '').strip()
+                if source_id:
+                    related_ids.add(source_id)
+            if related_ids:
+                row['关联手机ID'] = '|'.join(sorted(related_ids))
             status, validation_differences = classify_source_agreement(source_rows)
             row['验证状态'] = status
             row['交叉验证差异'] = validation_differences
