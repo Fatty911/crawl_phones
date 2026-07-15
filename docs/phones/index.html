@@ -50,7 +50,7 @@
               <strong id="cnmoCount">0</strong>
             </div>
             <div>
-              <span class="summary-label">双源</span>
+              <span class="summary-label">已验证</span>
               <strong id="verifiedCount">0</strong>
             </div>
             <div>
@@ -58,7 +58,7 @@
               <strong id="columnCount">0</strong>
             </div>
           </div>
-          <p id="coverageNote" class="coverage-note">来源卡片统计数据覆盖；双源仅统计已实际比对记录。</p>
+          <p id="coverageNote" class="coverage-note">来源卡片统计数据覆盖；已验证仅统计已实际比对记录。</p>
 
           <div class="quick-filters" aria-label="快速筛选">
             <label>
@@ -128,6 +128,21 @@
             </div>
             <div id="advancedFilterList" class="advanced-filter-list"></div>
             <div id="activeFilters" class="active-filters"></div>
+          </section>
+
+          <section>
+            <h2>关键字排序</h2>
+            <div class="keyword-sort-control">
+              <label>
+                <span>排序列</span>
+                <select id="keywordSortField"></select>
+              </label>
+              <textarea id="keywordSortOrder" rows="4" placeholder="像 Excel 自定义序列一样输入关键字顺序，例如：\n华为\n小米\nOPPO"></textarea>
+              <div class="panel-title-row">
+                <button id="applyKeywordSort" type="button" class="text-button">应用排序</button>
+                <button id="clearKeywordSort" type="button" class="text-button">清空排序</button>
+              </div>
+            </div>
           </section>
 
           <section>

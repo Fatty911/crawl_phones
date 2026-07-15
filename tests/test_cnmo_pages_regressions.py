@@ -826,6 +826,62 @@ class MergeCnmoCoverageTests(unittest.TestCase):
                 self.assertEqual(1, len(appended))
                 self.assertEqual("中关村在线", base[0]["数据来源"])
 
+
+
+    def test_zol_pconline_capacity_variants_do_not_cross_merge(self) -> None:
+        zol = [{"型号": "测试 Pro（8GB/256GB）", "品牌": "测试", "数据来源": "中关村在线"}]
+        pconline = [{"型号": "测试 Pro（12GB/512GB）", "品牌": "测试", "数据来源": "太平洋电脑网"}]
+        fields = self.merge.FIXED + ["品牌"]
+
+        merged = self.merge.merge_verified_rows(zol, pconline, fields)
+
+        self.assertEqual(2, len(merged))
+        self.assertEqual(["中关村在线", "太平洋电脑网"], [row["数据来源"] for row in merged])
+
+    def test_zol_pconline_matching_one_capacity_does_not_drop_other_pconline_variants(self) -> None:
+        zol = [{"型号": "测试 Pro（8GB/256GB）", "品牌": "测试", "数据来源": "中关村在线"}]
+        pconline = [
+            {"型号": "测试 Pro（8GB/256GB）", "品牌": "测试", "数据来源": "太平洋电脑网"},
+            {"型号": "测试 Pro（12GB/512GB）", "品牌": "测试", "数据来源": "太平洋电脑网"},
+        ]
+        fields = self.merge.FIXED + ["品牌"]
+
+        merged = self.merge.merge_verified_rows(zol, pconline, fields)
+
+        self.assertEqual(2, len(merged))
+        self.assertEqual("中关村在线+太平洋电脑网", merged[0]["数据来源"])
+        self.assertEqual("太平洋电脑网", merged[1]["数据来源"])
+
+    def test_trailing_capacity_text_is_removed_without_merging_plus_models(self) -> None:
+        equal_pairs = [
+            ("华为畅享 90 256GB", "华为畅享 90(256GB)"),
+            ("华为nova 12 256GB", "华为nova 12(256GB)"),
+            ("华为Pura 90 12GB+512GB", "华为 Pura90(12GB+512GB)"),
+        ]
+        for left, right in equal_pairs:
+            with self.subTest(left=left, right=right):
+                self.assertEqual(self.merge.model_key({"型号": left}), self.merge.model_key({"型号": right}))
+
+        different_pairs = [
+            ("OPPO Find X8s(16GB/1TB)", "OPPO Find X8s+(16GB+1TB)"),
+            ("荣耀70 Pro（8GB/256GB）", "荣耀70 Pro+(8+256GB)"),
+        ]
+        for left, right in different_pairs:
+            with self.subTest(left=left, right=right):
+                self.assertNotEqual(self.merge.model_key({"型号": left}), self.merge.model_key({"型号": right}))
+
+    def test_storage_signature_reads_irregular_and_field_capacity_formats(self) -> None:
+        cases = {
+            "vivo X300s()16GB/+512GB": (16, 512),
+            "vivo X300s(16GB+512GB)": (16, 512),
+            "一加11（12GB/256GB/5G版）": (12, 256),
+            "华为Pura 90 12GB+512GB": (12, 512),
+        }
+        for name, expected in cases.items():
+            with self.subTest(name=name):
+                self.assertEqual(expected, self.merge.model_storage_signature({"型号": name}))
+        self.assertEqual((16, 512), self.merge.model_storage_signature({"型号": "测试 Pro", "内存": "16GB", "存储": "512GB"}))
+
     def test_ambiguous_or_different_capacity_stays_as_independent_cnmo_row(self) -> None:
         base = [
             {"型号": "测试 Pro（8GB/256GB）", "数据来源": "中关村在线", "验证状态": "单源"},

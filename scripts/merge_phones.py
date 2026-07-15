@@ -589,10 +589,24 @@ def model_key(row):
     raw_name = row.get('型号') or row.get('name') or ''
     if is_missing(raw_name):
         return ''
-    name = clean_value(raw_name)
+    name = clean_value(raw_name).lower()
     if is_missing(name):
         return ''
-    name = re.sub(r'\s+', '', name).lower()
+    # 先在保留空格的原文本中删除容量尾巴，避免把 Pura 90 12GB+512GB 误读成 Pura 9012GB+512GB。
+    name = re.sub(
+        r'[（(](?:\d+\s*(?:[gt]b)?\s*[+/]+\s*\d+\s*[gt]b?|\d+\s*[gt]b?)[)）]',
+        '',
+        name,
+        flags=re.IGNORECASE,
+    )
+    name = re.sub(
+        r'(?<![a-z0-9])(?:\d+\s*(?:[gt]b)?\s*[+/]+\s*\d+\s*[gt]b?|\d+\s*[gt]b?)$',
+        '',
+        name,
+        flags=re.IGNORECASE,
+    )
+    name = name.replace('()', '')
+    name = re.sub(r'\s+', '', name)
     # 统一品牌名：中文→英文（以 ZOL 命名为准）
     brand_map = {
         '华为': 'huawei', '荣耀': 'honor', '小米': 'xiaomi', '红米': 'redmi',
@@ -600,20 +614,12 @@ def model_key(row):
         '努比亚': 'nubia', '摩托罗拉': 'motorola', '魅族': 'meizu',
         '联想': 'lenovo', '索尼': 'sony', '谷歌': 'google', '中兴': 'zte',
         '华硕': 'asus', '诺基亚': 'nokia', '夏普': 'sharp',
+        '步步高': 'vivo', 'vivo': 'vivo', 'oppo': 'oppo', 'iqoo': 'iqoo', 'poco': 'xiaomi',
     }
     for cn, en in brand_map.items():
         if name.startswith(cn):
             name = en + name[len(cn):]
             break
-    # 去除纯存储容量后缀（括号形式）：支持 12GB/256GB、12+1T、8GB+128GB、1TB 等
-    name = re.sub(
-        r'[（(](?:\d+\s*(?:[gt]b)?\s*[+/]\s*\d+\s*[gt]b?|\d+\s*[gt]b)[)）]',
-        '',
-        name,
-        flags=re.IGNORECASE,
-    )
-    # 去除末尾裸存储容量后缀（GB/TB，大小写不敏感）
-    name = re.sub(r'\d+[gt]b$', '', name, flags=re.IGNORECASE)
     # 去除常见后缀
     for suffix in ['5g版', '4g版', '5g', '4g', 'wifi版', '全网通', 'wifi']:
         if name.endswith(suffix):
@@ -636,23 +642,42 @@ def fuzzy_model_key(row):
 def model_storage_signature(row):
     raw_name = str(row.get('型号') or row.get('name') or '')
     name = raw_name.replace('（', '(').replace('）', ')')
-    groups = re.findall(r'\(([^)]*(?:gb|tb|\d+\s*[+/]\s*\d+\s*[gt])[^)]*)\)', name, re.IGNORECASE)
     values = []
-    for group in groups:
-        pair = re.search(r'(\d+)\s*[+/]\s*(\d+)\s*([gt])b?', group, re.IGNORECASE)
+
+    def append_amount(amount, unit='gb'):
+        values.append(int(amount) * (1024 if unit and unit.lower().startswith('t') else 1))
+
+    candidates = re.findall(r'\(([^)]*)\)', name)
+    candidates.append(name)
+    if not any(re.search(r'(?:gb|tb|\d+\s*[+/]+\s*\d+\s*[gt]b?)', item, re.IGNORECASE) for item in candidates):
+        field_capacity = ' '.join(str(row.get(field, '') or '') for field in ('内存', '存储')).strip()
+        if field_capacity:
+            candidates.append(field_capacity)
+
+    for group in candidates:
+        normalized = re.sub(r'\(\)', '', group)
+        pair = re.search(r'(\d+)\s*(?:gb)?\s*[+/]+\s*(\d+)\s*([gt]b?)', normalized, re.IGNORECASE)
         if pair:
-            values.append(int(pair.group(1)))
-            second = int(pair.group(2)) * (1024 if pair.group(3).lower() == 't' else 1)
-            values.append(second)
-            continue
-        for amount, unit in re.findall(r'(\d+)\s*(gb|tb)', group, re.IGNORECASE):
-            values.append(int(amount) * (1024 if unit.lower() == 'tb' else 1))
-    if not values:
-        trailing = re.search(r'(\d+)\s*(gb|tb)$', name, re.IGNORECASE)
-        if trailing:
-            values.append(int(trailing.group(1)) * (1024 if trailing.group(2).lower() == 'tb' else 1))
+            append_amount(pair.group(1), 'gb')
+            append_amount(pair.group(2), pair.group(3))
+            break
+        amounts = re.findall(r'(\d+)\s*([gt]b?)', normalized, re.IGNORECASE)
+        if amounts:
+            for amount, unit in amounts[:2]:
+                append_amount(amount, unit)
+            break
     return tuple(values)
 
+
+
+def brand_model_sort_key(row):
+    brand = normalize_brand(row.get('品牌') or derive_brand_from_name(row.get('型号', '')))
+    model = model_key(row) or re.sub(r'\s+', '', str(row.get('型号') or row.get('name') or '')).lower()
+    return (brand.casefold(), model)
+
+
+def source_match_sort_key(row):
+    return brand_model_sort_key(row) + (model_storage_signature(row),)
 
 def norm(header):
     if header in HEADER_MAP:
@@ -861,14 +886,34 @@ def merge_verified_rows(zol_rows, pconline_rows, all_fields):
     pconline_exact = {}
     # 第二级索引: 模糊匹配
     pconline_fuzzy = {}
-    for row in pconline_rows:
+    for row in sorted(pconline_rows, key=source_match_sort_key):
         exact = model_key(row)
         fuzzy = fuzzy_model_key(row)
         if exact:
-            pconline_exact[exact] = row
+            pconline_exact.setdefault(exact, []).append(row)
         if fuzzy and fuzzy != exact:
-            pconline_fuzzy[fuzzy] = row
+            pconline_fuzzy.setdefault(fuzzy, []).append(row)
     used_pconline = set()
+
+    def row_identity(row):
+        return (
+            model_key(row),
+            model_storage_signature(row),
+            str(row.get('手机ID') or row.get('id') or row.get('型号') or row.get('name') or ''),
+        )
+
+    def pick_matching_pconline(candidates, zol_row):
+        if not candidates:
+            return None
+        available = [row for row in candidates if row_identity(row) not in used_pconline]
+        if not available:
+            return None
+        zol_signature = model_storage_signature(zol_row)
+        same_signature = [row for row in available if model_storage_signature(row) == zol_signature]
+        if zol_signature:
+            return same_signature[0] if len(same_signature) == 1 else None
+        no_signature = [row for row in available if not model_storage_signature(row)]
+        return no_signature[0] if len(no_signature) == 1 else None
     merged = []
 
     def combine_rows(zol_row, pconline_row):
@@ -891,6 +936,8 @@ def merge_verified_rows(zol_rows, pconline_rows, all_fields):
                 combined[field] = pc_val
             elif is_missing(pc_val):
                 combined[field] = zol_val
+            elif field == '型号' and (model_key(zol_row) == model_key(pconline_row) or fuzzy_model_key(zol_row) == fuzzy_model_key(pconline_row)):
+                combined[field] = min([zol_val, pc_val], key=lambda value: len(str(value)))
             elif field in skip_compare_fields:
                 # 结构差异字段，直接取 ZOL 值，不标记为差异
                 combined[field] = zol_val
@@ -911,14 +958,14 @@ def merge_verified_rows(zol_rows, pconline_rows, all_fields):
         combined[SOURCE_VALIDATION_ROWS_FIELD] = source_rows
         return combined
 
-    for zol_row in zol_rows:
+    for zol_row in sorted(zol_rows, key=source_match_sort_key):
         key = model_key(zol_row)
-        pconline_row = pconline_exact.get(key)
+        pconline_row = pick_matching_pconline(pconline_exact.get(key), zol_row)
         if not pconline_row:
             fuzzy = fuzzy_model_key(zol_row)
-            pconline_row = pconline_fuzzy.get(fuzzy)
+            pconline_row = pick_matching_pconline(pconline_fuzzy.get(fuzzy), zol_row)
         if pconline_row:
-            used_pconline.add(model_key(pconline_row))
+            used_pconline.add(row_identity(pconline_row))
             merged.append(combine_rows(zol_row, pconline_row))
             continue
         row = dict(zol_row)
@@ -928,9 +975,8 @@ def merge_verified_rows(zol_rows, pconline_rows, all_fields):
         row[SOURCE_VALIDATION_ROWS_FIELD] = {'中关村在线': zol_row}
         merged.append(row)
 
-    for pconline_row in pconline_rows:
-        key = model_key(pconline_row)
-        if key in used_pconline:
+    for pconline_row in sorted(pconline_rows, key=source_match_sort_key):
+        if row_identity(pconline_row) in used_pconline:
             continue
         row = dict(pconline_row)
         # 关键：单源记录也要品牌归一化
@@ -1082,6 +1128,7 @@ def main():
     all_rows = merge_verified_rows(zol_rows, pconline_rows, source_header)
     cnmo_appended, cnmo_matched = append_unique_single_source(all_rows, cnmo_rows, 'CNMO')
     all_rows.extend(cnmo_appended)
+    all_rows.sort(key=source_match_sort_key)
     for row in all_rows:
         row.pop(SOURCE_VALIDATION_ROWS_FIELD, None)
     before_final_guard = len(all_rows)

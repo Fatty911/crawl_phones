@@ -1,16 +1,16 @@
 :root {
-  --bg: #f7f9fb;
+  --bg: #eef3f8;
   --surface: #ffffff;
-  --surface-soft: #f1f5f7;
+  --surface-soft: #f5f8fb;
   --text: #172026;
   --muted: #65727c;
   --border: #dbe3e8;
   --border-strong: #b7c5ce;
-  --accent: #087f8c;
-  --accent-strong: #045f69;
-  --accent-soft: #e5f5f7;
+  --accent: #1677ff;
+  --accent-strong: #0958d9;
+  --accent-soft: #e6f4ff;
   --warning: #b7791f;
-  --shadow: 0 16px 40px rgba(23, 32, 38, 0.08);
+  --shadow: 0 10px 28px rgba(21, 45, 71, 0.10);
   --radius: 8px;
 }
 
@@ -311,12 +311,14 @@ th {
   padding: 16px;
   overflow-y: auto;
   font-size: 13px;
+  box-shadow: -8px 0 24px rgba(21, 45, 71, 0.05);
 }
 
 .side-panel h2 {
   margin: 0 0 10px;
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 700;
+  color: #1f3b57;
 }
 
 .panel-title-row h2 {
@@ -375,6 +377,8 @@ th {
 .advanced-filter-row input,
 .facet-control select,
 .facet-control input,
+.keyword-sort-control select,
+.keyword-sort-control textarea,
 .history-save-row input,
 .history-sync input,
 #columnSearch {
@@ -394,6 +398,7 @@ th {
 }
 
 .facet-control,
+.keyword-sort-control,
 .history-save-row,
 .history-sync {
   display: flex;
@@ -578,4 +583,28 @@ th {
   .history-item {
     grid-template-columns: 1fr;
   }
+}
+
+.keyword-sort-control label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  color: var(--muted);
+}
+
+.keyword-sort-control textarea {
+  min-height: 92px;
+  resize: vertical;
+  line-height: 1.45;
+}
+
+.side-panel section {
+  padding: 12px;
+  border: 1px solid #edf1f5;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
+}
+
+.side-panel section + section {
+  margin-top: 14px;
 }

@@ -104,6 +104,8 @@
     blStatus: "",
     sortField: "",
     sortDir: "asc",
+    keywordSortField: "型号",
+    keywordSortOrder: "",
     page: 1,
     pageSize: 100,
     columnSearch: "",
@@ -131,6 +133,10 @@
     rootFilter: document.getElementById("rootFilter"),
     blFilter: document.getElementById("blFilter"),
     pageSize: document.getElementById("pageSize"),
+    keywordSortField: document.getElementById("keywordSortField"),
+    keywordSortOrder: document.getElementById("keywordSortOrder"),
+    applyKeywordSort: document.getElementById("applyKeywordSort"),
+    clearKeywordSort: document.getElementById("clearKeywordSort"),
     tableHead: document.getElementById("tableHead"),
     tableBody: document.getElementById("tableBody"),
     emptyState: document.getElementById("emptyState"),
@@ -247,6 +253,25 @@
   function firstNumber(value) {
     var numbers = numbersIn(value);
     return numbers.length ? numbers[0] : null;
+  }
+
+  function parseKeywordOrder(value) {
+    return String(value || "")
+      .split(/[\n,，;；|]+/)
+      .map(function (item) { return item.trim().toLowerCase(); })
+      .filter(Boolean);
+  }
+
+  function keywordRank(row) {
+    var keywords = parseKeywordOrder(state.keywordSortOrder);
+    var field = state.keywordSortField || state.sortField || "型号";
+    var text = normalizeText(row[field]);
+    for (var index = 0; index < keywords.length; index += 1) {
+      if (text.indexOf(keywords[index]) !== -1) {
+        return index;
+      }
+    }
+    return keywords.length;
   }
 
   function hasValue(value) {
@@ -416,8 +441,19 @@
       });
     });
 
-    if (state.sortField) {
+    if (state.sortField || state.keywordSortOrder.trim()) {
       rows.sort(function (a, b) {
+        var rankResult = 0;
+        if (state.keywordSortOrder.trim()) {
+          rankResult = keywordRank(a) - keywordRank(b);
+        }
+        if (rankResult !== 0) {
+          return rankResult;
+        }
+        if (!state.sortField) {
+          return String(a["品牌"] || "").localeCompare(String(b["品牌"] || ""), "zh-Hans", { numeric: true }) ||
+            String(a["型号"] || "").localeCompare(String(b["型号"] || ""), "zh-Hans", { numeric: true });
+        }
         var av = a[state.sortField];
         var bv = b[state.sortField];
         var an = firstNumber(av);
@@ -465,6 +501,14 @@
       els.facetField.appendChild(option);
     });
     els.facetField.value = state.facetField;
+    els.keywordSortField.textContent = "";
+    state.columns.forEach(function (column) {
+      var option = document.createElement("option");
+      option.value = column;
+      option.textContent = column;
+      els.keywordSortField.appendChild(option);
+    });
+    els.keywordSortField.value = state.keywordSortField;
     renderFacetOptions();
   }
 
@@ -591,6 +635,9 @@
     }
     if (state.blStatus) {
       addChip("BL锁: " + state.blStatus, "bl");
+    }
+    if (state.keywordSortOrder.trim()) {
+      addChip("关键字排序: " + parseKeywordOrder(state.keywordSortOrder).join(" → "), "keywordSort");
     }
     state.advancedFilters.forEach(function (filter) {
       addChip(activeFilterText(filter), "advanced", filter.id);
@@ -838,6 +885,8 @@
       sortField: state.sortField,
       sortDir: state.sortDir,
       pageSize: state.pageSize,
+      keywordSortField: state.keywordSortField,
+      keywordSortOrder: state.keywordSortOrder,
     };
   }
 
@@ -860,6 +909,8 @@
     state.sortField = criteria.sortField || "";
     state.sortDir = criteria.sortDir || "asc";
     state.pageSize = Number(criteria.pageSize || 100);
+    state.keywordSortField = criteria.keywordSortField || "型号";
+    state.keywordSortOrder = criteria.keywordSortOrder || "";
     state.page = 1;
 
     els.globalSearch.value = state.search;
@@ -867,6 +918,8 @@
     els.rootFilter.value = state.rootStatus;
     els.blFilter.value = state.blStatus;
     els.pageSize.value = String(state.pageSize);
+    els.keywordSortField.value = state.keywordSortField;
+    els.keywordSortOrder.value = state.keywordSortOrder;
     renderAdvancedFilterRows();
     renderDataViews();
   }
@@ -1158,12 +1211,44 @@
         state.blStatus = "";
         els.blFilter.value = "";
       }
+      if (event.target.dataset.type === "keywordSort") {
+        state.keywordSortOrder = "";
+        els.keywordSortOrder.value = "";
+      }
       if (event.target.dataset.type === "advanced") {
         state.advancedFilters = state.advancedFilters.filter(function (filter) {
           return filter.id !== event.target.dataset.value;
         });
         renderAdvancedFilterRows();
       }
+      state.page = 1;
+      renderDataViews();
+    });
+
+
+    els.keywordSortField.addEventListener("change", function (event) {
+      state.keywordSortField = event.target.value;
+      state.page = 1;
+      renderDataViews();
+    });
+
+    els.keywordSortOrder.addEventListener("input", function (event) {
+      state.keywordSortOrder = event.target.value;
+      if (!state.composing) {
+        scheduleRender();
+      }
+    });
+
+    els.applyKeywordSort.addEventListener("click", function () {
+      state.keywordSortField = els.keywordSortField.value;
+      state.keywordSortOrder = els.keywordSortOrder.value;
+      state.page = 1;
+      renderDataViews();
+    });
+
+    els.clearKeywordSort.addEventListener("click", function () {
+      state.keywordSortOrder = "";
+      els.keywordSortOrder.value = "";
       state.page = 1;
       renderDataViews();
     });
@@ -1231,8 +1316,10 @@
       state.blStatus = "";
       state.sortField = "";
       state.sortDir = "asc";
+      state.keywordSortOrder = "";
       state.page = 1;
       els.globalSearch.value = "";
+      els.keywordSortOrder.value = "";
       renderAdvancedFilterRows();
       renderDataViews();
     });
