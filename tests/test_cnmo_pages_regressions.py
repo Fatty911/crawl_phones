@@ -795,6 +795,31 @@ class MergeCnmoCoverageTests(unittest.TestCase):
         self.assertEqual("太平洋电脑网+CNMO", base[0]["数据来源"])
         self.assertEqual("1397100|1624724", base[0]["关联手机ID"])
 
+    def test_cnmo_single_source_scope_keeps_china_and_global_best_sellers(self) -> None:
+        allowed_rows = [
+            {"品牌": "荣耀", "型号": "荣耀X80i(8GB+256GB)"},
+            {"品牌": "苹果", "型号": "苹果iPhone16 Pro Max(1TB)"},
+            {"品牌": "三星", "型号": "三星Galaxy S26 Ultra(16GB+1TB)"},
+            {"品牌": "", "型号": "WIKO Hi 畅享 60s(256GB)"},
+            {"品牌": "", "型号": "ROG游戏手机9 Pro(24+1TB)"},
+        ]
+
+        for row in allowed_rows:
+            with self.subTest(model=row["型号"]):
+                self.assertTrue(self.merge.is_cnmo_single_source_in_publish_scope(row))
+
+    def test_cnmo_single_source_scope_filters_regional_or_non_target_brands(self) -> None:
+        filtered_rows = [
+            {"品牌": "谷歌", "型号": "谷歌Pixel 8 Pro"},
+            {"品牌": "索尼", "型号": "索尼Xperia 1 V(12GB+512GB)"},
+            {"品牌": "传音", "型号": "Infinix GT 20 Pro"},
+            {"品牌": "", "型号": "ObscureLand X1(4GB+128GB)"},
+        ]
+
+        for row in filtered_rows:
+            with self.subTest(model=row["型号"]):
+                self.assertFalse(self.merge.is_cnmo_single_source_in_publish_scope(row))
+
     def test_cnmo_capacity_shorthand_matches_full_unit_variant(self) -> None:
         base = [
             {

@@ -58,6 +58,18 @@ class PublishSupersetTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "缺少基线身份"):
             self.verify.verify_superset(baseline, [{"手机ID": "1397100", "型号": "荣耀Magic3"}])
 
+    def test_out_of_scope_cnmo_single_source_baseline_is_not_required(self) -> None:
+        baseline = [
+            {"手机ID": "pixel-cnmo", "型号": "谷歌Pixel 8 Pro", "品牌": "谷歌", "数据来源": "CNMO"},
+            {"手机ID": "honor-cnmo", "型号": "荣耀X80i(8GB+256GB)", "品牌": "荣耀", "数据来源": "CNMO"},
+        ]
+        candidate = [{"手机ID": "honor-cnmo", "型号": "荣耀X80i(8GB+256GB)", "品牌": "荣耀", "数据来源": "CNMO"}]
+
+        self.verify.verify_superset(baseline, candidate)
+
+        with self.assertRaisesRegex(ValueError, "缺少基线身份"):
+            self.verify.verify_superset(baseline, [{"手机ID": "other", "型号": "其它"}])
+
     def test_cli_rejects_invalid_or_non_list_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)

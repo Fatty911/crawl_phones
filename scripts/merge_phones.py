@@ -194,6 +194,35 @@ BRAND_ALIASES = {
     'tecno': '传音',
     'itel': '传音',
     'infinix': '传音',
+    '乐视': '乐视',
+    'letv': '乐视',
+    '金立': '金立',
+    'gionee': '金立',
+    '蔚来': '蔚来',
+    'nio': '蔚来',
+    '鼎桥': '鼎桥',
+    'td tech': '鼎桥',
+    '魅蓝': '魅蓝',
+    '酷派': '酷派',
+    'coolpad': '酷派',
+    '海信': '海信',
+    'hisense': '海信',
+    'wiko': 'WIKO',
+    '麦芒': '麦芒',
+    '华硕': '华硕',
+    'asus': '华硕',
+    'rog': '华硕',
+    '黑鲨': '黑鲨',
+    'black shark': '黑鲨',
+    'nzone': 'NZONE',
+    'lg': 'LG',
+}
+
+CNMO_SINGLE_SOURCE_ALLOWED_BRANDS = {
+    '苹果', '三星', '华为', '荣耀', 'OPPO', 'vivo', '小米', '红米', 'iQOO',
+    '一加', '真我', '魅族', '中兴', '努比亚', '联想', '摩托罗拉',
+    '乐视', '金立', '蔚来', '鼎桥', '魅蓝', '酷派', '海信', 'WIKO',
+    '麦芒', '华硕', '黑鲨', 'NZONE',
 }
 
 # 从型号名推导品牌的模式（按优先级排序，越具体越靠前）
@@ -219,6 +248,19 @@ BRAND_PATTERNS = [
     ('诺基亚', ['nokia', '诺基亚']),
     ('Nothing', ['nothing']),
     ('传音', ['tecno', 'itel', 'infinix']),
+    ('乐视', ['乐视', 'letv']),
+    ('金立', ['金立', 'gionee']),
+    ('蔚来', ['蔚来', 'nio phone']),
+    ('鼎桥', ['鼎桥', 'td tech']),
+    ('魅蓝', ['魅蓝']),
+    ('酷派', ['酷派', 'coolpad', 'cool ']),
+    ('海信', ['海信', 'hisense']),
+    ('WIKO', ['wiko']),
+    ('麦芒', ['麦芒']),
+    ('华硕', ['华硕', 'asus', 'rog游戏手机', 'rog game']),
+    ('黑鲨', ['黑鲨', 'black shark']),
+    ('NZONE', ['nzone']),
+    ('LG', ['lg ']),
 ]
 
 def normalize_brand(brand: str) -> str:
@@ -246,6 +288,11 @@ def derive_brand_from_name(name):
             if pat in name_lower:
                 return brand_name
     return ''
+
+def is_cnmo_single_source_in_publish_scope(row):
+    brand = normalize_brand(row.get('品牌') or derive_brand_from_name(row.get('型号', '')))
+    return brand in CNMO_SINGLE_SOURCE_ALLOWED_BRANDS
+
 
 def parse_numbers(value):
     if not value or value == '-':
@@ -1134,13 +1181,15 @@ def main():
     source_header = collect_fields(source_rows)
     all_rows = merge_verified_rows(zol_rows, pconline_rows, source_header)
     cnmo_appended, cnmo_matched = append_unique_single_source(all_rows, cnmo_rows, 'CNMO')
-    all_rows.extend(cnmo_appended)
+    cnmo_appended_in_scope = [row for row in cnmo_appended if is_cnmo_single_source_in_publish_scope(row)]
+    cnmo_out_of_scope = len(cnmo_appended) - len(cnmo_appended_in_scope)
+    all_rows.extend(cnmo_appended_in_scope)
     all_rows.sort(key=source_match_sort_key)
     for row in all_rows:
         row.pop(SOURCE_VALIDATION_ROWS_FIELD, None)
     before_final_guard = len(all_rows)
     all_rows = guard_publish_rows(all_rows)
-    print(f"CNMO单源追加:{len(cnmo_appended)} 来源覆盖匹配:{cnmo_matched}")
+    print(f"CNMO单源追加:{len(cnmo_appended_in_scope)} 范围外丢弃:{cnmo_out_of_scope} 来源覆盖匹配:{cnmo_matched}")
     print(f"最终发布防御再次丢弃未来上市: {before_final_guard - len(all_rows)} 条")
     header = collect_fields(all_rows)
     dual_source_count = sum(1 for row in all_rows if row.get('验证状态', '').startswith('双源'))
