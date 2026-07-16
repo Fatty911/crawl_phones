@@ -442,6 +442,19 @@ jobs:
             echo "跳过 root/越狱验证（无合并文件）"
           fi
 
+      - name: 保留线上基线身份
+        if: steps.validate.outputs.ready == 'true'
+        env:
+          DATE: ${{ steps.date.outputs.date }}
+        run: |
+          set -euo pipefail
+          curl --fail --show-error --silent --location --retry 3 --max-time 120 \
+            https://phones.jiucai.eu.org/data/latest.json --output /tmp/phones-pages-baseline.json
+          python3 scripts/preserve_publish_baseline.py \
+            /tmp/phones-pages-baseline.json \
+            "data/merged_phones_${DATE}.json" \
+            "data/merged_phones_${DATE}.csv"
+
       - name: 检查合并结果
         if: steps.validate.outputs.ready == 'true'
         run: |

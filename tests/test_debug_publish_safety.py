@@ -11,6 +11,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 VERIFY_SCRIPT = ROOT / "scripts" / "verify_publish_superset.py"
+PRESERVE_SCRIPT = ROOT / "scripts" / "preserve_publish_baseline.py"
 
 
 def load_verify_module():
@@ -90,6 +91,37 @@ class PublishSupersetTests(unittest.TestCase):
             )
         self.assertNotEqual(0, result.returncode)
         self.assertIn("JSON 顶层必须是数组", result.stderr)
+
+
+class PreservePublishBaselineTests(unittest.TestCase):
+    def test_cli_restores_missing_identity_in_json_and_csv(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            baseline = tmp_path / "baseline.json"
+            candidate = tmp_path / "candidate.json"
+            candidate_csv = tmp_path / "candidate.csv"
+            baseline.write_text(
+                json.dumps([{"手机ID": "1"}, {"手机ID": "2", "型号": "Model 2"}]),
+                encoding="utf-8",
+            )
+            candidate.write_text(json.dumps([{"手机ID": "1"}]), encoding="utf-8")
+            candidate_csv.write_text("手机ID\n1\n", encoding="utf-8")
+
+            result = subprocess.run(
+                [sys.executable, str(PRESERVE_SCRIPT), str(baseline), str(candidate), str(candidate_csv)],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+
+            restored = json.loads(candidate.read_text(encoding="utf-8"))
+            csv_text = candidate_csv.read_text(encoding="utf-8-sig")
+
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertEqual(["1", "2"], [row["手机ID"] for row in restored])
+        self.assertIn("Model 2", csv_text)
+        self.assertIn("restored=1", result.stdout)
 
 
 class WorkflowSafetyContractTests(unittest.TestCase):

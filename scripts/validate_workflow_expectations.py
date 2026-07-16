@@ -168,6 +168,11 @@ def check_merge_workflow(path: Path, errors: list[str]) -> None:
         "merge-and-deploy.yml missing AI verification hard timeout",
         errors,
     )
+    assert_condition(
+        "scripts/preserve_publish_baseline.py" in text,
+        "merge-and-deploy.yml must carry published identities into each candidate",
+        errors,
+    )
     inputs = data.get(True, {}).get("workflow_dispatch", {}).get("inputs", {})
     for required_input in ("debug_mode", "crawler_run_id", "crawler_run_attempt", "trigger_source", "trigger_date"):
         assert_condition(required_input in inputs, f"merge-and-deploy.yml missing input {required_input}", errors)
@@ -202,19 +207,20 @@ def check_merge_workflow(path: Path, errors: list[str]) -> None:
     )
     assert_condition(
         text.count("scripts/verify_publish_superset.py") == 2
-        and text.count("https://phones.jiucai.eu.org/data/latest.json") == 2
+        and text.count("https://phones.jiucai.eu.org/data/latest.json") == 3
         and "if: steps.validate.outputs.ready == 'true'\n        env:" in text
         and "if: github.event.inputs.debug_mode == 'true'" not in text[text.index("- name: 部署前再次校验线上基线超集"):],
         "publish superset guard must run for every release before artifact and before Pages deploy",
         errors,
     )
     publish_guard_position = text.index("- name: 发布前校验线上基线超集")
+    preserve_position = text.index("- name: 保留线上基线身份")
     commit_position = text.index("- name: 提交合并产物到仓库")
     upload_position = text.index("- name: 上传合并产物")
     result_position = text.index("- name: 检查合并结果")
     assert_condition(
-        result_position < publish_guard_position < commit_position < upload_position,
-        "publish guard must run before repository commit/push and artifact upload",
+        preserve_position < result_position < publish_guard_position < commit_position < upload_position,
+        "baseline preservation and publish guard must run before commit and artifact upload",
         errors,
     )
     release = data["jobs"]["create-release"]
