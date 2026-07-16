@@ -152,6 +152,16 @@ class CnmoCrawlerTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 self.cnmo.crawl_list_page(session, 1)
 
+    def test_list_request_timeout_is_wrapped_with_cause(self) -> None:
+        session = mock.Mock()
+        timeout = requests.exceptions.Timeout("read timed out")
+        session.get.side_effect = timeout
+        with mock.patch.object(self.cnmo, "human_delay", return_value=None):
+            with self.assertRaises(self.cnmo.ListPageFetchError) as raised:
+                self.cnmo.crawl_list_page(session, 29)
+
+        self.assertIs(raised.exception.__cause__, timeout)
+
     def test_list_launch_time_is_used_for_release_year(self) -> None:
         self.assertEqual(
             2026,
@@ -280,6 +290,78 @@ class CnmoCrawlerTests(unittest.TestCase):
 
             detail.assert_called_once_with(mock.ANY, "new")
             self.assertTrue((json_dir / "new.json").exists())
+
+    def test_incremental_list_fetch_error_exits_10_and_preserves_failed_page(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data_dir = root / "data"
+            json_dir = root / "json"
+            data_dir.mkdir()
+            json_dir.mkdir()
+            progress_path = root / "progress.json"
+            progress = {
+                "crawled_pages": [],
+                "crawled_phones": ["old"],
+                "current_page": 1,
+                "total_phones": 1,
+                "incremental_scan_page": 1,
+            }
+            with (
+                mock.patch.object(self.cnmo, "data_dir", str(data_dir)),
+                mock.patch.object(self.cnmo, "cnmo_json_dir", str(json_dir)),
+                mock.patch.object(self.cnmo, "progress_file", str(progress_path)),
+                mock.patch.object(self.cnmo, "progress", progress),
+                mock.patch.object(self.cnmo, "INCREMENTAL_MODE", True),
+                mock.patch.object(self.cnmo, "MAX_PAGES_PER_RUN", 0),
+                mock.patch.object(self.cnmo, "MAX_PHONES_PER_RUN", 0),
+                mock.patch.object(self.cnmo, "MAX_TIME_PER_STEP", 0),
+                mock.patch.object(self.cnmo, "AUTO_MODE", True),
+                mock.patch.object(self.cnmo, "get_session", return_value=mock.Mock()),
+                mock.patch.object(
+                    self.cnmo,
+                    "crawl_list_page",
+                    side_effect=[
+                        [{"id": "old", "name": "旧机", "price": "", "launch_time": ""}],
+                        self.cnmo.ListPageFetchError("page 2 timeout"),
+                    ],
+                ),
+                mock.patch.object(self.cnmo, "crawl_detail_page") as detail,
+            ):
+                with self.assertRaises(SystemExit) as raised:
+                    self.cnmo.step1_crawl_list_and_detail()
+
+            self.assertEqual(10, raised.exception.code)
+            self.assertEqual(2, progress["incremental_scan_page"])
+            saved = json.loads(progress_path.read_text(encoding="utf-8"))
+            self.assertEqual(2, saved["incremental_scan_page"])
+            detail.assert_not_called()
+
+    def test_incremental_plain_runtime_error_is_not_swallowed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data_dir = root / "data"
+            json_dir = root / "json"
+            data_dir.mkdir()
+            json_dir.mkdir()
+            progress_path = root / "progress.json"
+            progress = {"crawled_pages": [], "crawled_phones": [], "current_page": 1, "total_phones": 0}
+            with (
+                mock.patch.object(self.cnmo, "data_dir", str(data_dir)),
+                mock.patch.object(self.cnmo, "cnmo_json_dir", str(json_dir)),
+                mock.patch.object(self.cnmo, "progress_file", str(progress_path)),
+                mock.patch.object(self.cnmo, "progress", progress),
+                mock.patch.object(self.cnmo, "INCREMENTAL_MODE", True),
+                mock.patch.object(self.cnmo, "MAX_PAGES_PER_RUN", 0),
+                mock.patch.object(self.cnmo, "MAX_PHONES_PER_RUN", 0),
+                mock.patch.object(self.cnmo, "MAX_TIME_PER_STEP", 0),
+                mock.patch.object(self.cnmo, "AUTO_MODE", True),
+                mock.patch.object(self.cnmo, "get_session", return_value=mock.Mock()),
+                mock.patch.object(self.cnmo, "crawl_list_page", side_effect=RuntimeError("parse bug")),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "parse bug"):
+                    self.cnmo.step1_crawl_list_and_detail()
+
+            self.assertFalse(progress_path.exists())
 
     def test_debug_limit_counts_this_run_not_historical_total(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

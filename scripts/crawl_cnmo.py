@@ -257,6 +257,10 @@ CRAWL_MIN_DELAY_SECONDS = float(os.getenv("CRAWL_MIN_DELAY_SECONDS", "8"))
 CRAWL_MAX_DELAY_SECONDS = float(os.getenv("CRAWL_MAX_DELAY_SECONDS", "20"))
 REQUEST_TIMEOUT = 15
 
+
+class ListPageFetchError(RuntimeError):
+    """Raised when a CNMO list page request fails before parsing."""
+
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
@@ -344,9 +348,9 @@ def crawl_list_page(session: requests.Session, page: int) -> List[Dict]:
         resp = session.get(url, timeout=REQUEST_TIMEOUT)
         resp.raise_for_status()
         resp.encoding = 'gbk'
-    except Exception as e:
+    except requests.RequestException as e:
         logger.error(f"列表页请求失败: {e}")
-        raise RuntimeError(f"CNMO列表页请求失败 page={page}: {e}") from e
+        raise ListPageFetchError(f"CNMO列表页请求失败 page={page}: {e}") from e
 
     soup = BeautifulSoup(resp.text, 'html.parser')
     products = []
@@ -485,7 +489,18 @@ def step1_crawl_list_and_detail():
         pages_scanned_this_run = 0
         scan_complete = False
         while True:
-            products = crawl_list_page(session, page)
+            try:
+                products = crawl_list_page(session, page)
+            except ListPageFetchError:
+                progress['incremental_scan_page'] = page
+                save_progress()
+                logger.info(f"列表页 {page} 请求失败，保留进度等待下次重试")
+                if not all_phones:
+                    if AUTO_MODE:
+                        logger.info("列表扫描未完成，等待下次继续")
+                        sys.exit(10)
+                    raise
+                break
             if not products:
                 scan_complete = True
                 progress['incremental_scan_page'] = 1
