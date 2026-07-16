@@ -35,6 +35,10 @@ DEFAULT_TEST_URLS = [
     "https://www.baidu.com",
     "https://www.pconline.com.cn",
 ]
+GITHUB_ARTIFACT_NO_PROXY = (
+    "127.0.0.1,localhost,"
+    "results-receiver.actions.githubusercontent.com,.blob.core.windows.net"
+)
 
 
 def append_github_env(path: str, values: dict[str, str]) -> None:
@@ -332,8 +336,8 @@ def main() -> int:
             "http_proxy": "http://127.0.0.1:7890",
             "https_proxy": "http://127.0.0.1:7890",
             "all_proxy": "socks5://127.0.0.1:7891",
-            "NO_PROXY": "127.0.0.1,localhost",
-            "no_proxy": "127.0.0.1,localhost",
+            "NO_PROXY": GITHUB_ARTIFACT_NO_PROXY,
+            "no_proxy": GITHUB_ARTIFACT_NO_PROXY,
         },
     )
     print("代理已启用：后续爬虫步骤将通过 http://127.0.0.1:7890 访问外网")
