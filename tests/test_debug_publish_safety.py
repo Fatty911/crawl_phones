@@ -139,6 +139,43 @@ class PreservePublishBaselineTests(unittest.TestCase):
         self.assertIn("Model 2", csv_text)
         self.assertIn("restored=1", result.stdout)
 
+    def test_cli_cleans_marketing_copy_from_restored_baseline(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            baseline = tmp_path / "baseline.json"
+            candidate = tmp_path / "candidate.json"
+            candidate_csv = tmp_path / "candidate.csv"
+            baseline.write_text(
+                json.dumps(
+                    [
+                        {
+                            "手机ID": "2",
+                            "型号": "Model 2",
+                            "内存": "16GB>游戏运行一般>LPDDR5X Ultra",
+                            "存储": "256GB>5461首歌曲>UFS 4.0",
+                        }
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            candidate.write_text(json.dumps([{"手机ID": "1"}]), encoding="utf-8")
+            candidate_csv.write_text("手机ID\n1\n", encoding="utf-8")
+
+            result = subprocess.run(
+                [sys.executable, str(PRESERVE_SCRIPT), str(baseline), str(candidate), str(candidate_csv)],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            restored = json.loads(candidate.read_text(encoding="utf-8"))
+            csv_text = candidate_csv.read_text(encoding="utf-8-sig")
+
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertEqual("16GB|LPDDR5X Ultra", restored[1]["内存"])
+        self.assertEqual("256GB|UFS 4.0", restored[1]["存储"])
+        self.assertNotRegex(csv_text, r"游戏运行|首歌曲")
+
 
 class WorkflowSafetyContractTests(unittest.TestCase):
     def test_machine_readable_workflow_expectations(self) -> None:

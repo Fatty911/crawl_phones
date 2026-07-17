@@ -330,10 +330,10 @@ def clean_spec_value(field, value):
     if field not in ('内存', '存储') or text == '-':
         return text
     if field == '内存':
-        text = re.sub(r'游戏运行(?:流畅|良好)', '', text)
+        text = re.sub(r'游戏运行(?:流畅|良好|一般)', '', text)
     else:
-        text = re.sub(r'(?:约)?\d+(?:\.\d+)?万张照片', '', text)
-        text = re.sub(r'(?:约)?\d+(?:\.\d+)?万首歌曲', '', text)
+        text = re.sub(r'(?:约)?\d+(?:\.\d+)?\s*万?\s*张照片', '', text)
+        text = re.sub(r'(?:约)?\d+(?:\.\d+)?\s*万?\s*首歌曲', '', text)
         text = text.replace('无扩展卡功能', '不支持容量扩展')
     text = re.sub(r'[（(]\s*[、,，/|•>；;]*\s*[）)]', '', text)
     text = re.sub(r'\s*[、,，/|•>；;]+\s*', '|', text).strip(' |')

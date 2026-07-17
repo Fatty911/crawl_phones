@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from merge_phones import clean_spec_value
 from verify_publish_superset import identity_key, identity_keys, load_rows, verify_superset
 
 
@@ -19,6 +20,10 @@ def preserve_baseline(
     candidate_ids = {key for row in candidate for key in identity_keys(row)}
     missing_rows = [row for row in baseline if identity_key(row) not in candidate_ids]
     merged = [*candidate, *(dict(row) for row in missing_rows)]
+    for row in merged:
+        for field in ("内存", "存储"):
+            if field in row:
+                row[field] = clean_spec_value(field, row[field])
     return merged, [identity_key(row) for row in missing_rows]
 
 
