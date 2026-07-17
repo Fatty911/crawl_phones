@@ -34,15 +34,31 @@ class PublishSupersetTests(unittest.TestCase):
         self.assertEqual("model:小米 15 ultra", self.verify.identity_key({"型号": " 小米　15   Ultra "}))
         self.assertEqual("model:pixel 10 pro", self.verify.identity_key({"name": "Pixel 10  PRO"}))
 
-    def test_candidate_must_preserve_rows_and_all_baseline_identities(self) -> None:
+    def test_candidate_must_preserve_all_baseline_identities(self) -> None:
         baseline = [{"手机ID": "1"}, {"型号": "Model A"}]
         candidate = [{"手机ID": "1"}, {"型号": "Model A"}, {"id": "3"}]
         self.verify.verify_superset(baseline, candidate)
 
-        with self.assertRaisesRegex(ValueError, "行数减少"):
+        with self.assertRaisesRegex(ValueError, "缺少基线身份"):
             self.verify.verify_superset(baseline, candidate[:1])
         with self.assertRaisesRegex(ValueError, "缺少基线身份"):
             self.verify.verify_superset(baseline, [{"手机ID": "1"}, {"id": "3"}])
+
+    def test_related_ids_allow_traceable_row_consolidation(self) -> None:
+        baseline = [{"手机ID": "1"}, {"手机ID": "2"}]
+        candidate = [{"手机ID": "1", "关联手机ID": "1|2"}]
+
+        self.verify.verify_superset(baseline, candidate)
+
+        with self.assertRaisesRegex(ValueError, "缺少基线身份"):
+            self.verify.verify_superset(baseline, [{"手机ID": "1"}])
+
+    def test_candidate_must_keep_baseline_related_id_history(self) -> None:
+        baseline = [{"手机ID": "1", "关联手机ID": "1|2"}]
+
+        self.verify.verify_superset(baseline, [{"手机ID": "1", "关联手机ID": "2"}])
+        with self.assertRaisesRegex(ValueError, "缺少基线身份"):
+            self.verify.verify_superset(baseline, [{"手机ID": "1"}])
 
     def test_candidate_related_phone_ids_preserve_merged_source_identities(self) -> None:
         baseline = [{"手机ID": "1624724", "型号": "荣耀Magic3(8+128GB)"}]
@@ -72,7 +88,7 @@ class PublishSupersetTests(unittest.TestCase):
 
         self.verify.verify_superset(baseline, candidate)
 
-        with self.assertRaisesRegex(ValueError, "候选行数减少|缺少基线身份"):
+        with self.assertRaisesRegex(ValueError, "缺少基线身份"):
             self.verify.verify_superset(baseline, [{"手机ID": "other", "型号": "其它"}])
 
     def test_cli_rejects_invalid_or_non_list_json(self) -> None:

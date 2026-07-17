@@ -135,9 +135,12 @@ def verify_superset(
     baseline: list[dict[str, Any]], candidate: list[dict[str, Any]]
 ) -> None:
     scoped_baseline = [row for row in baseline if not is_out_of_scope_cnmo_single_source(row)]
-    if len(candidate) < len(scoped_baseline):
-        raise ValueError(f"候选行数减少: baseline={len(scoped_baseline)} candidate={len(candidate)}")
-    baseline_ids = {identity_key(row) for row in scoped_baseline}
+    baseline_ids = set()
+    for row in scoped_baseline:
+        keys = identity_keys(row)
+        if not keys:
+            identity_key(row)
+        baseline_ids.update(keys)
     candidate_ids = {key for row in candidate for key in identity_keys(row)}
     missing = sorted(baseline_ids - candidate_ids)
     if missing:
