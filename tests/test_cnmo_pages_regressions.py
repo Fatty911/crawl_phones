@@ -74,6 +74,10 @@ rows.push(
   {"型号": "非法年份后缀", "上市时间": "20220", "数据来源": "CNMO", "验证状态": "单源"},
   {"型号": "缺失年份", "上市时间": "", "数据来源": "CNMO", "验证状态": "单源"},
   {"型号": "三源计数样本", "上市时间": "2026年07月", "数据来源": "中关村在线+太平洋电脑网+CNMO", "验证状态": "三源一致"},
+  {"品牌": "回归品牌", "型号": "回归品牌 Alpha (8+256GB)", "上市时间": "2026年07月", "数据来源": "中关村在线+CNMO", "验证状态": "双源一致"},
+  {"品牌": "回归品牌", "型号": "回归品牌 Alpha (16+512GB)", "上市时间": "2026年07月", "数据来源": "CNMO", "验证状态": "单源"},
+  {"品牌": "回归品牌", "型号": "回归品牌 Alpha Pro (12GB/1TB/5G版)", "上市时间": "2026年07月", "数据来源": "太平洋电脑网+CNMO", "验证状态": "双源差异"},
+  {"品牌": "回归品牌", "型号": "回归品牌 Alpha Pro 1TB", "上市时间": "2026年07月", "数据来源": "CNMO", "验证状态": "单源"},
 );
 const staleManifest = {
   date: "test",
@@ -95,7 +99,7 @@ const sandbox = {
 vm.createContext(sandbox);
 vm.runInContext(fs.readFileSync("docs/phones/app.js", "utf8"), sandbox);
 setTimeout(() => {
-  const ids = ["totalCount", "zolCount", "pconlineCount", "cnmoCount", "verifiedCount", "dataMeta"];
+  const ids = ["visibleCount", "totalCount", "zolCount", "pconlineCount", "cnmoCount", "verifiedCount", "dataMeta", "coverageNote"];
   const output = Object.fromEntries(ids.map((id) => [id, getElement(id).textContent]));
   process.stdout.write(JSON.stringify(output));
 }, 50);
@@ -106,6 +110,7 @@ setTimeout(() => {
             check=True,
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=30,
         )
         metrics = json.loads(result.stdout)
@@ -118,6 +123,38 @@ setTimeout(() => {
                 "验证状态": "三源一致",
             }
         )
+        rows.extend(
+            [
+                {
+                    "品牌": "回归品牌",
+                    "型号": "回归品牌 Alpha (8+256GB)",
+                    "上市时间": "2026年07月",
+                    "数据来源": "中关村在线+CNMO",
+                    "验证状态": "双源一致",
+                },
+                {
+                    "品牌": "回归品牌",
+                    "型号": "回归品牌 Alpha (16+512GB)",
+                    "上市时间": "2026年07月",
+                    "数据来源": "CNMO",
+                    "验证状态": "单源",
+                },
+                {
+                    "品牌": "回归品牌",
+                    "型号": "回归品牌 Alpha Pro (12GB/1TB/5G版)",
+                    "上市时间": "2026年07月",
+                    "数据来源": "太平洋电脑网+CNMO",
+                    "验证状态": "双源差异",
+                },
+                {
+                    "品牌": "回归品牌",
+                    "型号": "回归品牌 Alpha Pro 1TB",
+                    "上市时间": "2026年07月",
+                    "数据来源": "CNMO",
+                    "验证状态": "单源",
+                },
+            ]
+        )
 
         def release_year(row):
             for field in ["上市时间", "国内发布时间", "发布时间", "发布日期", "上市日期"]:
@@ -127,16 +164,72 @@ setTimeout(() => {
             return None
 
         filtered = [row for row in rows if (release_year(row) or 0) >= 2022]
-        source_count = lambda source: sum(source in str(row.get("数据来源", "")) for row in filtered)
-        verified_count = sum(
-            re.fullmatch(r"[双三]源(?:一致|差异)", str(row.get("验证状态", ""))) is not None
-            for row in filtered
-        )
-        self.assertEqual(str(len(filtered)), metrics["totalCount"])
-        self.assertEqual(str(source_count("中关村在线")), metrics["zolCount"])
-        self.assertEqual(str(source_count("太平洋电脑网")), metrics["pconlineCount"])
-        self.assertEqual(str(source_count("CNMO")), metrics["cnmoCount"])
-        self.assertEqual(str(verified_count), metrics["verifiedCount"])
+        brand_aliases = {
+            "华为": "huawei", "荣耀": "honor", "小米": "xiaomi", "红米": "redmi",
+            "一加": "oneplus", "真我": "realme", "三星": "samsung", "苹果": "apple",
+            "努比亚": "nubia", "摩托罗拉": "motorola", "魅族": "meizu",
+            "联想": "lenovo", "索尼": "sony", "谷歌": "google", "中兴": "zte",
+            "华硕": "asus", "诺基亚": "nokia", "夏普": "sharp",
+            "步步高": "vivo", "poco": "xiaomi",
+        }
+
+        def spu_key(row):
+            brand = re.sub(r"\s+", "", str(row.get("品牌", "")).lower())
+            brand = brand_aliases.get(brand, brand)
+            name = str(row.get("型号") or row.get("name") or "").lower()
+            name = name.translate(str.maketrans({"（": "(", "）": ")", "＋": "+", "／": "/"}))
+            name = re.sub(r"\s+", " ", name).strip()
+            if not name:
+                fallback = row.get("手机ID") or row.get("id") or row.get("源记录ID") or ""
+                return f"{brand}|id:{fallback}"
+            for alias, canonical in brand_aliases.items():
+                if name.startswith(alias):
+                    name = canonical + name[len(alias):]
+                    break
+            capacity = re.compile(
+                r"\((?:\d+\s*(?:[gt]b)?\s*[+/]\s*\d+\s*[gt]b|\d+\s*[gt]b)"
+                r"(?:\s*/\s*(?:全网通|[45]g版?|wifi版?))*\)$",
+                re.IGNORECASE,
+            )
+            plain_capacity = re.compile(
+                r"(?:^|\s)(?:\d+\s*(?:[gt]b)?\s*[+/]\s*\d+\s*[gt]b|\d+\s*[gt]b)$",
+                re.IGNORECASE,
+            )
+            network = re.compile(r"(?:\s*[\[(]?(?:全网通|[45]g版?|wifi版?)[\])]?)$", re.IGNORECASE)
+            previous = None
+            while name != previous:
+                previous = name
+                name = capacity.sub("", name)
+                name = network.sub("", name)
+                name = capacity.sub("", name)
+                name = plain_capacity.sub("", name).strip()
+            name = re.sub(r"\s+", "", name)
+            name = re.sub(r"[/_-]+$", "", name)
+            if brand and name.startswith(brand):
+                name = name[len(brand):]
+            fallback = row.get("手机ID") or row.get("id") or row.get("源记录ID") or ""
+            return f"{brand}|{name or fallback}"
+
+        def format_spu_sku(selected):
+            return f"{len({spu_key(row) for row in selected})} SPU / {len(selected)} SKU"
+
+        source_rows = lambda source: [
+            row for row in filtered if source in str(row.get("数据来源", ""))
+        ]
+        verified_rows = [
+            row for row in filtered
+            if re.fullmatch(r"[双三]源(?:一致|差异)", str(row.get("验证状态", ""))) is not None
+        ]
+        self.assertEqual(format_spu_sku(filtered), metrics["visibleCount"])
+        self.assertEqual(format_spu_sku(filtered), metrics["totalCount"])
+        self.assertEqual(format_spu_sku(source_rows("中关村在线")), metrics["zolCount"])
+        self.assertEqual(format_spu_sku(source_rows("太平洋电脑网")), metrics["pconlineCount"])
+        self.assertEqual(format_spu_sku(source_rows("CNMO")), metrics["cnmoCount"])
+        self.assertEqual(format_spu_sku(verified_rows), metrics["verifiedCount"])
+        self.assertIn("SPU 为去除容量及网络销售注记后的基础型号", metrics["coverageNote"])
+        self.assertEqual(spu_key(rows[-4]), spu_key(rows[-3]))
+        self.assertEqual(spu_key(rows[-2]), spu_key(rows[-1]))
+        self.assertNotEqual(spu_key(rows[-4]), spu_key(rows[-2]))
         self.assertIn(str(len(filtered)), metrics["dataMeta"])
 
 

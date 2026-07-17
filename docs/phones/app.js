@@ -243,6 +243,65 @@
     return String(value == null ? "" : value).toLowerCase();
   }
 
+  function spuKey(row) {
+    var brandAliases = {
+      "华为": "huawei", "荣耀": "honor", "小米": "xiaomi", "红米": "redmi",
+      "一加": "oneplus", "真我": "realme", "三星": "samsung", "苹果": "apple",
+      "努比亚": "nubia", "摩托罗拉": "motorola", "魅族": "meizu",
+      "联想": "lenovo", "索尼": "sony", "谷歌": "google", "中兴": "zte",
+      "华硕": "asus", "诺基亚": "nokia", "夏普": "sharp",
+      "步步高": "vivo", "poco": "xiaomi"
+    };
+    var brand = normalizeText(row["品牌"])
+      .replace(/\s+/g, "");
+    brand = brandAliases[brand] || brand;
+
+    var name = normalizeText(row["型号"] || row.name)
+      .replace(/[（）]/g, function (character) { return character === "（" ? "(" : ")"; })
+      .replace(/[＋／]/g, function (character) { return character === "＋" ? "+" : "/"; })
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!name) {
+      return brand + "|id:" + String(row["手机ID"] || row.id || row["源记录ID"] || "");
+    }
+
+    Object.keys(brandAliases).some(function (alias) {
+      if (name.indexOf(alias) === 0) {
+        name = brandAliases[alias] + name.slice(alias.length);
+        return true;
+      }
+      return false;
+    });
+
+    var capacitySuffix = /\((?:\d+\s*(?:[gt]b)?\s*[+/]\s*\d+\s*[gt]b|\d+\s*[gt]b)(?:\s*\/\s*(?:全网通|[45]g版?|wifi版?))*\)$/i;
+    var plainCapacitySuffix = /(?:^|\s)(?:\d+\s*(?:[gt]b)?\s*[+/]\s*\d+\s*[gt]b|\d+\s*[gt]b)$/i;
+    var networkSuffix = /(?:\s*[\[(]?(?:全网通|[45]g版?|wifi版?)[\])]?)$/i;
+    var previous;
+    do {
+      previous = name;
+      name = name
+        .replace(capacitySuffix, "")
+        .replace(networkSuffix, "")
+        .replace(capacitySuffix, "")
+        .replace(plainCapacitySuffix, "")
+        .trim();
+    } while (name !== previous);
+
+    name = name.replace(/\s+/g, "").replace(/[\/_-]+$/g, "");
+    if (brand && name.indexOf(brand) === 0) {
+      name = name.slice(brand.length);
+    }
+    return brand + "|" + (name || String(row["手机ID"] || row.id || row["源记录ID"] || ""));
+  }
+
+  function spuCount(rows) {
+    return new Set(rows.map(spuKey)).size;
+  }
+
+  function formatSpuSku(rows) {
+    return spuCount(rows) + " SPU / " + rows.length + " SKU";
+  }
+
   function numbersIn(value) {
     return String(value == null ? "" : value)
       .match(/\d+(?:\.\d+)?/g)
@@ -787,24 +846,25 @@
       state.page = pageCount;
     }
 
-    els.visibleCount.textContent = String(filtered.length);
-    els.totalCount.textContent = String(state.rows.length);
+    els.visibleCount.textContent = formatSpuSku(filtered);
+    els.totalCount.textContent = formatSpuSku(state.rows);
     els.columnCount.textContent = String(state.visibleColumns.size);
-    els.verifiedCount.textContent = String(state.rows.filter(function (row) {
+    var verifiedRows = state.rows.filter(function (row) {
       return /^[双三]源(?:一致|差异)$/.test(String(row["验证状态"] || ""));
-    }).length);
+    });
+    els.verifiedCount.textContent = formatSpuSku(verifiedRows);
     var multiUnverifiedCount = state.rows.filter(function (row) {
       return String(row["验证状态"] || "") === "多源未校验";
     }).length;
-    els.coverageNote.textContent = "来源卡片按记录覆盖统计；双源或三源仅统计已实际比对记录。另有 " + multiUnverifiedCount + " 条多源未校验，仅表示来源命中，不计为已验证。";
-    function sourceCoverage(source) {
+    els.coverageNote.textContent = "SPU 为去除容量及网络销售注记后的基础型号，SKU 为当前发布的容量配置记录；来源卡片按记录覆盖统计。双源或三源仅统计已实际比对记录，另有 " + multiUnverifiedCount + " 条多源未校验，仅表示来源命中，不计为已验证。";
+    function sourceRows(source) {
       return state.rows.filter(function (row) {
         return String(row["数据来源"] || "").indexOf(source) !== -1;
-      }).length;
+      });
     }
-    els.zolCount.textContent = String(sourceCoverage("中关村在线"));
-    els.pconlineCount.textContent = String(sourceCoverage("太平洋电脑网"));
-    els.cnmoCount.textContent = String(sourceCoverage("CNMO"));
+    els.zolCount.textContent = formatSpuSku(sourceRows("中关村在线"));
+    els.pconlineCount.textContent = formatSpuSku(sourceRows("太平洋电脑网"));
+    els.cnmoCount.textContent = formatSpuSku(sourceRows("CNMO"));
     els.pageInfo.textContent = "第 " + state.page + " / " + pageCount + " 页";
     els.pageJump.max = String(pageCount);
     els.pageJump.value = String(state.page);
