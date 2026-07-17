@@ -156,6 +156,8 @@ def check_budget_script(path: Path, errors: list[str]) -> None:
 def check_merge_workflow(path: Path, errors: list[str]) -> None:
     data = load_yaml(path)
     text = path.read_text(encoding="utf-8")
+    push_branches = data.get(True, {}).get("push", {}).get("branches", [])
+    assert_condition(push_branches == ["main"], "merge-and-deploy.yml push must be limited to main", errors)
     assert_condition(
         'CNMO_DONE="crawl_state/cnmo_${CRAWL_PERIOD}.done"' in text
         and '[ -f "$CNMO_DONE" ]' in text

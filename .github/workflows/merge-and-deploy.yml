@@ -27,6 +27,8 @@ on:
         required: false
         default: ''
   push:
+    branches:
+      - main
     paths:
       - 'data/zol_phones_*.json'
       - 'data/pconline_phones_*.json'
