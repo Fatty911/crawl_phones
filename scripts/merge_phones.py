@@ -78,10 +78,16 @@ HEADER_MAP = {
     '运行内存(RAM)': '内存',
     '内存': '内存',
     '运存类型': '内存',
+    'RAM存储类型': '内存',
     'ROM容量': '存储',
     '机身存储': '存储',
     '机身容量': '存储',
     '存储': '存储',
+    'ROM存储类型': '存储',
+    '存储类型': '存储',
+    '存储卡': '存储',
+    '扩展卡': '存储',
+    '扩展容量': '存储',
     '机身尺寸': '机身尺寸',
     '尺寸': '机身尺寸',
     '长度': '机身长度',
@@ -316,6 +322,21 @@ def clean_value(value):
     text = str(value)
     text = text.replace('纠错', '')
     text = re.sub(r'\s+', ' ', text).strip()
+    return text if text else '-'
+
+
+def clean_spec_value(field, value):
+    text = clean_value(value)
+    if field not in ('内存', '存储') or text == '-':
+        return text
+    if field == '内存':
+        text = re.sub(r'游戏运行(?:流畅|良好)', '', text)
+    else:
+        text = re.sub(r'(?:约)?\d+(?:\.\d+)?万张照片', '', text)
+        text = re.sub(r'(?:约)?\d+(?:\.\d+)?万首歌曲', '', text)
+        text = text.replace('无扩展卡功能', '不支持容量扩展')
+    text = re.sub(r'[（(]\s*[、,，/|•>；;]*\s*[）)]', '', text)
+    text = re.sub(r'\s*[、,，/|•>；;]+\s*', '|', text).strip(' |')
     return text if text else '-'
 
 def is_missing(value):
@@ -643,7 +664,8 @@ def model_key(row):
         return ''
     # 先在保留空格的原文本中删除容量尾巴，避免把 Pura 90 12GB+512GB 误读成 Pura 9012GB+512GB。
     name = re.sub(
-        r'[（(](?:\d+\s*(?:[gt]b)?\s*[+/]+\s*\d+\s*[gt]b?|\d+\s*[gt]b?)[)）]',
+        r'[（(](?:\d+\s*(?:[gt]b)?\s*[+/]+\s*\d+\s*[gt]b?|\d+\s*[gt]b?)'
+        r'(?:\s*/\s*(?:全网通|[45]g版|wifi版))*[)）]',
         '',
         name,
         flags=re.IGNORECASE,
@@ -918,11 +940,11 @@ def norm_rows(rows, source):
                 continue
             unified = norm(key)
             if unified in normalized and normalized[unified] not in ('', '-'):
-                value = clean_value(val)
+                value = clean_spec_value(unified, val)
                 if value not in ('', '-') and value != normalized[unified]:
                     normalized[unified] = f"{normalized[unified]}|{value}"
             else:
-                normalized[unified] = clean_value(val)
+                normalized[unified] = clean_spec_value(unified, val)
 
         add_derived_fields(normalized)
 

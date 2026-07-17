@@ -832,6 +832,30 @@ class MergeCnmoCoverageTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.merge = load_script_module("merge_phones_regression", ROOT / "scripts" / "merge_phones.py")
 
+    def test_memory_and_storage_keep_only_objective_specifications(self) -> None:
+        row = self.merge.norm_rows(
+            [
+                {
+                    "型号": "测试手机",
+                    "内存": "16GB>游戏运行流畅纠错",
+                    "RAM存储类型": "LPDDR5X Ultra>纠错",
+                    "存储": "256GB>5.2万张照片2.2万首歌曲纠错",
+                    "ROM存储类型": "UFS 4.0>纠错",
+                    "存储卡": "无扩展卡功能>纠错",
+                }
+            ],
+            "中关村在线",
+        )[0]
+
+        self.assertEqual("16GB|LPDDR5X Ultra", row["内存"])
+        self.assertEqual("256GB|UFS 4.0|不支持容量扩展", row["存储"])
+        self.assertNotIn("游戏运行", row["内存"])
+        self.assertNotRegex(row["存储"], r"照片|歌曲")
+
+    def test_pure_memory_and_storage_marketing_copy_becomes_missing(self) -> None:
+        self.assertEqual("-", self.merge.clean_spec_value("内存", "游戏运行良好纠错"))
+        self.assertEqual("-", self.merge.clean_spec_value("存储", "约5.2万张照片、2.2万首歌曲纠错"))
+
     def test_matching_capacity_adds_cnmo_coverage_without_faking_verification(self) -> None:
         base = [
             {"型号": "测试 Pro（8GB/256GB）", "数据来源": "中关村在线", "验证状态": "单源"},
@@ -925,7 +949,7 @@ class MergeCnmoCoverageTests(unittest.TestCase):
         self.assertEqual("中关村在线+CNMO", base[0]["数据来源"])
         self.assertEqual("多源未校验", base[0]["验证状态"])
 
-    def test_capacity_parentheses_with_5g_annotation_do_not_match_plain_capacity(self) -> None:
+    def test_capacity_parentheses_with_network_annotation_match_plain_capacity(self) -> None:
         base = [
             {
                 "型号": "测试 Pro（12GB/1TB/5G版）",
@@ -936,11 +960,15 @@ class MergeCnmoCoverageTests(unittest.TestCase):
         extra = [{"型号": "测试 Pro(12+1T)", "数据来源": "CNMO", "验证状态": "单源"}]
         appended, matched = self.merge.append_unique_single_source(base, extra, "CNMO")
 
-        self.assertNotEqual(self.merge.model_key(base[0]), self.merge.model_key(extra[0]))
+        self.assertEqual(self.merge.model_key(base[0]), self.merge.model_key(extra[0]))
+        self.assertEqual([], appended)
+        self.assertEqual(1, matched)
+        self.assertEqual("中关村在线+CNMO", base[0]["数据来源"])
+
+        different_capacity = [{"型号": "测试 Pro(8+1T)", "数据来源": "CNMO", "验证状态": "单源"}]
+        appended, matched = self.merge.append_unique_single_source(base, different_capacity, "CNMO")
         self.assertEqual(0, matched)
         self.assertEqual(1, len(appended))
-        self.assertEqual("中关村在线", base[0]["数据来源"])
-        self.assertEqual("CNMO", appended[0]["数据来源"])
 
     def test_capacity_signature_must_not_match_a_capacity_unknown_base_row(self) -> None:
         base = [{"型号": "测试 Pro", "数据来源": "中关村在线", "验证状态": "单源"}]
