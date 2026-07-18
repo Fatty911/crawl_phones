@@ -11,14 +11,24 @@ from pathlib import Path
 from typing import Any
 
 from merge_phones import clean_spec_value
-from verify_publish_superset import identity_key, identity_keys, load_rows, verify_superset
+from verify_publish_superset import (
+    identity_key,
+    identity_keys,
+    is_excluded_cnmo_single_source,
+    load_rows,
+    verify_superset,
+)
 
 
 def preserve_baseline(
     baseline: list[dict[str, Any]], candidate: list[dict[str, Any]]
 ) -> tuple[list[dict[str, Any]], list[str]]:
     candidate_ids = {key for row in candidate for key in identity_keys(row)}
-    missing_rows = [row for row in baseline if identity_key(row) not in candidate_ids]
+    missing_rows = [
+        row for row in baseline
+        if not is_excluded_cnmo_single_source(row)
+        and identity_key(row) not in candidate_ids
+    ]
     merged = [*candidate, *(dict(row) for row in missing_rows)]
     for row in merged:
         for field in ("内存", "存储"):

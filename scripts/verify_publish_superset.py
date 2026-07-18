@@ -17,7 +17,13 @@ CNMO_SINGLE_SOURCE_ALLOWED_BRANDS = {
     "一加", "真我", "魅族", "中兴", "努比亚", "联想", "摩托罗拉",
     "乐视", "金立", "蔚来", "鼎桥", "魅蓝", "酷派", "海信", "WIKO",
     "麦芒", "华硕", "黑鲨", "NZONE", "Hi nova", "天翼铂顿",
+    "多亲",
 }
+PUBLISH_SPEC_FIELDS = (
+    "处理器", "内存", "存储", "屏幕", "电池", "摄像头参数",
+    "机身尺寸", "机身厚度", "机身重量", "网络类型", "机身接口", "有线充电",
+)
+CNMO_MIN_PUBLISH_SPEC_COUNT = 2
 
 BRAND_PATTERNS = [
     ("苹果", ["iphone", "ipad", "apple"]),
@@ -43,6 +49,7 @@ BRAND_PATTERNS = [
     ("魅蓝", ["魅蓝"]),
     ("酷派", ["酷派", "coolpad", "cool "]),
     ("海信", ["海信", "hisense"]),
+    ("多亲", ["多亲", "qin3", "qin 3"]),
     ("WIKO", ["wiko", "hi 畅享", "hi畅享"]),
     ("麦芒", ["麦芒"]),
     ("Hi nova", ["hi nova", "hinova"]),
@@ -56,6 +63,7 @@ BRAND_ALIASES = {
     "apple": "苹果", "iphone": "苹果", "samsung": "三星", "redmi": "红米",
     "xiaomi": "小米", "oppo": "OPPO", "vivo": "vivo", "iqoo": "iQOO",
     "oneplus": "一加", "realme": "真我", "huawei": "华为", "honor": "荣耀",
+    "qin": "多亲",
 }
 
 
@@ -83,6 +91,30 @@ def is_out_of_scope_cnmo_single_source(row: dict[str, Any]) -> bool:
         return False
     brand = derive_brand(row.get("品牌")) or derive_brand(row.get("型号") or row.get("name"))
     return brand not in CNMO_SINGLE_SOURCE_ALLOWED_BRANDS
+
+
+def is_meaningful_publish_spec(value: Any) -> bool:
+    text = unicodedata.normalize("NFKC", str(value or "")).strip().casefold()
+    if text in {"", "-", "--", "/", "n/a", "null", "暂无", "无", "未知"}:
+        return False
+    residue = re.sub(r"[\s\-—_/|•>；;：:,，]+", "", text)
+    residue = re.sub(r"(?:核心数|运行内存|处理器|屏幕|电池|内存|存储)", "", residue)
+    return residue not in {"", "无", "不支持", "否", "暂无", "未知", "null", "n/a"}
+
+
+def is_low_quality_cnmo_single_source(row: dict[str, Any]) -> bool:
+    source = str(row.get("数据来源") or row.get("source") or "").strip()
+    if source != "CNMO":
+        return False
+    count = sum(is_meaningful_publish_spec(row.get(field)) for field in PUBLISH_SPEC_FIELDS)
+    return count < CNMO_MIN_PUBLISH_SPEC_COUNT
+
+
+def is_excluded_cnmo_single_source(row: dict[str, Any]) -> bool:
+    return (
+        is_out_of_scope_cnmo_single_source(row)
+        or is_low_quality_cnmo_single_source(row)
+    )
 
 
 def identity_key(row: dict[str, Any]) -> str:
@@ -134,7 +166,7 @@ def load_rows(path: Path) -> list[dict[str, Any]]:
 def verify_superset(
     baseline: list[dict[str, Any]], candidate: list[dict[str, Any]]
 ) -> None:
-    scoped_baseline = [row for row in baseline if not is_out_of_scope_cnmo_single_source(row)]
+    scoped_baseline = [row for row in baseline if not is_excluded_cnmo_single_source(row)]
     baseline_ids = set()
     for row in scoped_baseline:
         keys = identity_keys(row)

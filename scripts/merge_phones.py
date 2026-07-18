@@ -30,6 +30,13 @@ FIXED = [
 VALIDATION_FIELDS = ('处理器', '内存', '存储', '屏幕', '电池', '摄像头参数', '上市时间')
 VALIDATION_MISSING_VALUES = {'', '-', '--', '/', 'n/a', 'null', '暂无', '无', '未知'}
 SOURCE_VALIDATION_ROWS_FIELD = '_source_validation_rows'
+FAMILY_CONFIG_MISMATCH_STATUS = '型号多源（配置未匹配）'
+FAMILY_CONFIG_MISMATCH_DIFFERENCE = '同一基础型号在其他来源存在，但内存/存储配置未一一匹配'
+PUBLISH_SPEC_FIELDS = (
+    '处理器', '内存', '存储', '屏幕', '电池', '摄像头参数',
+    '机身尺寸', '机身厚度', '机身重量', '网络类型', '机身接口', '有线充电',
+)
+CNMO_MIN_PUBLISH_SPEC_COUNT = 2
 
 HEADER_MAP = {
     '国内发布时间': '上市时间',
@@ -39,6 +46,7 @@ HEADER_MAP = {
     '电商报价': '价格',
     '售价': '价格',
     '报价': '价格',
+    'brand': '品牌',
     '手机名称': '型号',
     'name': '型号',
     '产品名称': '型号',
@@ -131,10 +139,30 @@ def is_future_release(row, today=None):
     return False
 
 
+def is_meaningful_publish_spec(value):
+    if is_validation_missing(value):
+        return False
+    text = unicodedata.normalize('NFKC', str(value)).strip().casefold()
+    residue = re.sub(r'[\s\-—_/|•>；;：:,，]+', '', text)
+    residue = re.sub(r'(?:核心数|运行内存|处理器|屏幕|电池|内存|存储)', '', residue)
+    return residue not in {'', '无', '不支持', '否', '暂无', '未知', 'null', 'n/a'}
+
+
+def publish_spec_count(row):
+    return sum(is_meaningful_publish_spec(row.get(field)) for field in PUBLISH_SPEC_FIELDS)
+
+
+def is_low_quality_cnmo_single_source(row):
+    source = str(row.get('数据来源') or row.get('source') or '').strip()
+    return source == 'CNMO' and publish_spec_count(row) < CNMO_MIN_PUBLISH_SPEC_COUNT
+
+
 def guard_publish_rows(rows, source=None, today=None):
     guarded = []
     for row in rows:
         if is_future_release(row, today):
+            continue
+        if source == 'CNMO' and publish_spec_count(row) < CNMO_MIN_PUBLISH_SPEC_COUNT:
             continue
         clean = dict(row)
         if source == 'CNMO':
@@ -213,6 +241,8 @@ BRAND_ALIASES = {
     'coolpad': '酷派',
     '海信': '海信',
     'hisense': '海信',
+    '多亲': '多亲',
+    'qin': '多亲',
     'wiko': 'WIKO',
     '麦芒': '麦芒',
     '华硕': '华硕',
@@ -229,6 +259,7 @@ CNMO_SINGLE_SOURCE_ALLOWED_BRANDS = {
     '一加', '真我', '魅族', '中兴', '努比亚', '联想', '摩托罗拉',
     '乐视', '金立', '蔚来', '鼎桥', '魅蓝', '酷派', '海信', 'WIKO',
     '麦芒', '华硕', '黑鲨', 'NZONE', 'Hi nova', '天翼铂顿',
+    '多亲',
 }
 
 # 从型号名推导品牌的模式（按优先级排序，越具体越靠前）
@@ -261,6 +292,7 @@ BRAND_PATTERNS = [
     ('魅蓝', ['魅蓝']),
     ('酷派', ['酷派', 'coolpad', 'cool ']),
     ('海信', ['海信', 'hisense']),
+    ('多亲', ['多亲', 'qin3', 'qin 3']),
     ('WIKO', ['wiko', 'hi 畅享', 'hi畅享']),
     ('麦芒', ['麦芒']),
     ('Hi nova', ['hi nova', 'hinova']),
@@ -918,17 +950,25 @@ def norm_rows(rows, source):
         for key in ['品牌', '型号', '手机ID', '上市时间', '价格']:
             if key in row:
                 normalized[key] = row[key]
-        
-        # 关键修复：品牌归一化
-        if '品牌' in row:
-            normalized['品牌'] = normalize_brand(row['品牌'])
+
+        raw_brand = row.get('品牌') or row.get('brand')
+        if raw_brand:
+            normalized['品牌'] = normalize_brand(raw_brand)
         
         if 'name' in row and '型号' not in normalized:
             normalized['型号'] = row['name']
         if 'id' in row and '手机ID' not in normalized:
             normalized['手机ID'] = row['id']
 
-        # 品牌回填：如果爬虫未提供品牌，从型号名推导
+        model_name = normalized.get('型号', '')
+        source_name = row.get('name', '')
+        if model_name and source_name and not derive_brand_from_name(model_name):
+            source_brand = derive_brand_from_name(source_name)
+            compact_model = re.sub(r'\s+', '', str(model_name)).casefold()
+            compact_source = re.sub(r'\s+', '', str(source_name)).casefold()
+            if source_brand and compact_model and compact_model in compact_source:
+                normalized['型号'] = clean_value(source_name)
+
         if not normalized.get('品牌') or normalized['品牌'] == '-':
             model_name = normalized.get('型号', row.get('name', ''))
             derived = derive_brand_from_name(model_name)
@@ -936,7 +976,7 @@ def norm_rows(rows, source):
                 normalized['品牌'] = normalize_brand(derived)
 
         for key, val in row.items():
-            if key in FIXED or key in ['id', 'name', 'url', 'crawl_time', 'param_url', 'phone_id']:
+            if key in FIXED or key in ['id', 'name', 'brand', 'url', 'crawl_time', 'param_url', 'phone_id']:
                 continue
             unified = norm(key)
             if unified in normalized and normalized[unified] not in ('', '-'):
@@ -965,6 +1005,16 @@ def merge_verified_rows(zol_rows, pconline_rows, all_fields):
         if fuzzy and fuzzy != exact:
             pconline_fuzzy.setdefault(fuzzy, []).append(row)
     used_pconline = set()
+    zol_exact_families = {model_key(row) for row in zol_rows if model_key(row)}
+    zol_fuzzy_families = {fuzzy_model_key(row) for row in zol_rows if fuzzy_model_key(row)}
+
+    def has_family_match(row, exact_families, fuzzy_families):
+        exact = model_key(row)
+        fuzzy = fuzzy_model_key(row)
+        return bool(
+            (exact and exact in exact_families)
+            or (fuzzy and fuzzy in fuzzy_families)
+        )
 
     def row_identity(row):
         return (
@@ -1041,8 +1091,14 @@ def merge_verified_rows(zol_rows, pconline_rows, all_fields):
             continue
         row = dict(zol_row)
         row['数据来源'] = '中关村在线'
-        row['验证状态'] = '单源'
-        row.setdefault('交叉验证差异', '-')
+        has_pconline_family = bool(
+            pconline_exact.get(key)
+            or pconline_fuzzy.get(fuzzy_model_key(zol_row))
+        )
+        row['验证状态'] = FAMILY_CONFIG_MISMATCH_STATUS if has_pconline_family else '单源'
+        row['交叉验证差异'] = (
+            FAMILY_CONFIG_MISMATCH_DIFFERENCE if has_pconline_family else '-'
+        )
         row[SOURCE_VALIDATION_ROWS_FIELD] = {'中关村在线': zol_row}
         merged.append(row)
 
@@ -1054,8 +1110,13 @@ def merge_verified_rows(zol_rows, pconline_rows, all_fields):
         if '品牌' in row:
             row['品牌'] = normalize_brand(row['品牌'])
         row['数据来源'] = '太平洋电脑网'
-        row['验证状态'] = '单源'
-        row.setdefault('交叉验证差异', '-')
+        has_zol_family = has_family_match(
+            pconline_row, zol_exact_families, zol_fuzzy_families
+        )
+        row['验证状态'] = FAMILY_CONFIG_MISMATCH_STATUS if has_zol_family else '单源'
+        row['交叉验证差异'] = (
+            FAMILY_CONFIG_MISMATCH_DIFFERENCE if has_zol_family else '-'
+        )
         row[SOURCE_VALIDATION_ROWS_FIELD] = {'太平洋电脑网': pconline_row}
         merged.append(row)
 
@@ -1118,8 +1179,10 @@ def append_unique_single_source(base_rows, extra_rows, source):
         if '品牌' in row:
             row['品牌'] = normalize_brand(row['品牌'])
         row['数据来源'] = source
-        row['验证状态'] = '单源'
-        row.setdefault('交叉验证差异', '-')
+        row['验证状态'] = FAMILY_CONFIG_MISMATCH_STATUS if candidates else '单源'
+        row['交叉验证差异'] = (
+            FAMILY_CONFIG_MISMATCH_DIFFERENCE if candidates else '-'
+        )
         row[SOURCE_VALIDATION_ROWS_FIELD] = {source: extra_row}
         appended.append(row)
         if identity:
@@ -1190,7 +1253,15 @@ def main():
     pconline_rows = guard_publish_rows(norm_rows(load_all("data/pconline_phones_*.json"), '太平洋电脑网'))
     raw_cnmo_rows = norm_rows(load_all("data/cnmo_phones_*.json", prefer_latest=True), 'CNMO')
     cnmo_rows = guard_publish_rows(raw_cnmo_rows, source='CNMO')
-    print(f"发布防御丢弃未来上市: CNMO {len(raw_cnmo_rows) - len(cnmo_rows)} 条；CNMO价格仅保留数值或空")
+    cnmo_future_count = sum(is_future_release(row) for row in raw_cnmo_rows)
+    cnmo_low_quality_count = sum(
+        not is_future_release(row) and is_low_quality_cnmo_single_source(row)
+        for row in raw_cnmo_rows
+    )
+    print(
+        f"发布防御丢弃: CNMO未来上市 {cnmo_future_count} 条，"
+        f"低质量空壳 {cnmo_low_quality_count} 条；CNMO价格仅保留数值或空"
+    )
 
     if not zol_rows and not pconline_rows and not cnmo_rows:
         print("错误: 没有找到任何数据文件")

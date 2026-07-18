@@ -78,18 +78,56 @@ class PublishSupersetTests(unittest.TestCase):
     def test_out_of_scope_cnmo_single_source_baseline_is_not_required(self) -> None:
         baseline = [
             {"手机ID": "pixel-cnmo", "型号": "谷歌Pixel 8 Pro", "品牌": "谷歌", "数据来源": "CNMO"},
-            {"手机ID": "hinova-cnmo", "型号": "Hi nova 10 Pro(8+256GB)", "品牌": "", "数据来源": "CNMO"},
-            {"手机ID": "honor-cnmo", "型号": "荣耀X80i(8GB+256GB)", "品牌": "荣耀", "数据来源": "CNMO"},
+            {
+                "手机ID": "hinova-cnmo",
+                "型号": "Hi nova 10 Pro(8+256GB)",
+                "品牌": "",
+                "数据来源": "CNMO",
+                "处理器": "骁龙 778G",
+                "屏幕": "6.78英寸",
+            },
+            {
+                "手机ID": "honor-cnmo",
+                "型号": "荣耀X80i(8GB+256GB)",
+                "品牌": "荣耀",
+                "数据来源": "CNMO",
+                "处理器": "天玑 7025",
+                "屏幕": "6.7英寸",
+            },
         ]
-        candidate = [
-            {"手机ID": "hinova-cnmo", "型号": "Hi nova 10 Pro(8+256GB)", "品牌": "", "数据来源": "CNMO"},
-            {"手机ID": "honor-cnmo", "型号": "荣耀X80i(8GB+256GB)", "品牌": "荣耀", "数据来源": "CNMO"},
-        ]
+        candidate = baseline[1:]
 
         self.verify.verify_superset(baseline, candidate)
 
         with self.assertRaisesRegex(ValueError, "缺少基线身份"):
             self.verify.verify_superset(baseline, [{"手机ID": "other", "型号": "其它"}])
+
+    def test_low_quality_cnmo_single_source_baseline_is_not_required(self) -> None:
+        baseline = [
+            {
+                "手机ID": "hisense-a10",
+                "型号": "海信 A10",
+                "品牌": "海信",
+                "数据来源": "CNMO",
+                "处理器": "-- ；核心数：--",
+                "内存": "--",
+                "屏幕": "--",
+            },
+            {
+                "手机ID": "honor-rich",
+                "型号": "荣耀X80i(8GB+256GB)",
+                "品牌": "荣耀",
+                "数据来源": "CNMO",
+                "处理器": "天玑 7025",
+                "屏幕": "6.7英寸",
+            },
+        ]
+        candidate = [baseline[1]]
+
+        self.verify.verify_superset(baseline, candidate)
+
+        with self.assertRaisesRegex(ValueError, "缺少基线身份"):
+            self.verify.verify_superset(baseline, [])
 
     def test_cli_rejects_invalid_or_non_list_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -175,6 +213,44 @@ class PreservePublishBaselineTests(unittest.TestCase):
         self.assertEqual("16GB|LPDDR5X Ultra", restored[1]["内存"])
         self.assertEqual("256GB|UFS 4.0", restored[1]["存储"])
         self.assertNotRegex(csv_text, r"游戏运行|首歌曲")
+
+    def test_cli_does_not_restore_low_quality_cnmo_placeholder_shell(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            baseline = tmp_path / "baseline.json"
+            candidate = tmp_path / "candidate.json"
+            candidate_csv = tmp_path / "candidate.csv"
+            baseline.write_text(
+                json.dumps(
+                    [
+                        {
+                            "手机ID": "hisense-a10",
+                            "型号": "海信 A10",
+                            "品牌": "海信",
+                            "数据来源": "CNMO",
+                            "处理器": "-- ；核心数：--",
+                            "内存": "--",
+                            "屏幕": "--",
+                        }
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            candidate.write_text(json.dumps([{"手机ID": "1"}]), encoding="utf-8")
+            candidate_csv.write_text("手机ID\n1\n", encoding="utf-8")
+
+            result = subprocess.run(
+                [sys.executable, str(PRESERVE_SCRIPT), str(baseline), str(candidate), str(candidate_csv)],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            restored = json.loads(candidate.read_text(encoding="utf-8"))
+
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertEqual(["1"], [row["手机ID"] for row in restored])
+        self.assertIn("restored=0", result.stdout)
 
 
 class WorkflowSafetyContractTests(unittest.TestCase):

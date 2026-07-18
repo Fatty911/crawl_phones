@@ -856,7 +856,10 @@
     var multiUnverifiedCount = state.rows.filter(function (row) {
       return String(row["验证状态"] || "") === "多源未校验";
     }).length;
-    els.coverageNote.textContent = "SPU 为去除容量及网络销售注记后的基础型号，SKU 为当前发布的容量配置记录；来源卡片按记录覆盖统计。双源或三源仅统计已实际比对记录，另有 " + multiUnverifiedCount + " 条多源未校验，仅表示来源命中，不计为已验证。";
+    var familyConfigMismatchCount = state.rows.filter(function (row) {
+      return String(row["验证状态"] || "") === "型号多源（配置未匹配）";
+    }).length;
+    els.coverageNote.textContent = "SPU 为去除容量及网络销售注记后的基础型号，SKU 为当前发布的容量配置记录；来源卡片按记录覆盖统计。双源或三源仅统计已实际比对记录，另有 " + familyConfigMismatchCount + " 条型号多源但配置未匹配，仍保留为独立 SKU 且不计入已验证；另有 " + multiUnverifiedCount + " 条多源未校验，仅表示来源命中，不计为已验证。";
     function sourceRows(source) {
       return state.rows.filter(function (row) {
         return String(row["数据来源"] || "").indexOf(source) !== -1;

@@ -227,6 +227,8 @@ setTimeout(() => {
         self.assertEqual(format_spu_sku(source_rows("CNMO")), metrics["cnmoCount"])
         self.assertEqual(format_spu_sku(verified_rows), metrics["verifiedCount"])
         self.assertIn("SPU 为去除容量及网络销售注记后的基础型号", metrics["coverageNote"])
+        self.assertIn("型号多源但配置未匹配", metrics["coverageNote"])
+        self.assertIn("仍保留为独立 SKU", metrics["coverageNote"])
         self.assertEqual(spu_key(rows[-4]), spu_key(rows[-3]))
         self.assertEqual(spu_key(rows[-2]), spu_key(rows[-1]))
         self.assertNotEqual(spu_key(rows[-4]), spu_key(rows[-2]))
@@ -949,6 +951,27 @@ class MergeCnmoCoverageTests(unittest.TestCase):
         self.assertEqual("-", self.merge.clean_spec_value("内存", "游戏运行良好纠错"))
         self.assertEqual("-", self.merge.clean_spec_value("存储", "约5.2万张照片、2.2万首歌曲纠错"))
 
+    def test_raw_english_brand_and_full_name_backfill_short_pconline_model(self) -> None:
+        normalized = self.merge.norm_rows(
+            [{"型号": "Z11i", "name": "iQOO Z11i", "brand": "iqoo"}],
+            "太平洋电脑网",
+        )[0]
+
+        self.assertEqual("iQOO", normalized["品牌"])
+        self.assertEqual("iQOO Z11i", normalized["型号"])
+        self.assertEqual(
+            self.merge.model_key({"型号": "iQOO Z11i(8GB/256GB)"}),
+            self.merge.model_key(normalized),
+        )
+
+    def test_qin_model_backfills_duoqin_brand(self) -> None:
+        normalized = self.merge.norm_rows(
+            [{"型号": "多亲Qin3 ultra（8GB/256GB）"}],
+            "中关村在线",
+        )[0]
+
+        self.assertEqual("多亲", normalized["品牌"])
+
     def test_matching_capacity_adds_cnmo_coverage_without_faking_verification(self) -> None:
         base = [
             {"型号": "测试 Pro（8GB/256GB）", "数据来源": "中关村在线", "验证状态": "单源"},
@@ -1062,6 +1085,11 @@ class MergeCnmoCoverageTests(unittest.TestCase):
         appended, matched = self.merge.append_unique_single_source(base, different_capacity, "CNMO")
         self.assertEqual(0, matched)
         self.assertEqual(1, len(appended))
+        self.assertEqual(self.merge.FAMILY_CONFIG_MISMATCH_STATUS, appended[0]["验证状态"])
+        self.assertEqual(
+            self.merge.FAMILY_CONFIG_MISMATCH_DIFFERENCE,
+            appended[0]["交叉验证差异"],
+        )
 
     def test_capacity_signature_must_not_match_a_capacity_unknown_base_row(self) -> None:
         base = [{"型号": "测试 Pro", "数据来源": "中关村在线", "验证状态": "单源"}]
@@ -1101,6 +1129,12 @@ class MergeCnmoCoverageTests(unittest.TestCase):
 
         self.assertEqual(2, len(merged))
         self.assertEqual(["中关村在线", "太平洋电脑网"], [row["数据来源"] for row in merged])
+        self.assertTrue(
+            all(
+                row["验证状态"] == self.merge.FAMILY_CONFIG_MISMATCH_STATUS
+                for row in merged
+            )
+        )
 
     def test_zol_pconline_matching_one_capacity_does_not_drop_other_pconline_variants(self) -> None:
         zol = [{"型号": "测试 Pro（8GB/256GB）", "品牌": "测试", "数据来源": "中关村在线"}]
@@ -1115,6 +1149,10 @@ class MergeCnmoCoverageTests(unittest.TestCase):
         self.assertEqual(2, len(merged))
         self.assertEqual("中关村在线+太平洋电脑网", merged[0]["数据来源"])
         self.assertEqual("太平洋电脑网", merged[1]["数据来源"])
+        self.assertEqual(
+            self.merge.FAMILY_CONFIG_MISMATCH_STATUS,
+            merged[1]["验证状态"],
+        )
 
     def test_trailing_capacity_text_is_removed_without_merging_plus_models(self) -> None:
         equal_pairs = [
@@ -1157,7 +1195,22 @@ class MergeCnmoCoverageTests(unittest.TestCase):
         self.assertEqual(0, matched)
         self.assertEqual(1, len(appended))
         self.assertEqual("CNMO", appended[0]["数据来源"])
+        self.assertEqual(self.merge.FAMILY_CONFIG_MISMATCH_STATUS, appended[0]["验证状态"])
+        self.assertEqual(
+            self.merge.FAMILY_CONFIG_MISMATCH_DIFFERENCE,
+            appended[0]["交叉验证差异"],
+        )
         self.assertTrue(all("CNMO" not in row["数据来源"] for row in base))
+
+    def test_unmatched_model_family_remains_single_source(self) -> None:
+        base = [{"型号": "测试 Pro（8GB/256GB）", "数据来源": "中关村在线"}]
+        extra = [{"型号": "另一款手机(8GB+256GB)", "数据来源": "CNMO"}]
+
+        appended, matched = self.merge.append_unique_single_source(base, extra, "CNMO")
+
+        self.assertEqual(0, matched)
+        self.assertEqual("单源", appended[0]["验证状态"])
+        self.assertEqual("-", appended[0]["交叉验证差异"])
 
     def test_cnmo_load_all_prefers_latest_dated_row(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1181,13 +1234,50 @@ class MergeCnmoCoverageTests(unittest.TestCase):
     def test_publish_guard_drops_future_rows_and_sanitizes_cnmo_price(self) -> None:
         run_day = self.merge.date(2026, 7, 12)
         rows = [
-            {"型号": "今天", "上市时间": "2026年07月12日", "价格": "￥3999"},
-            {"型号": "未来月", "上市时间": "2026年08月", "价格": "2026年08月"},
-            {"型号": "未知", "上市时间": "待定", "价格": "暂无报价"},
+            {
+                "型号": "今天",
+                "上市时间": "2026年07月12日",
+                "价格": "￥3999",
+                "处理器": "测试处理器",
+                "屏幕": "6.7英寸",
+            },
+            {
+                "型号": "未来月",
+                "上市时间": "2026年08月",
+                "价格": "2026年08月",
+                "处理器": "测试处理器",
+                "屏幕": "6.7英寸",
+            },
+            {
+                "型号": "未知",
+                "上市时间": "待定",
+                "价格": "暂无报价",
+                "处理器": "测试处理器",
+                "屏幕": "6.7英寸",
+            },
         ]
         guarded = self.merge.guard_publish_rows(rows, source="CNMO", today=run_day)
         self.assertEqual(["今天", "未知"], [row["型号"] for row in guarded])
         self.assertEqual(["3999", ""], [row["价格"] for row in guarded])
+
+    def test_publish_guard_drops_cnmo_placeholder_shell_but_keeps_real_specs(self) -> None:
+        rows = [
+            {
+                "型号": "海信 A10",
+                "处理器": "-- ；核心数：--",
+                "内存": "--",
+                "屏幕": "--",
+            },
+            {
+                "型号": "有效手机",
+                "处理器": "骁龙 8 Elite",
+                "屏幕": "6.7英寸 OLED",
+            },
+        ]
+
+        guarded = self.merge.guard_publish_rows(rows, source="CNMO")
+
+        self.assertEqual(["有效手机"], [row["型号"] for row in guarded])
 
 
 class PagesPaginationContractTests(unittest.TestCase):
@@ -1200,6 +1290,7 @@ class PagesPaginationContractTests(unittest.TestCase):
         self.assertIn('id="jumpPage"', html)
         self.assertIn("function jumpToPage()", script)
         self.assertIn("多源未校验", script)
+        self.assertIn("型号多源（配置未匹配）", script)
 
     def test_pages_count_two_and_three_source_comparisons_as_verified(self) -> None:
         script = (ROOT / "docs/phones/app.js").read_text(encoding="utf-8")
