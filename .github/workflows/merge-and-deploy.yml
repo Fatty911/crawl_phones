@@ -45,6 +45,10 @@ permissions:
   contents: write
   actions: read
 
+concurrency:
+  group: merge-and-deploy-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   check-half-month-complete:
     runs-on: ubuntu-latest
@@ -506,7 +510,16 @@ jobs:
             if git push; then
               echo "✅ git push 成功"
             else
-              echo "❌ git push 失败（可能是权限问题）"
+              echo "⚠️ git push 失败，尝试 pull --rebase 后重试..."
+              for i in 1 2 3; do
+                if git pull --rebase origin main && git push; then
+                  echo "✅ 重试 $i 成功"
+                  exit 0
+                fi
+                echo "⚠️ 重试 $i 失败，等待后重试..."
+                sleep $((RANDOM % 10 + 5))
+              done
+              echo "❌ git push 最终失败"
               exit 1
             fi
           fi
