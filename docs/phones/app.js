@@ -824,15 +824,11 @@
         container.appendChild(chip);
       }
     });
-    if (row["验证状态"] === "三源一致") {
+    var vs = row["验证状态"] || "";
+    if (vs && vs !== "单源") {
       var badge = document.createElement("span");
-      badge.className = "verified-badge triple-source";
-      badge.textContent = "三源一致";
-      container.appendChild(badge);
-    } else if (row["验证状态"] === "双源一致") {
-      var badge = document.createElement("span");
-      badge.className = "verified-badge dual-source";
-      badge.textContent = "双源一致";
+      badge.className = "verified-badge multi-source";
+      badge.textContent = vs;
       container.appendChild(badge);
     }
   }
@@ -924,11 +920,10 @@
     els.visibleCount.textContent = String(filtered.length);
     els.totalCount.textContent = String(state.rows.length);
     els.columnCount.textContent = String(state.visibleColumns.size);
-    var tripleCount = state.rows.filter(function (row) { return row["验证状态"] === "三源一致"; }).length;
-    var dualCount = state.rows.filter(function (row) { return row["验证状态"] === "双源一致"; }).length;
+    var multiSourceCount = state.rows.filter(function (row) { return row["验证状态"] && row["验证状态"] !== "单源"; }).length;
     var singleCount = state.rows.filter(function (row) { return row["验证状态"] === "单源"; }).length;
-    els.verifiedCount.textContent = String(tripleCount + dualCount);
-    els.verifiedCount.title = "三源一致: " + tripleCount + " | 双源一致: " + dualCount + " | 单源: " + singleCount;
+    els.verifiedCount.textContent = String(multiSourceCount);
+    els.verifiedCount.title = "多源核验: " + multiSourceCount + " | 单源: " + singleCount;
     els.zolCount.textContent = String(state.rows.filter(function (row) { return rowHasSource(row, "中关村在线"); }).length);
     els.pconlineCount.textContent = String(state.rows.filter(function (row) { return rowHasSource(row, "太平洋电脑网"); }).length);
     els.cnmoCount.textContent = String(state.rows.filter(function (row) { return rowHasSource(row, "CNMO"); }).length);
