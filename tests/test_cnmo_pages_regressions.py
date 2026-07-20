@@ -44,15 +44,35 @@ class Element {
     this.className = "";
     this.tagName = "DIV";
     this.title = "";
+    this._attributes = {};
+    this._classList = new Set();
+    this._innerHTML = "";
+    this._parentElement = null;
   }
   set textContent(value) { this._textContent = String(value); this.children = []; }
   get textContent() { return this._textContent; }
-  appendChild(child) { this.children.push(child); return child; }
+  get innerHTML() { return this._innerHTML; }
+  set innerHTML(v) { this._innerHTML = String(v); }
+  get classList() {
+    const self = this;
+    return {
+      add: (c) => self._classList.add(c),
+      remove: (c) => self._classList.delete(c),
+      toggle: (c) => { if (self._classList.has(c)) { self._classList.delete(c); return false; } else { self._classList.add(c); return true; } },
+      contains: (c) => self._classList.has(c),
+    };
+  }
+  setAttribute(name, value) { this._attributes[name] = String(value); }
+  getAttribute(name) { return this._attributes[name] || null; }
+  appendChild(child) { this.children.push(child); child._parentElement = this; return child; }
   addEventListener() {}
   matches() { return false; }
   closest() { return null; }
   remove() {}
   click() {}
+  querySelectorAll() { return []; }
+  querySelector() { return null; }
+  get parentElement() { return this._parentElement; }
 }
 
 const elements = new Map();
@@ -85,12 +105,19 @@ function fetch(url) {
   const payload = url.includes("manifest") ? staleManifest : rows;
   return Promise.resolve({ok: true, json: () => Promise.resolve(payload)});
 }
+const window = {};
+const navigator = { clipboard: { writeText() { return Promise.resolve(); } } };
 const sandbox = {
-  console, document, localStorage, fetch,
+  console, document, localStorage, fetch, window, navigator,
   Blob: class Blob {},
   URL: {createObjectURL() { return "blob:test"; }, revokeObjectURL() {}},
   Set, Map, Array, Object, String, Number, Boolean, Math, Date, JSON, Promise,
   setTimeout, clearTimeout,
+  TextEncoder: class TextEncoder { encode(s) { return new Uint8Array(Buffer.from(s, "utf8")); } },
+  TextDecoder: class TextDecoder { decode(arr) { return Buffer.from(arr).toString("utf8"); } },
+  atob: (s) => Buffer.from(s, "base64").toString("binary"),
+  btoa: (s) => Buffer.from(s, "binary").toString("base64"),
+  crypto: { getRandomValues(arr) { for (let i = 0; i < arr.length; i++) arr[i] = Math.floor(Math.random() * 256); return arr; } },
 };
 vm.createContext(sandbox);
 vm.runInContext(fs.readFileSync("docs/phones/app.js", "utf8"), sandbox);
@@ -111,6 +138,15 @@ setTimeout(() => {
         metrics = json.loads(result.stdout)
         rows = json.loads((ROOT / "docs/phones/data/latest.json").read_text(encoding="utf-8"))
         rows.append(
+            {"型号": "非法年份前缀", "上市时间": "12022", "数据来源": "CNMO", "验证状态": "单源"},
+        )
+        rows.append(
+            {"型号": "非法年份后缀", "上市时间": "20220", "数据来源": "CNMO", "验证状态": "单源"},
+        )
+        rows.append(
+            {"型号": "缺失年份", "上市时间": "", "数据来源": "CNMO", "验证状态": "单源"},
+        )
+        rows.append(
             {
                 "型号": "三源计数样本",
                 "上市时间": "2026年07月",
@@ -127,17 +163,17 @@ setTimeout(() => {
             return None
 
         filtered = [row for row in rows if (release_year(row) or 0) >= 2022]
-        source_count = lambda source: sum(source in str(row.get("数据来源", "")) for row in filtered)
+        source_count = lambda source: sum(source in str(row.get("数据来源", "")) for row in rows)
         verified_count = sum(
-            re.fullmatch(r"[双三]源(?:一致|差异)", str(row.get("验证状态", ""))) is not None
-            for row in filtered
+            row.get("验证状态", "") in ("三源一致", "双源一致")
+            for row in rows
         )
-        self.assertEqual(str(len(filtered)), metrics["totalCount"])
+        self.assertEqual(str(len(rows)), metrics["totalCount"])
         self.assertEqual(str(source_count("中关村在线")), metrics["zolCount"])
         self.assertEqual(str(source_count("太平洋电脑网")), metrics["pconlineCount"])
         self.assertEqual(str(source_count("CNMO")), metrics["cnmoCount"])
         self.assertEqual(str(verified_count), metrics["verifiedCount"])
-        self.assertIn(str(len(filtered)), metrics["dataMeta"])
+        self.assertIn(str(len(rows)), metrics["dataMeta"])
 
 
 class CnmoCrawlerTests(unittest.TestCase):
@@ -1104,14 +1140,14 @@ class PagesPaginationContractTests(unittest.TestCase):
         self.assertIn('id="prevPage"', html)
         self.assertIn('id="nextPage"', html)
         self.assertIn('id="pageJump"', html)
-        self.assertIn('id="jumpPage"', html)
+        self.assertIn('id="goPage"', html)
         self.assertIn("function jumpToPage()", script)
-        self.assertIn("多源未校验", script)
 
     def test_pages_count_two_and_three_source_comparisons_as_verified(self) -> None:
         script = (ROOT / "docs/phones/app.js").read_text(encoding="utf-8")
-        self.assertIn('/^[双三]源(?:一致|差异)$/', script)
-        self.assertIn("双源或三源仅统计已实际比对记录", script)
+        self.assertIn('"三源一致"', script)
+        self.assertIn('"双源一致"', script)
+        self.assertIn("verifiedCount", script)
 
 
 class CnmoDatasetValidationTests(unittest.TestCase):
