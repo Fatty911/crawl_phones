@@ -941,7 +941,7 @@ def norm_rows(rows, source):
         normalized = {'数据来源': source}
         for key in ['品牌', '型号', '手机ID', '上市时间', '价格']:
             if key in row:
-                normalized[key] = row[key]
+                normalized[key] = clean_value(row[key])
 
         # 关键修复：品牌归一化
         if '品牌' in row:
@@ -954,13 +954,18 @@ def norm_rows(rows, source):
 
         # 品牌回填：如果爬虫未提供品牌，从型号名推导
         if not normalized.get('品牌') or normalized['品牌'] == '-':
-            model_name = normalized.get('型号', row.get('name', ''))
-            derived = derive_brand_from_name(model_name)
-            if derived:
-                normalized['品牌'] = normalize_brand(derived)
+            # 先尝试爬虫自带的brand字段
+            raw_brand = row.get('brand', '')
+            if raw_brand and raw_brand.strip():
+                normalized['品牌'] = normalize_brand(raw_brand)
+            else:
+                model_name = normalized.get('型号', row.get('name', ''))
+                derived = derive_brand_from_name(model_name)
+                if derived:
+                    normalized['品牌'] = normalize_brand(derived)
 
         for key, val in row.items():
-            if key in FIXED or key in ['id', 'name', 'url', 'crawl_time', 'param_url', 'phone_id']:
+            if key in FIXED or key in ['id', 'name', 'url', 'crawl_time', 'param_url', 'phone_id', 'brand']:
                 continue
             unified = norm(key)
             if unified in normalized and normalized[unified] not in ('', '-'):
