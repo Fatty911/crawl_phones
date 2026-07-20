@@ -1,0 +1,6 @@
+{
+  "description": "手机爬虫爬取时遇到这些型号ID应跳过详细配置爬取",
+  "last_updated": "2026-07-20",
+  "total": 0,
+  "skip_phone_ids": []
+}

@@ -2,18 +2,23 @@
 <html lang="zh-CN">
   <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="viewport" content="20260720-1200">
     <title>手机配置表</title>
-    <link rel="stylesheet" href="styles.css">
-  </head>
+    <link rel="stylesheet" href="styles_new.css">
+  <meta name="data-updated" content="20260720-1200" />
+</head>
   <body>
     <div class="app-shell">
       <header class="topbar">
         <div class="brand-block">
-          <h1>手机配置表</h1>
+          <h1>手机筛选中心</h1>
           <p id="dataMeta">正在加载最新数据...</p>
         </div>
-        <div class="toolbar" aria-label="表格工具栏">
+        <div class="toolbar" aria-label="页面工具栏">
+          <div class="segmented" role="tablist" aria-label="模式切换">
+            <button class="segment active" id="centerMode" type="button">筛选中心</button>
+            <button class="segment" id="tableMode" type="button">数据表/高级模式</button>
+          </div>
           <label class="search-control">
             <span>搜索</span>
             <input id="globalSearch" type="search" placeholder="品牌、型号、配置项...">
@@ -21,70 +26,66 @@
           <button class="icon-button" id="resetFilters" type="button" title="清空筛选" aria-label="清空筛选">
             <span aria-hidden="true">↺</span>
           </button>
+          <button class="text-button" id="saveHistory" type="button">保存筛选</button>
           <button class="text-button" id="exportCsv" type="button">导出当前CSV</button>
           <button class="text-button" id="exportJson" type="button">导出当前JSON</button>
         </div>
       </header>
 
       <main class="workspace">
-        <section class="table-region" aria-label="手机配置数据表">
-          <div class="summary-strip">
-            <div>
-              <span class="summary-label">当前结果</span>
-              <strong id="visibleCount">0</strong>
-            </div>
-            <div>
-              <span class="summary-label">全部记录</span>
-              <strong id="totalCount">0</strong>
-            </div>
-            <div>
-              <span class="summary-label">ZOL</span>
-              <strong id="zolCount">0</strong>
-            </div>
-            <div>
-              <span class="summary-label">太平洋</span>
-              <strong id="pconlineCount">0</strong>
-            </div>
-            <div>
-              <span class="summary-label">CNMO</span>
-              <strong id="cnmoCount">0</strong>
-            </div>
-            <div>
-              <span class="summary-label">已验证</span>
-              <strong id="verifiedCount">0</strong>
-            </div>
-            <div>
-              <span class="summary-label">可见列</span>
-              <strong id="columnCount">0</strong>
-            </div>
+        <section class="summary-strip" aria-label="数据概览">
+          <div>
+            <span class="summary-label">当前结果</span>
+            <strong id="visibleCount">0</strong>
           </div>
-          <p id="coverageNote" class="coverage-note">来源卡片统计数据覆盖；已验证仅统计已实际比对记录。</p>
+          <div>
+            <span class="summary-label">全部记录</span>
+            <strong id="totalCount">0</strong>
+          </div>
+          <div>
+            <span class="summary-label" title="三源一致+双源一致">多源核验</span>
+            <strong id="verifiedCount">0</strong>
+          </div>
+          <div>
+            <span class="summary-label">中关村在线</span>
+            <strong id="zolCount">0</strong>
+          </div>
+          <div>
+            <span class="summary-label">太平洋电脑网</span>
+            <strong id="pconlineCount">0</strong>
+          </div>
+          <div>
+            <span class="summary-label">CNMO</span>
+            <strong id="cnmoCount">0</strong>
+          </div>
+          <div>
+            <span class="summary-label">可见列</span>
+            <strong id="columnCount">0</strong>
+          </div>
+        </section>
 
+        <section class="center-region" id="filterCenter" aria-label="手机筛选中心">
+          <div class="center-hero">
+            <div>
+              <span class="eyebrow">数据源手机筛选</span>
+              <h2>按功能与核心配置快速找手机</h2>
+              <p>先按条件筛选型号系列，点击卡片再查看符合条件的具体版本。</p>
+            </div>
+            <div class="center-count"><strong id="centerVisibleCount">0</strong><span>匹配型号系列</span></div>
+          </div>
+          <div class="center-filters">
+            <section>
+              <h3>核心条件</h3>
+              <div class="center-condition-list" id="centerConditionList"></div>
+            </section>
+          </div>
+          <div class="selected-tags" id="selectedTags"></div>
+          <div class="card-list" id="cardList"></div>
+          <div class="center-actions"><button class="text-button" id="loadMoreCards" type="button">加载更多</button></div>
+        </section>
+
+        <section class="table-region" id="tableRegion" aria-label="手机配置数据表">
           <div class="quick-filters" aria-label="快速筛选">
-            <label>
-              <span>品牌</span>
-              <select id="brandFilter"></select>
-            </label>
-            <label>
-              <span>root或越狱</span>
-              <select id="rootFilter">
-                <option value="">全部</option>
-                <option value="可root">可root</option>
-                <option value="可越狱">可越狱</option>
-                <option value="不可">不可</option>
-                <option value="未知">未知</option>
-              </select>
-            </label>
-            <label>
-              <span>是否可解BL锁</span>
-              <select id="blFilter">
-                <option value="">全部</option>
-                <option value="是">是</option>
-                <option value="否">否</option>
-                <option value="免解锁">免解锁</option>
-                <option value="未知">未知</option>
-              </select>
-            </label>
             <label>
               <span>每页</span>
               <select id="pageSize">
@@ -94,6 +95,16 @@
                 <option value="500">500</option>
               </select>
             </label>
+          </div>
+
+          <div class="custom-sort-panel" id="customSortPanel">
+            <h2>自定义排序</h2>
+            <p>添加多个排序级别，可为每级填写按逗号或换行分隔的关键字顺序。</p>
+            <div id="customSortLevels"></div>
+            <div class="custom-sort-actions">
+              <button class="text-button" id="addSortLevel" type="button">增加排序级别</button>
+              <button class="text-button" id="clearSortLevels" type="button">清空排序</button>
+            </div>
           </div>
 
           <div class="table-wrap" id="tableWrap">
@@ -112,87 +123,80 @@
             <span id="pageInfo">第 1 / 1 页</span>
             <label class="page-jump">
               <span>跳至</span>
-              <input id="pageJump" type="number" min="1" step="1" value="1" inputmode="numeric" aria-label="跳转页码">
+              <input id="pageJump" type="number" min="1" step="1" inputmode="numeric" aria-label="输入页码">
               <span>页</span>
             </label>
-            <button id="jumpPage" type="button">跳转</button>
+            <button id="goPage" type="button">跳转</button>
             <button id="nextPage" type="button">下一页</button>
           </footer>
         </section>
 
         <aside class="side-panel" aria-label="筛选和列设置">
           <section>
-            <div class="panel-title-row">
-              <h2>高级筛选</h2>
-              <button id="addAdvancedFilter" type="button" class="text-button">添加条件</button>
-            </div>
-            <div id="advancedFilterList" class="advanced-filter-list"></div>
-            <div id="activeFilters" class="active-filters"></div>
+            <h2>条件筛选</h2>
+            <div class="condition-list" id="conditionList"></div>
           </section>
 
           <section>
-            <h2>关键字排序</h2>
-            <div class="keyword-sort-control">
-              <label>
-                <span>排序列</span>
-                <select id="keywordSortField"></select>
-              </label>
-              <textarea id="keywordSortOrder" rows="4" placeholder="像 Excel 自定义序列一样输入关键字顺序，例如：\n华为\n小米\nOPPO"></textarea>
-              <div class="panel-title-row">
-                <button id="applyKeywordSort" type="button" class="text-button">应用排序</button>
-                <button id="clearKeywordSort" type="button" class="text-button">清空排序</button>
-              </div>
+            <h2>字段筛选</h2>
+            <div class="field-filter">
+              <select id="fieldSelect"></select>
+              <select id="fieldOperator" aria-label="筛选方式">
+                <option value="contains">包含</option>
+                <option value="gte">≥</option>
+                <option value="lte">≤</option>
+                <option value="equals">=</option>
+              </select>
+              <input id="fieldValue" type="search" placeholder="包含关键字">
+              <button id="applyFieldFilter" type="button">应用</button>
             </div>
-          </section>
-
-          <section>
-            <h2>鼠标筛选</h2>
-            <div class="facet-control">
-              <select id="facetField"></select>
-              <div class="range-control">
-                <input id="facetMin" inputmode="decimal" placeholder="最小值">
-                <input id="facetMax" inputmode="decimal" placeholder="最大值">
-                <button id="applyFacetRange" type="button" class="text-button">应用范围</button>
-              </div>
-            </div>
-            <div id="facetOptions" class="facet-options"></div>
+            <div class="active-filters" id="activeFilters"></div>
           </section>
 
           <section>
             <h2>筛选历史</h2>
-            <div class="history-save-row">
-              <input id="historyName" placeholder="历史名称">
-              <button id="saveHistory" type="button" class="text-button">保存</button>
+            <label class="history-sync">
+              <span>同步码</span>
+              <input id="historySyncId" type="text" autocomplete="off">
+            </label>
+            <label class="history-sync">
+              <span>GitHub Token</span>
+              <input id="githubToken" type="password" autocomplete="off" placeholder="仅保存在本机">
+            </label>
+            <div class="history-actions">
+              <button class="link-button" id="copySyncId" type="button">复制</button>
+              <button class="link-button" id="loadHistory" type="button">载入</button>
+              <button class="link-button" id="saveGithubToken" type="button">保存Token</button>
+              <button class="link-button" id="clearGithubToken" type="button">清除Token</button>
             </div>
-            <div id="historyList" class="history-list"></div>
-            <div class="history-sync">
-              <input id="gistToken" type="password" autocomplete="off" placeholder="GitHub Gist Token">
-              <div class="panel-title-row">
-                <button id="connectGist" type="button" class="text-button">连接</button>
-                <button id="pullHistory" type="button" class="text-button">拉取</button>
-                <button id="pushHistory" type="button" class="text-button">推送</button>
-              </div>
-              <p id="historySyncStatus"></p>
-            </div>
+            <p class="history-status" id="historyStatus">等待同步</p>
+            <div class="history-list" id="historyList"></div>
           </section>
 
           <section>
-            <h2>列显示</h2>
             <div class="panel-title-row">
-              <button id="showCoreColumns" type="button" class="text-button">核心列</button>
-              <button id="showAllColumns" type="button" class="text-button">全部列</button>
+              <h2>显示列</h2>
+              <div>
+                <button class="link-button" id="showCoreColumns" type="button">常用</button>
+                <button class="link-button" id="showAllColumns" type="button">全部</button>
+              </div>
             </div>
-            <input id="columnSearch" type="search" placeholder="搜索列名...">
-            <div id="columnList" class="column-list"></div>
+            <label class="column-search">
+              <span>查找列</span>
+              <input id="columnSearch" type="search" placeholder="配置名称">
+            </label>
+            <div class="column-list" id="columnList"></div>
           </section>
 
           <section>
-            <h2>下载</h2>
-            <div id="downloadList" class="download-list"></div>
+            <h2>原始文件</h2>
+            <div class="download-list" id="downloadList">
+              <span>等待 manifest.json</span>
+            </div>
           </section>
         </aside>
       </main>
     </div>
-    <script src="app.js"></script>
+    <script src="app_new.js"></script>
   </body>
 </html>

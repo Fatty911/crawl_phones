@@ -1,142 +1,95 @@
 (function () {
   "use strict";
 
-  var CORE_COLUMNS = [
-    "型号",
-    "品牌",
-    "上市时间",
-    "价格",
-    "验证状态",
-    "数据来源",
-    "处理器",
-    "内存",
-    "存储",
-    "屏幕",
-    "屏占比",
-    "电池",
-    "机身厚度",
-    "机身重量",
-    "指纹识别",
-    "面部识别",
-    "网络类型",
-    "NFC",
-    "连接与共享",
-    "机身接口",
-    "有线充电",
-    "无线充电",
-    "快充协议",
-    "交叉验证差异",
-    "散热",
-    "广角",
-    "Geekbench6单核",
-    "是否可解BL锁",
-    "root或越狱",
-  ];
+  var HISTORY_PROVIDER = window.CARS_FILTER_HISTORY_PROVIDER || "worker";
+  var HISTORY_API = window.CARS_FILTER_HISTORY_API || "/api/filter-history";
+  var GITHUB_HISTORY = window.CARS_GITHUB_HISTORY || null;
+  var DEFAULT_SYNC_ID = window.CARS_DEFAULT_FILTER_SYNC_ID || "";
+  var STORAGE_SYNC_KEY = "phones_filter_sync_id";
+  var STORAGE_HISTORY_KEY = "phones_filter_history_cache";
+  var STORAGE_GITHUB_TOKEN_KEY = "phones_filter_github_token";
 
-  var DEFAULT_HIDDEN_COLUMNS = new Set(["手机ID", "source"]);
-  var MIN_RELEASE_YEAR = 2022;
+  var CORE_COLUMNS = ["型号","品牌","上市时间","价格","验证状态","数据来源","处理器","内存","存储","屏幕","屏占比","电池","机身厚度","机身重量","指纹识别","面部识别","网络类型","NFC","连接与共享","机身接口","有线充电","无线充电","快充协议","交叉验证差异","散热","广角","Geekbench6单核","是否可解BL锁","root或越狱"];
 
   var SAMPLE_ROWS = [
     {
-      "数据来源": "中关村在线+太平洋电脑网",
-      "验证状态": "双源一致",
-      "交叉验证差异": "-",
+      "数据来源": "示例",
       "品牌": "示例品牌",
       "型号": "等待 GitHub Pages 发布最新数据",
-      "上市时间": "2024",
-      "价格": "2999",
+      "上市时间": "2026",
+      "手机类型": "5G手机",
+      "价格": "3999",
       "处理器": "骁龙8 Gen3",
-      "内存": "12GB",
-      "存储": "256GB",
-      "屏幕": "6.7英寸",
       "电池": "5000mAh",
-      "屏占比": "93.4%",
-      "机身厚度": "7.9mm",
-      "机身重量": "199g",
-      "指纹识别": "屏幕指纹",
+      "指纹识别": "支持",
       "面部识别": "支持",
-      "网络类型": "5G / 4G / 3G",
       "NFC": "支持",
-      "连接与共享": "OTG / WLAN热点",
-      "机身接口": "USB Type-C",
-      "有线充电": "100W",
-      "无线充电": "50W",
-      "快充协议": "PD / QC / SuperVOOC",
-      "交叉验证差异": "-",
-      "散热": "VC液冷",
-      "广角": "120°",
-      "Geekbench6单核": "2240",
-      "是否可解BL锁": "是",
-      "root或越狱": "可永久root (Magisk)",
-    },
+      "验证状态": "三源一致"
+    }
   ];
 
-  var STORAGE_KEYS = {
-    history: "phoneFilterHistory.v2",
-    gistId: "phoneFilterHistory.gistId",
-    gistToken: "phoneFilterHistory.gistToken",
+  var DEFAULT_RANGE_FILTERS = {
+    price: { min: "", max: "" }
+  };
+  var DEFAULT_FEATURE_FILTERS = {
+    nfc: true,
+    face_id: true,
+    fingerprint: true
   };
 
-  var HISTORY_FILE = "phone-filter-history.json";
-  var HISTORY_GIST_DESCRIPTION = "phones.jiucai.eu.org filter history";
-
-  var OPERATORS = [
-    ["contains", "包含"],
-    ["not_contains", "不包含"],
-    ["equals", "等于"],
-    ["has_value", "有值"],
-    ["empty", "无值"],
-    ["gte", "数值≥"],
-    ["lte", "数值≤"],
-    ["between", "数值范围"],
-  ];
+  var fallbackConfig = {
+    defaultDataset: "latest",
+    hiddenByDefault: ["数据来源"],
+    dropIfUniformPositive: [],
+    defaultVisibleColumns: CORE_COLUMNS,
+    conditions: []
+  };
 
   var state = {
     manifest: null,
-    latestRows: [],
+    config: fallbackConfig,
     rows: [],
     columns: [],
     visibleColumns: new Set(),
-    advancedFilters: [],
+    columnFilters: {},
+    rangeFilters: Object.assign({}, DEFAULT_RANGE_FILTERS),
+    featureFilters: Object.assign({}, DEFAULT_FEATURE_FILTERS),
     search: "",
     brand: "",
-    rootStatus: "",
-    blStatus: "",
+    series: "",
     sortField: "",
     sortDir: "asc",
-    keywordSortField: "型号",
-    keywordSortOrder: "",
+    sortLevels: [],
+    mode: "center",
+    cardLimit: 24,
+    expandedSeries: new Set(),
+    seriesViewSignature: "",
     page: 1,
     pageSize: 100,
     columnSearch: "",
-    facetField: "",
-    history: [],
     composing: false,
-    inputTimer: null,
+    syncId: "",
+    githubToken: "",
+    histories: []
   };
 
   var els = {
     dataMeta: document.getElementById("dataMeta"),
     globalSearch: document.getElementById("globalSearch"),
     resetFilters: document.getElementById("resetFilters"),
+    saveHistory: document.getElementById("saveHistory"),
     exportCsv: document.getElementById("exportCsv"),
     exportJson: document.getElementById("exportJson"),
     visibleCount: document.getElementById("visibleCount"),
     totalCount: document.getElementById("totalCount"),
+    columnCount: document.getElementById("columnCount"),
+    verifiedCount: document.getElementById("verifiedCount"),
     zolCount: document.getElementById("zolCount"),
     pconlineCount: document.getElementById("pconlineCount"),
     cnmoCount: document.getElementById("cnmoCount"),
-    columnCount: document.getElementById("columnCount"),
-    verifiedCount: document.getElementById("verifiedCount"),
-    coverageNote: document.getElementById("coverageNote"),
     brandFilter: document.getElementById("brandFilter"),
-    rootFilter: document.getElementById("rootFilter"),
-    blFilter: document.getElementById("blFilter"),
+    seriesFilter: document.getElementById("seriesFilter"),
     pageSize: document.getElementById("pageSize"),
-    keywordSortField: document.getElementById("keywordSortField"),
-    keywordSortOrder: document.getElementById("keywordSortOrder"),
-    applyKeywordSort: document.getElementById("applyKeywordSort"),
-    clearKeywordSort: document.getElementById("clearKeywordSort"),
     tableHead: document.getElementById("tableHead"),
     tableBody: document.getElementById("tableBody"),
     emptyState: document.getElementById("emptyState"),
@@ -144,28 +97,40 @@
     nextPage: document.getElementById("nextPage"),
     pageInfo: document.getElementById("pageInfo"),
     pageJump: document.getElementById("pageJump"),
-    jumpPage: document.getElementById("jumpPage"),
-    advancedFilterList: document.getElementById("advancedFilterList"),
-    addAdvancedFilter: document.getElementById("addAdvancedFilter"),
+    goPage: document.getElementById("goPage"),
+    conditionList: document.getElementById("conditionList"),
+    fieldSelect: document.getElementById("fieldSelect"),
+    fieldOperator: document.getElementById("fieldOperator"),
+    fieldValue: document.getElementById("fieldValue"),
+    applyFieldFilter: document.getElementById("applyFieldFilter"),
     activeFilters: document.getElementById("activeFilters"),
-    facetField: document.getElementById("facetField"),
-    facetMin: document.getElementById("facetMin"),
-    facetMax: document.getElementById("facetMax"),
-    applyFacetRange: document.getElementById("applyFacetRange"),
-    facetOptions: document.getElementById("facetOptions"),
-    historyName: document.getElementById("historyName"),
-    saveHistory: document.getElementById("saveHistory"),
-    historyList: document.getElementById("historyList"),
-    gistToken: document.getElementById("gistToken"),
-    connectGist: document.getElementById("connectGist"),
-    pullHistory: document.getElementById("pullHistory"),
-    pushHistory: document.getElementById("pushHistory"),
-    historySyncStatus: document.getElementById("historySyncStatus"),
     showCoreColumns: document.getElementById("showCoreColumns"),
     showAllColumns: document.getElementById("showAllColumns"),
     columnSearch: document.getElementById("columnSearch"),
     columnList: document.getElementById("columnList"),
+    historySyncId: document.getElementById("historySyncId"),
+    githubToken: document.getElementById("githubToken"),
+    copySyncId: document.getElementById("copySyncId"),
+    loadHistory: document.getElementById("loadHistory"),
+    saveGithubToken: document.getElementById("saveGithubToken"),
+    clearGithubToken: document.getElementById("clearGithubToken"),
+    historyStatus: document.getElementById("historyStatus"),
+    historyList: document.getElementById("historyList"),
     downloadList: document.getElementById("downloadList"),
+    centerMode: document.getElementById("centerMode"),
+    tableMode: document.getElementById("tableMode"),
+    filterCenter: document.getElementById("filterCenter"),
+    tableRegion: document.getElementById("tableRegion"),
+    centerBrandFilter: document.getElementById("centerBrandFilter"),
+    centerSeriesFilter: document.getElementById("centerSeriesFilter"),
+    centerConditionList: document.getElementById("centerConditionList"),
+    selectedTags: document.getElementById("selectedTags"),
+    cardList: document.getElementById("cardList"),
+    centerVisibleCount: document.getElementById("centerVisibleCount"),
+    loadMoreCards: document.getElementById("loadMoreCards"),
+    customSortLevels: document.getElementById("customSortLevels"),
+    addSortLevel: document.getElementById("addSortLevel"),
+    clearSortLevels: document.getElementById("clearSortLevels")
   };
 
   function fetchJson(url) {
@@ -177,255 +142,326 @@
     });
   }
 
-  function readLocalJson(key, fallback) {
-    try {
-      var raw = localStorage.getItem(key);
-      return raw ? JSON.parse(raw) : fallback;
-    } catch (error) {
-      return fallback;
-    }
+  function normalizeText(value) {
+    return String(value == null ? "" : value).toLowerCase();
   }
 
-  function writeLocalJson(key, value) {
-    localStorage.setItem(key, JSON.stringify(value));
+  function cleanText(value) {
+    return String(value == null ? "" : value).replace(/\s+/g, "").toLowerCase();
+  }
+
+  function cloneDefaultRangeFilters() {
+    return JSON.parse(JSON.stringify(DEFAULT_RANGE_FILTERS));
+  }
+
+  function cloneDefaultFeatureFilters() {
+    return Object.assign({}, DEFAULT_FEATURE_FILTERS);
+  }
+
+  function firstNumber(value) {
+    var match = String(value == null ? "" : value).match(/\d+(?:\.\d+)?/);
+    return match ? Number(match[0]) : null;
   }
 
   function uniqueValues(rows, field) {
-    var values = Array.from(
-      new Set(
-        rows
-          .map(function (row) {
-            return String(row[field] || "").trim();
-          })
-          .filter(Boolean)
-      )
-    );
-    return values.sort(function (a, b) {
+    return Array.from(new Set(rows.map(function (row) {
+      return String(row[field] || "").trim();
+    }).filter(Boolean))).sort(function (a, b) {
       return a.localeCompare(b, "zh-Hans", { numeric: true });
     });
+  }
+
+  function hasPositiveValue(value) {
+    var text = String(value == null ? "" : value).trim();
+    if (!text || text === "-") {
+      return false;
+    }
+    return ["无", "不支持", "否", "没有", "未配备", "不提供", "0", "0.0"].indexOf(text) === -1;
+  }
+
+  function atomicSources(value) {
+    var text = String(value == null ? "" : value).trim();
+    var sources = new Set();
+    var knownSources = ["中关村在线", "太平洋电脑网", "CNMO"];
+    text.split(/[+＋/／|、,，;；]+/).forEach(function (part) {
+      var item = part.trim();
+      var recognized = false;
+      knownSources.forEach(function (source) {
+        if (item.indexOf(source) !== -1) {
+          sources.add(source);
+          recognized = true;
+        }
+      });
+      if (item && !recognized) {
+        sources.add(item);
+      }
+    });
+    return Array.from(sources);
+  }
+
+  function rowHasSource(row, source) {
+    return String(row["数据来源"] || "").indexOf(source) !== -1;
+  }
+
+  function baseModelName(model) {
+    return String(model || "").replace(/[（(][^）)]*[）)]/g, "").trim();
+  }
+
+  function modelIdentity(row) {
+    var brand = String(row["品牌"] || row["brand"] || "").trim();
+    var model = String(row["型号"] || "").trim();
+    var base = baseModelName(model);
+    if (base) {
+      return { key: "model|" + brand + "|" + base, name: base };
+    }
+    return {
+      key: "model|" + brand + "|" + model,
+      name: model || "未命名型号"
+    };
+  }
+
+  function groupRowsByModel(rows) {
+    var groups = [];
+    var groupMap = new Map();
+    rows.forEach(function (row) {
+      var identity = modelIdentity(row);
+      var group = groupMap.get(identity.key);
+      if (!group) {
+        group = {
+          key: identity.key,
+          name: identity.name,
+          rows: [],
+          representative: row,
+          price: null,
+          order: groups.length
+        };
+        groupMap.set(identity.key, group);
+        groups.push(group);
+      }
+      group.rows.push(row);
+    });
+
+    var levels = activeSortLevels();
+    var priceLevel = levels.length && isPriceField(levels[0].field) ? levels[0] : null;
+    if (!priceLevel) {
+      return groups;
+    }
+
+    groups.forEach(function (group) {
+      group.rows.forEach(function (row) {
+        var price = validPrice(row, priceLevel.field);
+        if (price === null) {
+          return;
+        }
+        var better = group.price === null ||
+          (priceLevel.dir === "desc" ? price > group.price : price < group.price);
+        if (better) {
+          group.price = price;
+          group.representative = row;
+        }
+      });
+    });
+
+    return groups.sort(function (a, b) {
+      if (a.price === null || b.price === null) {
+        if (a.price === null && b.price !== null) { return 1; }
+        if (a.price !== null && b.price === null) { return -1; }
+      } else if (a.price !== b.price) {
+        return priceLevel.dir === "desc" ? b.price - a.price : a.price - b.price;
+      }
+      for (var i = 1; i < levels.length; i += 1) {
+        var result = compareRowsByLevel(a.representative, b.representative, levels[i]);
+        if (result !== 0) {
+          return result;
+        }
+      }
+      var nameResult = a.name.localeCompare(b.name, "zh-Hans", { numeric: true });
+      return nameResult || a.key.localeCompare(b.key, "zh-Hans", { numeric: true }) || a.order - b.order;
+    });
+  }
+
+  function isDimensionColumn(column) {
+    return false;
+  }
+
+  function shouldHideColumn(column, rows) {
+    var hidden = state.config.hiddenByDefault || [];
+    var dropUniform = state.config.dropIfUniformPositive || [];
+    if (hidden.indexOf(column) !== -1) {
+      return true;
+    }
+    if (dropUniform.indexOf(column) !== -1) {
+      var values = rows.map(function (row) { return row[column]; }).filter(function (value) {
+        return value != null && value !== "";
+      });
+      return values.length > 0 && values.every(hasPositiveValue);
+    }
+    return false;
   }
 
   function buildColumns(rows) {
     var seen = new Set();
     var columns = [];
-
-    CORE_COLUMNS.forEach(function (column) {
-      if (rows.some(function (row) { return Object.prototype.hasOwnProperty.call(row, column); })) {
+    (state.config.defaultVisibleColumns || []).forEach(function (column) {
+      if (rows.some(function (row) { return Object.prototype.hasOwnProperty.call(row, column); }) && !shouldHideColumn(column, rows)) {
         seen.add(column);
         columns.push(column);
       }
     });
-
     rows.forEach(function (row) {
       Object.keys(row).forEach(function (column) {
-        if (!seen.has(column)) {
-          seen.add(column);
-          columns.push(column);
+        if (shouldHideColumn(column, rows) || seen.has(column)) {
+          return;
         }
+        seen.add(column);
+        columns.push(column);
       });
     });
-
     return columns;
   }
 
-  function releaseYear(row) {
-    var fields = ["上市时间", "国内发布时间", "发布时间", "发布日期", "上市日期"];
-    for (var index = 0; index < fields.length; index += 1) {
-      var match = String(row[fields[index]] || "").match(/(^|[^\d])((?:19|20)\d{2})(?!\d)/);
-      if (match) {
-        return Number(match[2]);
+  function conditionMatches(row, condition) {
+    if (condition.type === "range") {
+      var filter = state.rangeFilters[condition.id] || {};
+      var rowValue = firstNumber(row[condition.field]);
+      if (rowValue == null) {
+        return false;
       }
-    }
-    return null;
-  }
-
-  function normalizeText(value) {
-    return String(value == null ? "" : value).toLowerCase();
-  }
-
-  function numbersIn(value) {
-    return String(value == null ? "" : value)
-      .match(/\d+(?:\.\d+)?/g)
-      ?.map(Number)
-      .filter(function (number) { return Number.isFinite(number); }) || [];
-  }
-
-  function firstNumber(value) {
-    var numbers = numbersIn(value);
-    return numbers.length ? numbers[0] : null;
-  }
-
-  function parseKeywordOrder(value) {
-    return String(value || "")
-      .split(/[\n,，;；|]+/)
-      .map(function (item) { return item.trim().toLowerCase(); })
-      .filter(Boolean);
-  }
-
-  function keywordRank(row) {
-    var keywords = parseKeywordOrder(state.keywordSortOrder);
-    var field = state.keywordSortField || state.sortField || "型号";
-    var text = normalizeText(row[field]);
-    for (var index = 0; index < keywords.length; index += 1) {
-      if (text.indexOf(keywords[index]) !== -1) {
-        return index;
+      if (filter.min !== "" && filter.min != null && rowValue < Number(filter.min)) {
+        return false;
       }
-    }
-    return keywords.length;
-  }
-
-  function hasValue(value) {
-    var text = String(value == null ? "" : value).trim();
-    return Boolean(text && text !== "-");
-  }
-
-  function compactSpecValue(column, value) {
-    var text = String(value == null || value === "" ? "-" : value).trim();
-    if (!text || text === "-") {
-      return "-";
-    }
-
-    text = text
-      .replace(/>/g, "")
-      .replace(/纠错/g, "")
-      .replace(/查看更多[^，,；;|]*/g, "")
-      .replace(/更多[^，,；;|]*手机/g, "")
-      .replace(/手机性能排行/g, "")
-      .replace(/•[^•，,；;|]+是什么•查看所有[^，,；;|]*/g, "")
-      .replace(/\s+/g, " ")
-      .replace(/，\s*，/g, "，")
-      .replace(/[,，；;|\s]+$/g, "")
-      .trim();
-
-    if (column === "网络类型") {
-      return Array.from(new Set(text.match(/(?:[2345]G|Wi-?Fi ?\d(?:\.\d)?|LTE)/ig) || []))
-        .join(" / ") || text;
-    }
-    if (column === "NFC" || column === "NFC功能") {
-      return /不支持|无/.test(text) ? "不支持" : (/NFC|支持/.test(text) ? "支持" : text);
-    }
-    if (column === "指纹识别") {
-      text = text.replace(/识别/g, "").replace(/屏幕指纹/g, "屏幕指纹").replace(/侧面指纹/g, "侧边指纹");
-      return text || "-";
-    }
-    if (column === "面部识别") {
-      if (/3D|Face ID|结构光/i.test(text)) {
-        return "支持 3D";
+      if (filter.max !== "" && filter.max != null && rowValue > Number(filter.max)) {
+        return false;
       }
-      if (/2D|Face Wake|人脸|面部|支持/i.test(text)) {
-        return "支持";
-      }
-      return text;
-    }
-    if (column === "机身接口") {
-      return text.replace(/接口/g, "").replace(/USB Type-C/g, "USB-C");
-    }
-    if (column === "有线充电" || column === "无线充电") {
-      var watts = text.match(/\d+(?:\.\d+)?\s*[wW]/g);
-      if (watts && watts.length) {
-        return Array.from(new Set(watts.map(function (item) { return item.replace(/\s+/g, "").toUpperCase(); }))).join(" / ");
-      }
-      return text.replace(/^支持[，,]?/, "支持");
-    }
-    if (column === "快充协议") {
-      return Array.from(new Set(text.match(/SuperVOOC|VOOC|PD\d*(?:\.\d)?|QC\d*(?:\.\d)?|PPS|UFCS|FlashCharge|WarpCharge/ig) || []))
-        .join(" / ") || text;
-    }
-    if (column === "交叉验证差异") {
-      return text.length > 160 ? text.slice(0, 157) + "..." : text;
-    }
-    return text.length > 220 ? text.slice(0, 217) + "..." : text;
-  }
-
-  function newFilter(field, op, value) {
-    return {
-      id: "f_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8),
-      field: field || state.columns[0] || "",
-      op: op || "contains",
-      value: value || "",
-      min: "",
-      max: "",
-    };
-  }
-
-  function setDataset() {
-    state.rows = state.latestRows.filter(function (row) {
-      var year = releaseYear(row);
-      return year !== null && year >= MIN_RELEASE_YEAR;
-    });
-    var dateText = state.manifest && state.manifest.date ? "数据日期 " + state.manifest.date : "最新数据";
-    els.dataMeta.textContent = dateText + " · 展示 " + state.rows.length + " / 原始 " + state.latestRows.length + " 条记录（上市年份≥" + MIN_RELEASE_YEAR + "）";
-    state.columns = buildColumns(state.rows);
-    state.visibleColumns = new Set();
-    CORE_COLUMNS.forEach(function (column) {
-      if (state.columns.indexOf(column) !== -1 && !DEFAULT_HIDDEN_COLUMNS.has(column)) {
-        state.visibleColumns.add(column);
-      }
-    });
-    if (!state.visibleColumns.size) {
-      state.visibleColumns = new Set(state.columns.filter(function (column) {
-        return !DEFAULT_HIDDEN_COLUMNS.has(column);
-      }).slice(0, Math.min(18, state.columns.length)));
-    }
-    state.advancedFilters = [];
-    state.facetField = state.columns.indexOf("品牌") !== -1 ? "品牌" : state.columns[0] || "";
-    state.history = readLocalJson(STORAGE_KEYS.history, []);
-    els.gistToken.value = localStorage.getItem(STORAGE_KEYS.gistToken) || "";
-    renderFilterControls();
-    renderAdvancedFilterRows();
-    renderHistory();
-    renderDataViews();
-  }
-
-  function rowMatchesAdvancedFilter(row, filter) {
-    var raw = row[filter.field];
-    var text = normalizeText(raw);
-    var value = normalizeText(filter.value);
-    var nums = numbersIn(raw);
-    var min = filter.min === "" ? null : Number(filter.min);
-    var max = filter.max === "" ? null : Number(filter.max);
-
-    if (!filter.field) {
       return true;
     }
-    if (filter.op === "has_value") {
-      return hasValue(raw);
-    }
-    if (filter.op === "empty") {
-      return !hasValue(raw);
-    }
-    if (filter.op === "equals") {
-      return text === value;
-    }
-    if (filter.op === "not_contains") {
-      return text.indexOf(value) === -1;
-    }
-    if (filter.op === "gte") {
-      return Number.isFinite(min) && nums.some(function (number) { return number >= min; });
-    }
-    if (filter.op === "lte") {
-      return Number.isFinite(max) && nums.some(function (number) { return number <= max; });
-    }
-    if (filter.op === "between") {
-      return nums.some(function (number) {
-        return (min === null || number >= min) && (max === null || number <= max);
+
+    if (condition.type === "feature") {
+      if (!state.featureFilters[condition.id]) {
+        return true;
+      }
+      var fields = condition.fields || [];
+      var keywords = condition.keywords || [];
+      return Object.keys(row).some(function (key) {
+        var val = row[key];
+        if (!hasPositiveValue(val)) {
+          return false;
+        }
+        var keyHit = fields.some(function (field) { return key.indexOf(field) !== -1 || field.indexOf(key) !== -1; });
+        var valHit = keywords.some(function (keyword) { return String(val).indexOf(keyword) !== -1; });
+        return condition.requireKeyword ? valHit : (keyHit || valHit);
       });
     }
-    return text.indexOf(value) !== -1;
+
+    return true;
+  }
+
+  function rowMatchesDefaultRowType(row) {
+    return true;
+  }
+
+  function parseCustomOrder(text) {
+    return String(text || "").split(/[\n,，]+/).map(function (item) { return normalizeText(item.trim()); }).filter(Boolean);
+  }
+
+  function customOrderIndex(value, orderText) {
+    var valueText = normalizeText(value);
+    var order = parseCustomOrder(orderText);
+    for (var i = 0; i < order.length; i += 1) {
+      if (valueText.indexOf(order[i]) !== -1) {
+        return i;
+      }
+    }
+    return order.length;
+  }
+
+  function compareRowsByLevel(a, b, level) {
+    var av = a[level.field];
+    var bv = b[level.field];
+    var order = parseCustomOrder(level.customOrder);
+    var result;
+    if (order.length) {
+      result = customOrderIndex(av, level.customOrder) - customOrderIndex(bv, level.customOrder);
+      if (result === 0) {
+        result = String(av || "").localeCompare(String(bv || ""), "zh-Hans", { numeric: true });
+      }
+    } else {
+      var an = firstNumber(av);
+      var bn = firstNumber(bv);
+      result = an !== null && bn !== null ? an - bn : String(av || "").localeCompare(String(bv || ""), "zh-Hans", { numeric: true });
+    }
+    return level.dir === "desc" ? -result : result;
+  }
+
+  function activeSortLevels() {
+    var levels = (state.sortLevels || []).filter(function (level) { return level && level.field; });
+    if (!levels.length && state.sortField) {
+      levels = [{ field: state.sortField, dir: state.sortDir || "asc", customOrder: "" }];
+    }
+    return levels;
+  }
+
+  function sortRows(rows) {
+    var levels = activeSortLevels();
+    if (!levels.length) {
+      return rows;
+    }
+    return rows.map(function (row, index) { return { row: row, index: index }; }).sort(function (a, b) {
+      for (var i = 0; i < levels.length; i += 1) {
+        var result = compareRowsByLevel(a.row, b.row, levels[i]);
+        if (result !== 0) {
+          return result;
+        }
+      }
+      return a.index - b.index;
+    }).map(function (item) { return item.row; });
+  }
+
+  function isPriceField(field) {
+    return /(?:价格|售价|报价)/.test(String(field || ""));
+  }
+
+  function validPrice(row, field) {
+    var value = firstNumber(row[field]);
+    return value !== null && Number.isFinite(value) && value > 0 ? value : null;
+  }
+
+  function currentSeriesViewSignature() {
+    return JSON.stringify({
+      search: state.search,
+      brand: state.brand,
+      series: state.series,
+      columnFilters: state.columnFilters,
+      rangeFilters: state.rangeFilters,
+      featureFilters: state.featureFilters,
+      sortField: state.sortField,
+      sortDir: state.sortDir,
+      sortLevels: state.sortLevels
+    });
+  }
+
+  function syncSeriesViewState() {
+    var signature = currentSeriesViewSignature();
+    if (signature !== state.seriesViewSignature) {
+      state.expandedSeries.clear();
+      state.cardLimit = 24;
+      state.seriesViewSignature = signature;
+    }
   }
 
   function getFilteredRows() {
     var rows = state.rows.slice();
+
     var search = normalizeText(state.search);
 
+    if (state.source) {
+      rows = rows.filter(function (row) { return String(row["数据来源"] || "").indexOf(state.source) !== -1; });
+    }
     if (state.brand) {
-      rows = rows.filter(function (row) { return row["品牌"] === state.brand; });
+      rows = rows.filter(function (row) { return (row["品牌"] || row["brand"]) === state.brand; });
     }
-    if (state.rootStatus) {
-      rows = rows.filter(function (row) { return (row["root或越狱"] || "").indexOf(state.rootStatus) !== -1; });
-    }
-    if (state.blStatus) {
-      rows = rows.filter(function (row) { return row["是否可解BL锁"] === state.blStatus; });
+    if (state.series) {
+      rows = rows.filter(function (row) { return baseModelName(row["型号"]) === state.series; });
     }
     if (search) {
       rows = rows.filter(function (row) {
@@ -435,42 +471,44 @@
       });
     }
 
-    state.advancedFilters.forEach(function (filter) {
+    (state.config.conditions || []).forEach(function (condition) {
+      var activeRange = state.rangeFilters[condition.id];
+      var activeFeature = state.featureFilters[condition.id];
+      if (condition.type === "range" && !activeRange) {
+        return;
+      }
+      if (condition.type === "feature" && !activeFeature) {
+        return;
+      }
+      rows = rows.filter(function (row) { return conditionMatches(row, condition); });
+    });
+
+    Object.keys(state.columnFilters).forEach(function (column) {
+      var filter = state.columnFilters[column];
+      if (!filter || filter.value === "") {
+        return;
+      }
       rows = rows.filter(function (row) {
-        return rowMatchesAdvancedFilter(row, filter);
+        var text = normalizeText(row[column]);
+        var value = normalizeText(filter.value);
+        var number = firstNumber(row[column]);
+        if (filter.operator === "contains") {
+          return text.indexOf(value) !== -1;
+        }
+        if (number == null) {
+          return false;
+        }
+        if (filter.operator === "gte") {
+          return number >= Number(filter.value);
+        }
+        if (filter.operator === "lte") {
+          return number <= Number(filter.value);
+        }
+        return filter.operator === "equals" ? text === value : text.indexOf(value) !== -1;
       });
     });
 
-    if (state.sortField || state.keywordSortOrder.trim()) {
-      rows.sort(function (a, b) {
-        var rankResult = 0;
-        if (state.keywordSortOrder.trim()) {
-          rankResult = keywordRank(a) - keywordRank(b);
-        }
-        if (rankResult !== 0) {
-          return rankResult;
-        }
-        if (!state.sortField) {
-          return String(a["品牌"] || "").localeCompare(String(b["品牌"] || ""), "zh-Hans", { numeric: true }) ||
-            String(a["型号"] || "").localeCompare(String(b["型号"] || ""), "zh-Hans", { numeric: true });
-        }
-        var av = a[state.sortField];
-        var bv = b[state.sortField];
-        var an = firstNumber(av);
-        var bn = firstNumber(bv);
-        var result;
-
-        if (an !== null && bn !== null) {
-          result = an - bn;
-        } else {
-          result = String(av || "").localeCompare(String(bv || ""), "zh-Hans", { numeric: true });
-        }
-
-        return state.sortDir === "asc" ? result : -result;
-      });
-    }
-
-    return rows;
+    return sortRows(rows);
   }
 
   function renderOptions(select, values, label) {
@@ -487,29 +525,80 @@
     });
   }
 
-  function renderFilterControls() {
-    renderOptions(els.brandFilter, uniqueValues(state.rows, "品牌"), "品牌");
-    els.brandFilter.value = state.brand;
-    els.rootFilter.value = state.rootStatus;
-    els.blFilter.value = state.blStatus;
+  function uniqueBaseModels(rows) {
+    return Array.from(new Set(rows.map(function (row) {
+      return baseModelName(row["型号"]);
+    }).filter(Boolean))).sort(function (a, b) {
+      return a.localeCompare(b, "zh-Hans", { numeric: true });
+    });
+  }
 
-    els.facetField.textContent = "";
+  function renderFilters() {
+    if (els.brandFilter && els.seriesFilter) {
+      renderOptions(els.brandFilter, uniqueValues(state.rows.map(function(r){ return r["品牌"] || r["brand"] || ""; }), "品牌"), "品牌");
+      renderOptions(els.seriesFilter, uniqueBaseModels(state.brand ? state.rows.filter(function (row) {
+        return (row["品牌"] || row["brand"]) === state.brand;
+      }) : state.rows), "型号系列");
+      els.brandFilter.value = state.brand;
+      els.seriesFilter.value = state.series;
+    }
+
+    els.fieldSelect.textContent = "";
     state.columns.forEach(function (column) {
       var option = document.createElement("option");
       option.value = column;
       option.textContent = column;
-      els.facetField.appendChild(option);
+      els.fieldSelect.appendChild(option);
     });
-    els.facetField.value = state.facetField;
-    els.keywordSortField.textContent = "";
-    state.columns.forEach(function (column) {
-      var option = document.createElement("option");
-      option.value = column;
-      option.textContent = column;
-      els.keywordSortField.appendChild(option);
+  }
+
+  function renderConditions() {
+    var fragment = document.createDocumentFragment();
+    els.conditionList.textContent = "";
+    (state.config.conditions || []).forEach(function (condition) {
+      var item = document.createElement("div");
+      item.className = "condition-item";
+      item.dataset.conditionId = condition.id;
+
+      var title = document.createElement("label");
+      title.className = "condition-title";
+      if (condition.type === "feature") {
+        var checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.checked = Boolean(state.featureFilters[condition.id]);
+        checkbox.dataset.conditionId = condition.id;
+        title.appendChild(checkbox);
+      }
+      var text = document.createElement("span");
+      text.textContent = conditionTagLabel(condition);
+      title.appendChild(text);
+      item.appendChild(title);
+
+      if (condition.type === "range") {
+        var controls = document.createElement("div");
+        controls.className = "range-controls";
+        ["min", "max"].forEach(function (side) {
+          var input = document.createElement("input");
+          input.type = "number";
+          input.inputMode = "decimal";
+          input.placeholder = side === "min" ? "最小" : "最大";
+          input.dataset.conditionId = condition.id;
+          input.dataset.side = side;
+          var active = state.rangeFilters[condition.id] || {};
+          input.value = active[side] != null ? active[side] : (condition[side] != null ? condition[side] : "");
+          controls.appendChild(input);
+        });
+        var button = document.createElement("button");
+        button.type = "button";
+        button.dataset.conditionId = condition.id;
+        button.textContent = "筛选";
+        controls.appendChild(button);
+        item.appendChild(controls);
+      }
+
+      fragment.appendChild(item);
     });
-    els.keywordSortField.value = state.keywordSortField;
-    renderFacetOptions();
+    els.conditionList.appendChild(fragment);
   }
 
   function sortMark(column) {
@@ -519,15 +608,9 @@
     return state.sortDir === "asc" ? "↑" : "↓";
   }
 
-  function renderTable(rows) {
-    var visibleColumns = state.columns.filter(function (column) {
-      return state.visibleColumns.has(column);
-    });
-    var start = (state.page - 1) * state.pageSize;
-    var pageRows = rows.slice(start, start + state.pageSize);
-
+  function renderTableHead() {
+    var visibleColumns = state.columns.filter(function (column) { return state.visibleColumns.has(column); });
     els.tableHead.textContent = "";
-    els.tableBody.textContent = "";
 
     var titleRow = document.createElement("tr");
     visibleColumns.forEach(function (column) {
@@ -537,7 +620,6 @@
       button.className = "sort-button";
       button.dataset.column = column;
       button.title = "按 " + column + " 排序";
-
       var name = document.createElement("span");
       name.textContent = column;
       var mark = document.createElement("span");
@@ -548,19 +630,36 @@
       titleRow.appendChild(th);
     });
 
+    var filterRow = document.createElement("tr");
+    filterRow.className = "filter-row";
+    visibleColumns.forEach(function (column) {
+      var th = document.createElement("th");
+      var input = document.createElement("input");
+      input.className = "filter-input";
+      input.dataset.column = column;
+      input.value = state.columnFilters[column] ? state.columnFilters[column].value : "";
+      input.placeholder = "输入或点侧栏筛选";
+      th.appendChild(input);
+      filterRow.appendChild(th);
+    });
     els.tableHead.appendChild(titleRow);
+    els.tableHead.appendChild(filterRow);
+  }
 
+  function renderTableBody(rows) {
+    var visibleColumns = state.columns.filter(function (column) { return state.visibleColumns.has(column); });
+    var start = (state.page - 1) * state.pageSize;
+    var pageRows = rows.slice(start, start + state.pageSize);
+    els.tableBody.textContent = "";
     pageRows.forEach(function (row) {
       var tr = document.createElement("tr");
       visibleColumns.forEach(function (column) {
         var td = document.createElement("td");
-        td.textContent = compactSpecValue(column, row[column]);
-        td.title = row[column] == null || row[column] === "" ? "" : String(row[column]);
+        td.textContent = row[column] == null || row[column] === "" ? "-" : row[column];
         tr.appendChild(td);
       });
       els.tableBody.appendChild(tr);
     });
-
     els.emptyState.hidden = rows.length !== 0;
   }
 
@@ -568,89 +667,56 @@
     var query = normalizeText(state.columnSearch);
     var fragment = document.createDocumentFragment();
     els.columnList.textContent = "";
-
-    state.columns
-      .filter(function (column) {
-        return !query || normalizeText(column).indexOf(query) !== -1;
-      })
-      .forEach(function (column) {
-        var label = document.createElement("label");
-        var checkbox = document.createElement("input");
-        var text = document.createElement("span");
-        checkbox.type = "checkbox";
-        checkbox.checked = state.visibleColumns.has(column);
-        checkbox.dataset.column = column;
-        text.textContent = column;
-        label.appendChild(checkbox);
-        label.appendChild(text);
-        fragment.appendChild(label);
-      });
-
+    state.columns.filter(function (column) {
+      return !query || normalizeText(column).indexOf(query) !== -1;
+    }).forEach(function (column) {
+      var label = document.createElement("label");
+      var checkbox = document.createElement("input");
+      var text = document.createElement("span");
+      checkbox.type = "checkbox";
+      checkbox.checked = state.visibleColumns.has(column);
+      checkbox.dataset.column = column;
+      text.textContent = column;
+      label.appendChild(checkbox);
+      label.appendChild(text);
+      fragment.appendChild(label);
+    });
     els.columnList.appendChild(fragment);
   }
 
-  function activeFilterText(filter) {
-    if (filter.op === "has_value") {
-      return filter.field + ": 有值";
+  function filterLabel(column, filter) {
+    if (!filter) {
+      return "";
     }
-    if (filter.op === "empty") {
-      return filter.field + ": 无值";
+    if (filter.operator === "contains") {
+      return column + ": " + filter.value;
     }
-    if (filter.op === "gte") {
-      return filter.field + " ≥ " + filter.min;
-    }
-    if (filter.op === "lte") {
-      return filter.field + " ≤ " + filter.max;
-    }
-    if (filter.op === "between") {
-      return filter.field + " " + (filter.min || "-∞") + " 至 " + (filter.max || "+∞");
-    }
-    var label = OPERATORS.find(function (item) { return item[0] === filter.op; });
-    return filter.field + " " + (label ? label[1] : "包含") + " " + filter.value;
-  }
-
-  function addChip(text, type, value) {
-    var chip = document.createElement("span");
-    chip.className = "filter-chip";
-    chip.textContent = text;
-    var close = document.createElement("button");
-    close.type = "button";
-    close.dataset.type = type;
-    close.dataset.value = value || "";
-    close.textContent = "×";
-    chip.appendChild(close);
-    els.activeFilters.appendChild(chip);
+    var symbol = filter.operator === "gte" ? "≥" : (filter.operator === "lte" ? "≤" : "=");
+    return column + " " + symbol + " " + filter.value;
   }
 
   function renderActiveFilters() {
     els.activeFilters.textContent = "";
-    if (state.search) {
-      addChip("搜索: " + state.search, "search");
-    }
-    if (state.brand) {
-      addChip("品牌: " + state.brand, "brand");
-    }
-    if (state.rootStatus) {
-      addChip("root或越狱: " + state.rootStatus, "root");
-    }
-    if (state.blStatus) {
-      addChip("BL锁: " + state.blStatus, "bl");
-    }
-    if (state.keywordSortOrder.trim()) {
-      addChip("关键字排序: " + parseKeywordOrder(state.keywordSortOrder).join(" → "), "keywordSort");
-    }
-    state.advancedFilters.forEach(function (filter) {
-      addChip(activeFilterText(filter), "advanced", filter.id);
+    Object.keys(state.columnFilters).forEach(function (column) {
+      var filter = state.columnFilters[column];
+      if (!filter || filter.value === "") {
+        return;
+      }
+      var chip = document.createElement("span");
+      chip.className = "filter-chip";
+      chip.textContent = filterLabel(column, filter);
+      var close = document.createElement("button");
+      close.type = "button";
+      close.dataset.column = column;
+      close.textContent = "×";
+      chip.appendChild(close);
+      els.activeFilters.appendChild(chip);
     });
   }
 
   function renderDownloads() {
     var files = state.manifest && state.manifest.files ? state.manifest.files : {};
-    var links = [
-      ["完整 JSON", files.latestJson],
-      ["完整 CSV", files.latestCsv],
-    ];
-
+    var links = [["完整 JSON", files.latestJson], ["完整 CSV", files.latestCsv], ["默认筛选 JSON", files.filteredJson], ["默认筛选 CSV", files.filteredCsv]];
     els.downloadList.textContent = "";
     links.forEach(function (item) {
       if (!item[1]) {
@@ -662,186 +728,238 @@
       anchor.download = "";
       els.downloadList.appendChild(anchor);
     });
-
     if (!els.downloadList.children.length) {
       els.downloadList.textContent = "发布后会显示 Release 同款下载文件。";
     }
   }
 
-  function renderAdvancedFilterRows() {
-    els.advancedFilterList.textContent = "";
-    state.advancedFilters.forEach(function (filter) {
-      var row = document.createElement("div");
-      row.className = "advanced-filter-row";
-      row.dataset.id = filter.id;
-
-      var field = document.createElement("select");
-      field.className = "advanced-field";
-      state.columns.forEach(function (column) {
-        var option = document.createElement("option");
-        option.value = column;
-        option.textContent = column;
-        field.appendChild(option);
-      });
-      field.value = filter.field;
-
-      var op = document.createElement("select");
-      op.className = "advanced-op";
-      OPERATORS.forEach(function (item) {
-        var option = document.createElement("option");
-        option.value = item[0];
-        option.textContent = item[1];
-        op.appendChild(option);
-      });
-      op.value = filter.op;
-
-      var value = document.createElement("input");
-      value.className = "advanced-value";
-      value.placeholder = "值";
-      value.value = filter.value || "";
-      value.hidden = ["has_value", "empty", "gte", "lte", "between"].indexOf(filter.op) !== -1;
-
-      var min = document.createElement("input");
-      min.className = "advanced-min";
-      min.inputMode = "decimal";
-      min.placeholder = filter.op === "lte" ? "最大值" : "最小值";
-      min.value = filter.min || "";
-      min.hidden = ["gte", "between"].indexOf(filter.op) === -1;
-
-      var max = document.createElement("input");
-      max.className = "advanced-max";
-      max.inputMode = "decimal";
-      max.placeholder = filter.op === "gte" ? "最小值" : "最大值";
-      max.value = filter.max || "";
-      max.hidden = ["lte", "between"].indexOf(filter.op) === -1;
-
-      if (filter.op === "gte") {
-        min.value = filter.min || filter.value || "";
-      }
-      if (filter.op === "lte") {
-        max.value = filter.max || filter.value || "";
-      }
-
-      var remove = document.createElement("button");
-      remove.type = "button";
-      remove.className = "icon-button advanced-remove";
-      remove.textContent = "×";
-      remove.title = "删除条件";
-
-      row.appendChild(field);
-      row.appendChild(op);
-      row.appendChild(value);
-      row.appendChild(min);
-      row.appendChild(max);
-      row.appendChild(remove);
-      els.advancedFilterList.appendChild(row);
-    });
-  }
-
-  function renderFacetOptions() {
-    var field = state.facetField;
-    var values = uniqueValues(state.rows, field).slice(0, 80);
-    els.facetOptions.textContent = "";
-    values.forEach(function (value) {
-      var button = document.createElement("button");
-      button.type = "button";
-      button.className = "facet-option";
-      button.dataset.value = value;
-      button.textContent = value;
-      els.facetOptions.appendChild(button);
-    });
-  }
-
   function renderHistory() {
+    els.historySyncId.value = state.syncId;
     els.historyList.textContent = "";
-    state.history.forEach(function (record) {
-      var item = document.createElement("div");
-      item.className = "history-item";
-      item.dataset.id = record.id;
-
+    if (!state.histories.length) {
+      els.historyList.textContent = "暂无筛选历史。";
+      return;
+    }
+    state.histories.slice().reverse().forEach(function (item) {
+      var row = document.createElement("div");
+      row.className = "history-item";
       var button = document.createElement("button");
       button.type = "button";
-      button.className = "history-apply";
-      button.textContent = record.name || "未命名筛选";
-
+      button.dataset.historyId = item.id;
+      button.textContent = item.name || "未命名筛选";
       var meta = document.createElement("span");
-      meta.textContent = new Date(record.updatedAt || record.createdAt || Date.now()).toLocaleString("zh-CN", { hour12: false });
-
-      var remove = document.createElement("button");
-      remove.type = "button";
-      remove.className = "history-delete";
-      remove.textContent = "×";
-      remove.title = "删除历史";
-
-      item.appendChild(button);
-      item.appendChild(meta);
-      item.appendChild(remove);
-      els.historyList.appendChild(item);
+      meta.textContent = (item.resultCount || 0) + " 台 · " + new Date(item.createdAt || Date.now()).toLocaleString("zh-CN");
+      row.appendChild(button);
+      row.appendChild(meta);
+      els.historyList.appendChild(row);
     });
   }
 
-  function renderDataViews() {
+
+  function renderMode() {
+    var center = state.mode !== "table";
+    els.filterCenter.hidden = !center;
+    els.tableRegion.hidden = center;
+    els.centerMode.className = center ? "segment active" : "segment";
+    els.tableMode.className = center ? "segment" : "segment active";
+  }
+
+  function renderCenterFilters() {
+    if (els.centerBrandFilter && els.centerSeriesFilter) {
+      renderOptions(els.centerBrandFilter, uniqueValues(state.rows.map(function(r){ return r["品牌"] || r["brand"] || ""; }), "品牌"), "品牌");
+      renderOptions(els.centerSeriesFilter, uniqueBaseModels(state.brand ? state.rows.filter(function (row) { return (row["品牌"] || row["brand"]) === state.brand; }) : state.rows), "型号系列");
+      els.centerBrandFilter.value = state.brand;
+      els.centerSeriesFilter.value = state.series;
+    }
+    els.centerConditionList.textContent = "";
+    (state.config.conditions || []).forEach(function (condition) {
+      var label = document.createElement("label");
+      var input = document.createElement("input");
+      input.type = "checkbox";
+      input.dataset.conditionId = condition.id;
+      input.checked = condition.type === "feature" ? Boolean(state.featureFilters[condition.id]) : Boolean(state.rangeFilters[condition.id]);
+      label.appendChild(input);
+      label.appendChild(document.createTextNode(conditionTagLabel(condition)));
+      els.centerConditionList.appendChild(label);
+    });
+  }
+
+  function conditionTagLabel(condition) {
+    if (condition.type !== "range") {
+      return condition.label;
+    }
+    var filter = state.rangeFilters[condition.id] || {};
+    var parts = [];
+    if (filter.max !== "" && filter.max != null) {
+      parts.push("≤" + filter.max);
+    }
+    if (filter.min !== "" && filter.min != null) {
+      parts.push("≥" + filter.min);
+    }
+    return condition.label + (parts.length ? " " + parts.join(" ") : "");
+  }
+
+  function renderSelectedTags() {
+    els.selectedTags.textContent = "";
+    [["品牌", state.brand], ["型号系列", state.series]].forEach(function (item) {
+      if (!item[1]) { return; }
+      var tag = document.createElement("span");
+      tag.textContent = item[0] + ": " + item[1];
+      els.selectedTags.appendChild(tag);
+    });
+    (state.config.conditions || []).forEach(function (condition) {
+      if (state.featureFilters[condition.id] || state.rangeFilters[condition.id]) {
+        var tag = document.createElement("span");
+        tag.textContent = conditionTagLabel(condition);
+        els.selectedTags.appendChild(tag);
+      }
+    });
+  }
+
+  function appendCardMeta(container, row, fields) {
+    fields.forEach(function (field) {
+      if (row[field] && row[field] !== "-") {
+        var chip = document.createElement("span");
+        chip.textContent = field + ": " + row[field];
+        container.appendChild(chip);
+      }
+    });
+    if (row["验证状态"] === "三源一致") {
+      var badge = document.createElement("span");
+      badge.className = "verified-badge triple-source";
+      badge.textContent = "三源一致";
+      container.appendChild(badge);
+    } else if (row["验证状态"] === "双源一致") {
+      var badge = document.createElement("span");
+      badge.className = "verified-badge dual-source";
+      badge.textContent = "双源一致";
+      container.appendChild(badge);
+    }
+  }
+
+  function renderCards(groups) {
+    els.cardList.textContent = "";
+    groups.slice(0, state.cardLimit).forEach(function (group, index) {
+      var card = document.createElement("article");
+      card.className = "series-card";
+      var expanded = state.expandedSeries.has(group.key);
+      var detailId = "series-models-" + index;
+      var toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.className = "series-card-toggle";
+      toggle.dataset.seriesKey = group.key;
+      toggle.setAttribute("aria-expanded", String(expanded));
+      toggle.setAttribute("aria-controls", detailId);
+      var title = document.createElement("h3");
+      title.textContent = group.name;
+      var count = document.createElement("small");
+      count.className = "series-match-count";
+      count.textContent = group.rows.length + " 个版本符合条件";
+      var indicator = document.createElement("span");
+      indicator.className = "series-expand-indicator";
+      indicator.setAttribute("aria-hidden", "true");
+      indicator.textContent = expanded ? "收起" : "查看型号";
+      toggle.appendChild(title);
+      toggle.appendChild(count);
+      toggle.appendChild(indicator);
+      card.appendChild(toggle);
+
+      var meta = document.createElement("div");
+      meta.className = "card-meta";
+      appendCardMeta(meta, group.representative, ["品牌", "手机类型", "价格", "处理器", "电池"]);
+      card.appendChild(meta);
+
+      if (expanded) {
+        var details = document.createElement("div");
+        details.className = "series-model-list";
+        details.id = detailId;
+        group.rows.forEach(function (row) {
+          var model = document.createElement("div");
+          model.className = "series-model-row";
+          var modelTitle = document.createElement("h4");
+          modelTitle.textContent = row["型号"] || "未命名型号";
+          var modelMeta = document.createElement("div");
+          modelMeta.className = "card-meta";
+          appendCardMeta(modelMeta, row, ["上市时间", "手机类型", "价格", "处理器", "电池"]);
+          model.appendChild(modelTitle);
+          model.appendChild(modelMeta);
+          details.appendChild(model);
+        });
+        card.appendChild(details);
+      }
+      els.cardList.appendChild(card);
+    });
+    els.loadMoreCards.hidden = groups.length <= state.cardLimit;
+  }
+
+  function renderCustomSortPanel() {
+    if (!els.customSortLevels) { return; }
+    els.customSortLevels.textContent = "";
+    (state.sortLevels || []).forEach(function (level, index) {
+      var row = document.createElement("div");
+      row.className = "sort-level";
+      row.dataset.index = String(index);
+      row.innerHTML = '<label>字段<select data-role="field"></select></label><label>方向<select data-role="dir"><option value="asc">升序</option><option value="desc">降序</option></select></label><label>自定义关键字顺序<textarea data-role="customOrder" placeholder="旗舰, 中端, 入门"></textarea></label><button type="button" data-role="up">上移</button><button type="button" data-role="down">下移</button><button type="button" data-role="remove">删除</button>';
+      var select = row.querySelectorAll ? row.querySelectorAll('select[data-role="field"]')[0] : null;
+      if (select) {
+        state.columns.forEach(function (column) { var option = document.createElement("option"); option.value = column; option.textContent = column; select.appendChild(option); });
+        select.value = level.field || "";
+      }
+      var dir = row.querySelectorAll ? row.querySelectorAll('select[data-role="dir"]')[0] : null;
+      if (dir) { dir.value = level.dir || "asc"; }
+      var custom = row.querySelectorAll ? row.querySelectorAll('textarea[data-role="customOrder"]')[0] : null;
+      if (custom) { custom.value = level.customOrder || ""; }
+      els.customSortLevels.appendChild(row);
+    });
+  }
+
+  function renderResultsOnly() {
+    syncSeriesViewState();
     var filtered = getFilteredRows();
+    var modelGroups = groupRowsByModel(filtered);
     var pageCount = Math.max(1, Math.ceil(filtered.length / state.pageSize));
     if (state.page > pageCount) {
       state.page = pageCount;
     }
-
     els.visibleCount.textContent = String(filtered.length);
     els.totalCount.textContent = String(state.rows.length);
     els.columnCount.textContent = String(state.visibleColumns.size);
-    els.verifiedCount.textContent = String(state.rows.filter(function (row) {
-      return /^[双三]源(?:一致|差异)$/.test(String(row["验证状态"] || ""));
-    }).length);
-    var multiUnverifiedCount = state.rows.filter(function (row) {
-      return String(row["验证状态"] || "") === "多源未校验";
-    }).length;
-    els.coverageNote.textContent = "来源卡片按记录覆盖统计；双源或三源仅统计已实际比对记录。另有 " + multiUnverifiedCount + " 条多源未校验，仅表示来源命中，不计为已验证。";
-    function sourceCoverage(source) {
-      return state.rows.filter(function (row) {
-        return String(row["数据来源"] || "").indexOf(source) !== -1;
-      }).length;
-    }
-    els.zolCount.textContent = String(sourceCoverage("中关村在线"));
-    els.pconlineCount.textContent = String(sourceCoverage("太平洋电脑网"));
-    els.cnmoCount.textContent = String(sourceCoverage("CNMO"));
+    var tripleCount = state.rows.filter(function (row) { return row["验证状态"] === "三源一致"; }).length;
+    var dualCount = state.rows.filter(function (row) { return row["验证状态"] === "双源一致"; }).length;
+    var singleCount = state.rows.filter(function (row) { return row["验证状态"] === "单源"; }).length;
+    els.verifiedCount.textContent = String(tripleCount + dualCount);
+    els.verifiedCount.title = "三源一致: " + tripleCount + " | 双源一致: " + dualCount + " | 单源: " + singleCount;
+    els.zolCount.textContent = String(state.rows.filter(function (row) { return rowHasSource(row, "中关村在线"); }).length);
+    els.pconlineCount.textContent = String(state.rows.filter(function (row) { return rowHasSource(row, "太平洋电脑网"); }).length);
+    els.cnmoCount.textContent = String(state.rows.filter(function (row) { return rowHasSource(row, "CNMO"); }).length);
     els.pageInfo.textContent = "第 " + state.page + " / " + pageCount + " 页";
     els.pageJump.max = String(pageCount);
     els.pageJump.value = String(state.page);
     els.prevPage.disabled = state.page <= 1;
     els.nextPage.disabled = state.page >= pageCount;
-
-    renderTable(filtered);
-    renderColumnList();
+    els.centerVisibleCount.textContent = String(modelGroups.length);
+    renderCards(modelGroups);
+    renderSelectedTags();
+    renderTableBody(filtered);
     renderActiveFilters();
+  }
+
+  function renderEverything() {
+    renderMode();
+    renderFilters();
+    renderCenterFilters();
+    renderConditions();
+    renderTableHead();
+    renderColumnList();
     renderDownloads();
-  }
-
-  function jumpToPage() {
-    var requested = Number(els.pageJump.value);
-    var pageCount = Math.max(1, Math.ceil(getFilteredRows().length / state.pageSize));
-    if (!Number.isInteger(requested)) {
-      els.pageJump.value = String(state.page);
-      return;
-    }
-    state.page = Math.min(pageCount, Math.max(1, requested));
-    renderDataViews();
-  }
-
-  function scheduleRender() {
-    clearTimeout(state.inputTimer);
-    state.inputTimer = setTimeout(function () {
-      state.page = 1;
-      renderDataViews();
-    }, 160);
+    renderHistory();
+    renderCustomSortPanel();
+    renderResultsOnly();
   }
 
   function csvEscape(value) {
     var text = String(value == null ? "" : value);
-    if (/[",\n\r]/.test(text)) {
-      return '"' + text.replace(/"/g, '""') + '"';
-    }
-    return text;
+    return /[",\n\r]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
   }
 
   function downloadBlob(name, type, content) {
@@ -867,259 +985,367 @@
   }
 
   function exportCurrentJson() {
-    downloadBlob(
-      "phone-config-current.json",
-      "application/json;charset=utf-8",
-      JSON.stringify(getFilteredRows(), null, 2)
-    );
+    downloadBlob("phone-config-current.json", "application/json;charset=utf-8", JSON.stringify(getFilteredRows(), null, 2));
   }
 
-  function currentCriteria() {
+  function snapshotFilters() {
     return {
       search: state.search,
       brand: state.brand,
-      rootStatus: state.rootStatus,
-      blStatus: state.blStatus,
-      advancedFilters: state.advancedFilters.map(function (filter) { return Object.assign({}, filter); }),
-      visibleColumns: Array.from(state.visibleColumns),
+      series: state.series,
+      columnFilters: state.columnFilters,
+      rangeFilters: state.rangeFilters,
+      featureFilters: state.featureFilters,
       sortField: state.sortField,
       sortDir: state.sortDir,
-      pageSize: state.pageSize,
-      keywordSortField: state.keywordSortField,
-      keywordSortOrder: state.keywordSortOrder,
+      sortLevels: state.sortLevels,
+      mode: state.mode,
+      visibleColumns: Array.from(state.visibleColumns)
     };
   }
 
-  function applyCriteria(criteria) {
-    state.search = criteria.search || "";
-    state.brand = criteria.brand || "";
-    state.rootStatus = criteria.rootStatus || "";
-    state.blStatus = criteria.blStatus || "";
-    state.advancedFilters = (criteria.advancedFilters || []).map(function (filter) {
-      return Object.assign(newFilter(filter.field, filter.op, filter.value), filter);
-    });
-    state.visibleColumns = new Set((criteria.visibleColumns || []).filter(function (column) {
-      return state.columns.indexOf(column) !== -1;
-    }));
-    if (!state.visibleColumns.size) {
-      state.visibleColumns = new Set(state.columns.filter(function (column) {
-        return !DEFAULT_HIDDEN_COLUMNS.has(column);
-      }).slice(0, Math.min(18, state.columns.length)));
+  function applySnapshot(snapshot) {
+    state.search = snapshot.search || "";
+    state.brand = snapshot.brand || "";
+    state.series = snapshot.series || "";
+    state.columnFilters = snapshot.columnFilters || {};
+    state.rangeFilters = snapshot.rangeFilters || {};
+    state.featureFilters = snapshot.featureFilters || {};
+    state.sortField = snapshot.sortField || "";
+    state.sortDir = snapshot.sortDir || "asc";
+    state.sortLevels = Array.isArray(snapshot.sortLevels) ? snapshot.sortLevels : [];
+    state.mode = snapshot.mode || state.mode || "center";
+    if (Array.isArray(snapshot.visibleColumns)) {
+      state.visibleColumns = new Set(snapshot.visibleColumns.filter(function (column) {
+        return state.columns.indexOf(column) !== -1;
+      }));
     }
-    state.sortField = criteria.sortField || "";
-    state.sortDir = criteria.sortDir || "asc";
-    state.pageSize = Number(criteria.pageSize || 100);
-    state.keywordSortField = criteria.keywordSortField || "型号";
-    state.keywordSortOrder = criteria.keywordSortOrder || "";
-    state.page = 1;
-
     els.globalSearch.value = state.search;
-    els.brandFilter.value = state.brand;
-    els.rootFilter.value = state.rootStatus;
-    els.blFilter.value = state.blStatus;
-    els.pageSize.value = String(state.pageSize);
-    els.keywordSortField.value = state.keywordSortField;
-    els.keywordSortOrder.value = state.keywordSortOrder;
-    renderAdvancedFilterRows();
-    renderDataViews();
+    state.page = 1;
+    renderEverything();
   }
 
-  function saveHistory() {
-    var now = new Date().toISOString();
-    var record = {
-      id: "h_" + Date.now().toString(36),
-      name: els.historyName.value.trim() || new Date().toLocaleString("zh-CN", { hour12: false }) + " 筛选",
-      createdAt: now,
-      updatedAt: now,
-      criteria: currentCriteria(),
-    };
-    state.history = [record].concat(state.history).slice(0, 80);
-    writeLocalJson(STORAGE_KEYS.history, state.history);
-    els.historyName.value = "";
-    renderHistory();
-  }
-
-  function setSyncStatus(text) {
-    els.historySyncStatus.textContent = text;
-  }
-
-  function gistHeaders() {
-    var token = els.gistToken.value.trim();
-    if (!token) {
-      throw new Error("缺少 GitHub Gist Token");
+  function generateSyncId() {
+    if (window.crypto && crypto.getRandomValues) {
+      var bytes = new Uint8Array(8);
+      crypto.getRandomValues(bytes);
+      return Array.from(bytes).map(function (byte) {
+        return byte.toString(16).padStart(2, "0");
+      }).join("");
     }
-    localStorage.setItem(STORAGE_KEYS.gistToken, token);
+    return String(Date.now()) + Math.random().toString(16).slice(2);
+  }
+
+  function cacheHistories() {
+    localStorage.setItem(STORAGE_HISTORY_KEY, JSON.stringify(state.histories));
+  }
+
+  function loadCachedHistories() {
+    try {
+      state.histories = JSON.parse(localStorage.getItem(STORAGE_HISTORY_KEY) || "[]");
+    } catch (error) {
+      state.histories = [];
+    }
+  }
+
+  function githubHistoryConfigured() {
+    return HISTORY_PROVIDER === "github" &&
+      GITHUB_HISTORY &&
+      GITHUB_HISTORY.owner &&
+      GITHUB_HISTORY.repo &&
+      GITHUB_HISTORY.path;
+  }
+
+  function githubHistoryApiUrl() {
+    return "https://api.github.com/repos/" +
+      encodeURIComponent(GITHUB_HISTORY.owner) + "/" +
+      encodeURIComponent(GITHUB_HISTORY.repo) + "/contents/" +
+      GITHUB_HISTORY.path.split("/").map(encodeURIComponent).join("/");
+  }
+
+  function githubHeaders() {
     return {
-      "Accept": "application/vnd.github+json",
-      "Authorization": "Bearer " + token,
-      "Content-Type": "application/json",
-      "X-GitHub-Api-Version": "2022-11-28",
+      Accept: "application/vnd.github+json",
+      Authorization: "Bearer " + state.githubToken,
+      "X-GitHub-Api-Version": "2022-11-28"
     };
   }
 
-  function gistPayload() {
-    return {
-      version: 2,
-      updatedAt: new Date().toISOString(),
-      history: state.history,
-    };
+  function decodeBase64Json(content) {
+    var clean = String(content || "").replace(/\s/g, "");
+    var binary = atob(clean);
+    var bytes = new Uint8Array(binary.length);
+    for (var i = 0; i < binary.length; i += 1) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return JSON.parse(new TextDecoder("utf-8").decode(bytes));
   }
 
-  function requestGist(url, options) {
-    return fetch(url, options).then(function (response) {
+  function encodeBase64Json(data) {
+    var json = JSON.stringify(data, null, 2);
+    var bytes = new TextEncoder().encode(json);
+    var chunk = "";
+    var parts = [];
+    bytes.forEach(function (byte, index) {
+      chunk += String.fromCharCode(byte);
+      if (chunk.length >= 8192 || index === bytes.length - 1) {
+        parts.push(chunk);
+        chunk = "";
+      }
+    });
+    return btoa(parts.join(""));
+  }
+
+  function normalizeHistoryStore(store) {
+    var next = store && typeof store === "object" ? store : {};
+    if (!next.version) {
+      next.version = 1;
+    }
+    if (!next.profiles || typeof next.profiles !== "object") {
+      next.profiles = {};
+    }
+    return next;
+  }
+
+  function readGithubHistoryStore() {
+    var url = githubHistoryApiUrl() + "?ref=" + encodeURIComponent(GITHUB_HISTORY.branch || "main");
+    return fetch(url, {
+      cache: "no-store",
+      headers: githubHeaders()
+    }).then(function (response) {
+      if (response.status === 404) {
+        return { sha: null, store: normalizeHistoryStore(null) };
+      }
       if (!response.ok) {
-        throw new Error("GitHub API " + response.status);
+        throw new Error("GitHub HTTP " + response.status);
       }
       return response.json();
+    }).then(function (data) {
+      if (data.store) {
+        return data;
+      }
+      return {
+        sha: data.sha,
+        store: normalizeHistoryStore(decodeBase64Json(data.content))
+      };
     });
   }
 
-  function findOrCreateGist() {
-    var saved = localStorage.getItem(STORAGE_KEYS.gistId);
-    var headers = gistHeaders();
-    if (saved) {
-      return Promise.resolve(saved);
+  function loadGithubHistory() {
+    if (!state.githubToken) {
+      els.historyStatus.textContent = "GitHub 私有历史仓库已配置，保存 Token 后可跨设备同步";
+      renderHistory();
+      return Promise.resolve();
     }
-    return requestGist("https://api.github.com/gists?per_page=100", { headers: headers })
-      .then(function (gists) {
-        var found = gists.find(function (gist) {
-          return gist.description === HISTORY_GIST_DESCRIPTION && gist.files && gist.files[HISTORY_FILE];
-        });
-        if (found) {
-          localStorage.setItem(STORAGE_KEYS.gistId, found.id);
-          return found.id;
+    els.historyStatus.textContent = "正在从 GitHub 私有仓库同步...";
+    return readGithubHistoryStore().then(function (result) {
+      state.histories = Array.isArray(result.store.profiles[state.syncId]) ?
+        result.store.profiles[state.syncId] : [];
+      cacheHistories();
+      els.historyStatus.textContent = "已从 GitHub 同步 " + state.histories.length + " 条历史";
+    }).catch(function () {
+      els.historyStatus.textContent = "GitHub 同步失败，已使用本机缓存";
+    }).then(renderHistory);
+  }
+
+  function saveGithubHistory(histories, retries) {
+    return readGithubHistoryStore().then(function (result) {
+      var store = normalizeHistoryStore(result.store);
+      store.profiles[state.syncId] = histories.slice(-50);
+      store.updatedAt = new Date().toISOString();
+      var body = {
+        message: "Update phone filter history",
+        content: encodeBase64Json(store),
+        branch: GITHUB_HISTORY.branch || "main"
+      };
+      if (result.sha) {
+        body.sha = result.sha;
+      }
+      return fetch(githubHistoryApiUrl(), {
+        method: "PUT",
+        headers: Object.assign({ "Content-Type": "application/json" }, githubHeaders()),
+        body: JSON.stringify(body)
+      }).then(function (response) {
+        if (response.status === 409 && retries > 0) {
+          return saveGithubHistory(histories, retries - 1);
         }
-        var files = {};
-        files[HISTORY_FILE] = {
-          content: JSON.stringify(gistPayload(), null, 2),
-        };
-        return requestGist("https://api.github.com/gists", {
-          method: "POST",
-          headers: headers,
-          body: JSON.stringify({
-            description: HISTORY_GIST_DESCRIPTION,
-            public: false,
-            files: files,
-          }),
-        }).then(function (gist) {
-          localStorage.setItem(STORAGE_KEYS.gistId, gist.id);
-          return gist.id;
-        });
+        if (!response.ok) {
+          throw new Error("GitHub HTTP " + response.status);
+        }
       });
-  }
-
-  function pullHistory() {
-    setSyncStatus("正在拉取...");
-    return findOrCreateGist()
-      .then(function (gistId) {
-        return requestGist("https://api.github.com/gists/" + gistId, { headers: gistHeaders() });
-      })
-      .then(function (gist) {
-        var file = gist.files && gist.files[HISTORY_FILE];
-        var remote = file && file.content ? JSON.parse(file.content) : { history: [] };
-        var merged = {};
-        state.history.concat(remote.history || []).forEach(function (record) {
-          merged[record.id] = record;
-        });
-        state.history = Object.keys(merged)
-          .map(function (key) { return merged[key]; })
-          .sort(function (a, b) {
-            return String(b.updatedAt || b.createdAt).localeCompare(String(a.updatedAt || a.createdAt));
-          })
-          .slice(0, 80);
-        writeLocalJson(STORAGE_KEYS.history, state.history);
-        renderHistory();
-        setSyncStatus("已拉取并合并历史");
-      })
-      .catch(function (error) {
-        setSyncStatus(error.message);
-      });
-  }
-
-  function pushHistory() {
-    setSyncStatus("正在推送...");
-    return findOrCreateGist()
-      .then(function (gistId) {
-        return requestGist("https://api.github.com/gists/" + gistId, {
-          method: "PATCH",
-          headers: gistHeaders(),
-          body: JSON.stringify({
-            description: HISTORY_GIST_DESCRIPTION,
-            files: {
-              [HISTORY_FILE]: {
-                content: JSON.stringify(gistPayload(), null, 2),
-              },
-            },
-          }),
-        });
-      })
-      .then(function () {
-        setSyncStatus("已推送到私有 Gist");
-      })
-      .catch(function (error) {
-        setSyncStatus(error.message);
-      });
-  }
-
-  function getAdvancedFilter(id) {
-    return state.advancedFilters.find(function (filter) { return filter.id === id; });
-  }
-
-  function addEqualityFilter(field, value) {
-    var existing = state.advancedFilters.find(function (filter) {
-      return filter.field === field && filter.op === "equals";
     });
-    if (existing) {
-      existing.value = value;
-    } else {
-      state.advancedFilters.push(newFilter(field, "equals", value));
+  }
+
+  function loadWorkerHistory() {
+    if (!state.syncId) {
+      return Promise.resolve();
     }
-    renderAdvancedFilterRows();
-    renderDataViews();
+    els.historyStatus.textContent = "正在同步历史...";
+    return fetchJson(HISTORY_API + "?syncId=" + encodeURIComponent(state.syncId))
+      .then(function (data) {
+        state.histories = Array.isArray(data.histories) ? data.histories : [];
+        cacheHistories();
+        els.historyStatus.textContent = "已同步 " + state.histories.length + " 条历史";
+      })
+      .catch(function () {
+        els.historyStatus.textContent = "服务端历史暂不可用，已使用本机缓存";
+      })
+      .then(renderHistory);
+  }
+
+  function loadRemoteHistory() {
+    if (!state.syncId) {
+      return Promise.resolve();
+    }
+    if (githubHistoryConfigured()) {
+      return loadGithubHistory();
+    }
+    return loadWorkerHistory();
+  }
+
+  function saveRemoteHistory() {
+    var rows = getFilteredRows();
+    var snapshot = snapshotFilters();
+    var activeNames = [];
+    (state.config.conditions || []).forEach(function (condition) {
+      if (state.featureFilters[condition.id] || state.rangeFilters[condition.id]) {
+        activeNames.push(condition.label);
+      }
+    });
+    var name = activeNames.length ? activeNames.join(" + ") : (state.search || state.brand || state.series || "自定义筛选");
+    var item = {
+      id: String(Date.now()),
+      name: name,
+      state: snapshot,
+      resultCount: rows.length,
+      createdAt: new Date().toISOString()
+    };
+
+    state.histories.push(item);
+    state.histories = state.histories.slice(-50);
+    cacheHistories();
+    renderHistory();
+    els.historyStatus.textContent = "正在保存...";
+
+    if (githubHistoryConfigured()) {
+      if (!state.githubToken) {
+        els.historyStatus.textContent = "已保存在本机；保存 GitHub Token 后可跨设备同步";
+        return Promise.resolve();
+      }
+      return saveGithubHistory(state.histories, 1).then(function () {
+        els.historyStatus.textContent = "已保存到 GitHub 私有仓库";
+      }).catch(function () {
+        els.historyStatus.textContent = "GitHub 保存失败，已保存在本机";
+      });
+    }
+
+    return fetch(HISTORY_API, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ syncId: state.syncId, history: item })
+    }).then(function (response) {
+      if (!response.ok) {
+        throw new Error("HTTP " + response.status);
+      }
+      els.historyStatus.textContent = "已保存到服务端";
+    }).catch(function () {
+      els.historyStatus.textContent = "服务端保存失败，已保存在本机";
+    });
   }
 
   function bindEvents() {
-    ["compositionstart", "compositionend"].forEach(function (eventName) {
-      document.addEventListener(eventName, function (event) {
-        if (!event.target.matches("input")) {
-          return;
-        }
-        state.composing = eventName === "compositionstart";
-        if (!state.composing) {
-          scheduleRender();
-        }
-      });
-    });
 
-    els.globalSearch.addEventListener("input", function (event) {
-      state.search = event.target.value;
-      if (!state.composing) {
-        scheduleRender();
+    els.centerMode.addEventListener("click", function () { state.mode = "center"; renderEverything(); });
+    els.tableMode.addEventListener("click", function () {
+      state.mode = "table";
+      state.expandedSeries.clear();
+      renderEverything();
+    });
+    if (els.centerBrandFilter && els.centerSeriesFilter) {
+      els.centerBrandFilter.addEventListener("change", function (event) { state.brand = event.target.value; state.series = ""; state.page = 1; state.cardLimit = 24; renderEverything(); });
+      els.centerSeriesFilter.addEventListener("change", function (event) { state.series = event.target.value; state.page = 1; state.cardLimit = 24; renderResultsOnly(); renderCenterFilters(); });
+    }
+    els.centerConditionList.addEventListener("change", function (event) {
+      if (event.target.type !== "checkbox") { return; }
+      var condition = (state.config.conditions || []).find(function (item) { return item.id === event.target.dataset.conditionId; });
+      if (!condition) { return; }
+      if (condition.type === "range") {
+        if (event.target.checked) { state.rangeFilters[condition.id] = { min: condition.min || "", max: condition.max || "" }; }
+        else { delete state.rangeFilters[condition.id]; }
+      } else {
+        state.featureFilters[condition.id] = event.target.checked;
+        if (!event.target.checked) { delete state.featureFilters[condition.id]; }
       }
+      state.page = 1; state.cardLimit = 24; renderConditions(); renderCenterFilters(); renderResultsOnly();
+    });
+    els.cardList.addEventListener("click", function (event) {
+      var toggle = event.target.closest(".series-card-toggle");
+      if (!toggle) { return; }
+      var key = toggle.dataset.seriesKey;
+      if (state.expandedSeries.has(key)) {
+        state.expandedSeries.delete(key);
+      } else {
+        state.expandedSeries.add(key);
+      }
+      renderResultsOnly();
+    });
+    els.loadMoreCards.addEventListener("click", function () { state.cardLimit += 24; renderResultsOnly(); });
+    els.addSortLevel.addEventListener("click", function () { state.sortLevels.push({ field: state.columns[0] || "", dir: "asc", customOrder: "" }); state.sortField = ""; renderCustomSortPanel(); renderResultsOnly(); });
+    els.clearSortLevels.addEventListener("click", function () { state.sortLevels = []; state.sortField = ""; state.sortDir = "asc"; renderCustomSortPanel(); renderTableHead(); renderResultsOnly(); });
+    els.customSortLevels.addEventListener("change", function (event) {
+      var row = event.target.closest(".sort-level"); if (!row) { return; }
+      var level = state.sortLevels[Number(row.dataset.index)]; if (!level) { return; }
+      level[event.target.dataset.role] = event.target.value; state.sortField = ""; renderResultsOnly();
+    });
+    els.customSortLevels.addEventListener("input", function (event) {
+      if (event.target.dataset.role !== "customOrder") { return; }
+      var row = event.target.closest(".sort-level"); var level = state.sortLevels[Number(row.dataset.index)]; if (!level) { return; }
+      level.customOrder = event.target.value; state.sortField = ""; renderResultsOnly();
+    });
+    els.customSortLevels.addEventListener("click", function (event) {
+      var role = event.target.dataset.role; if (["remove", "up", "down"].indexOf(role) === -1) { return; }
+      var row = event.target.closest(".sort-level"); var index = Number(row.dataset.index);
+      if (role === "remove") { state.sortLevels.splice(index, 1); }
+      if (role === "up" && index > 0) { var prev = state.sortLevels[index - 1]; state.sortLevels[index - 1] = state.sortLevels[index]; state.sortLevels[index] = prev; }
+      if (role === "down" && index < state.sortLevels.length - 1) { var next = state.sortLevels[index + 1]; state.sortLevels[index + 1] = state.sortLevels[index]; state.sortLevels[index] = next; }
+      renderCustomSortPanel(); renderResultsOnly();
     });
 
-    els.brandFilter.addEventListener("change", function (event) {
-      state.brand = event.target.value;
+    els.globalSearch.addEventListener("compositionstart", function () { state.composing = true; });
+    els.globalSearch.addEventListener("compositionend", function (event) {
+      state.composing = false;
+      state.search = event.target.value;
       state.page = 1;
-      renderDataViews();
+      renderResultsOnly();
+    });
+    els.globalSearch.addEventListener("input", function (event) {
+      if (state.composing) {
+        return;
+      }
+      state.search = event.target.value;
+      state.page = 1;
+      renderResultsOnly();
     });
 
-    els.rootFilter.addEventListener("change", function (event) {
-      state.rootStatus = event.target.value;
-      state.page = 1;
-      renderDataViews();
-    });
+    if (els.brandFilter && els.seriesFilter) {
+      els.brandFilter.addEventListener("change", function (event) {
+        state.brand = event.target.value;
+        state.series = "";
+        state.page = 1;
+        renderEverything();
+      });
 
-    els.blFilter.addEventListener("change", function (event) {
-      state.blStatus = event.target.value;
-      state.page = 1;
-      renderDataViews();
-    });
+      els.seriesFilter.addEventListener("change", function (event) {
+        state.series = event.target.value;
+        state.page = 1;
+        renderResultsOnly();
+      });
+    }
 
     els.pageSize.addEventListener("change", function (event) {
       state.pageSize = Number(event.target.value);
       state.page = 1;
-      renderDataViews();
+      renderResultsOnly();
     });
 
     els.tableHead.addEventListener("click", function (event) {
@@ -1128,152 +1354,89 @@
         return;
       }
       var column = button.dataset.column;
+      state.sortLevels = [];
       if (state.sortField === column) {
         state.sortDir = state.sortDir === "asc" ? "desc" : "asc";
       } else {
         state.sortField = column;
         state.sortDir = "asc";
       }
-      renderDataViews();
+      renderTableHead();
+      renderResultsOnly();
     });
 
-    els.addAdvancedFilter.addEventListener("click", function () {
-      state.advancedFilters.push(newFilter());
-      renderAdvancedFilterRows();
-      renderDataViews();
-    });
-
-    els.advancedFilterList.addEventListener("change", function (event) {
-      var row = event.target.closest(".advanced-filter-row");
-      var filter = row ? getAdvancedFilter(row.dataset.id) : null;
-      if (!filter) {
+    els.tableHead.addEventListener("compositionstart", function () { state.composing = true; });
+    els.tableHead.addEventListener("compositionend", function (event) {
+      if (!event.target.classList.contains("filter-input")) {
         return;
       }
-      if (event.target.classList.contains("advanced-field")) {
-        filter.field = event.target.value;
-      }
-      if (event.target.classList.contains("advanced-op")) {
-        filter.op = event.target.value;
-      }
-      renderAdvancedFilterRows();
-      renderDataViews();
+      state.composing = false;
+      state.columnFilters[event.target.dataset.column] = { operator: "contains", value: event.target.value };
+      state.page = 1;
+      renderResultsOnly();
     });
-
-    els.advancedFilterList.addEventListener("input", function (event) {
-      var row = event.target.closest(".advanced-filter-row");
-      var filter = row ? getAdvancedFilter(row.dataset.id) : null;
-      if (!filter) {
+    els.tableHead.addEventListener("input", function (event) {
+      if (!event.target.classList.contains("filter-input") || state.composing) {
         return;
       }
-      if (event.target.classList.contains("advanced-value")) {
-        filter.value = event.target.value;
-      }
-      if (event.target.classList.contains("advanced-min")) {
-        filter.min = event.target.value;
-      }
-      if (event.target.classList.contains("advanced-max")) {
-        filter.max = event.target.value;
-      }
-      if (!state.composing) {
-        scheduleRender();
-      }
+      state.columnFilters[event.target.dataset.column] = { operator: "contains", value: event.target.value };
+      state.page = 1;
+      renderResultsOnly();
     });
 
-    els.advancedFilterList.addEventListener("click", function (event) {
-      if (!event.target.classList.contains("advanced-remove")) {
+    els.conditionList.addEventListener("change", function (event) {
+      if (event.target.type !== "checkbox") {
         return;
       }
-      var row = event.target.closest(".advanced-filter-row");
-      state.advancedFilters = state.advancedFilters.filter(function (filter) {
-        return filter.id !== row.dataset.id;
+      state.featureFilters[event.target.dataset.conditionId] = event.target.checked;
+      if (!event.target.checked) {
+        delete state.featureFilters[event.target.dataset.conditionId];
+      }
+      state.page = 1;
+      renderCenterFilters();
+      renderSelectedTags();
+      renderResultsOnly();
+    });
+
+    els.conditionList.addEventListener("click", function (event) {
+      if (event.target.tagName !== "BUTTON") {
+        return;
+      }
+      var id = event.target.dataset.conditionId;
+      var inputs = els.conditionList.querySelectorAll('input[data-condition-id="' + id + '"][data-side]');
+      var value = {};
+      inputs.forEach(function (input) {
+        value[input.dataset.side] = input.value;
       });
-      renderAdvancedFilterRows();
-      renderDataViews();
+      state.rangeFilters[id] = value;
+      state.page = 1;
+      renderCenterFilters();
+      renderSelectedTags();
+      renderResultsOnly();
+    });
+
+    els.applyFieldFilter.addEventListener("click", function () {
+      if (!els.fieldSelect.value || !els.fieldValue.value) {
+        return;
+      }
+      state.columnFilters[els.fieldSelect.value] = {
+        operator: els.fieldOperator.value,
+        value: els.fieldValue.value
+      };
+      els.fieldValue.value = "";
+      state.page = 1;
+      renderTableHead();
+      renderResultsOnly();
     });
 
     els.activeFilters.addEventListener("click", function (event) {
       if (event.target.tagName !== "BUTTON") {
         return;
       }
-      if (event.target.dataset.type === "search") {
-        state.search = "";
-        els.globalSearch.value = "";
-      }
-      if (event.target.dataset.type === "brand") {
-        state.brand = "";
-        els.brandFilter.value = "";
-      }
-      if (event.target.dataset.type === "root") {
-        state.rootStatus = "";
-        els.rootFilter.value = "";
-      }
-      if (event.target.dataset.type === "bl") {
-        state.blStatus = "";
-        els.blFilter.value = "";
-      }
-      if (event.target.dataset.type === "keywordSort") {
-        state.keywordSortOrder = "";
-        els.keywordSortOrder.value = "";
-      }
-      if (event.target.dataset.type === "advanced") {
-        state.advancedFilters = state.advancedFilters.filter(function (filter) {
-          return filter.id !== event.target.dataset.value;
-        });
-        renderAdvancedFilterRows();
-      }
+      delete state.columnFilters[event.target.dataset.column];
       state.page = 1;
-      renderDataViews();
-    });
-
-
-    els.keywordSortField.addEventListener("change", function (event) {
-      state.keywordSortField = event.target.value;
-      state.page = 1;
-      renderDataViews();
-    });
-
-    els.keywordSortOrder.addEventListener("input", function (event) {
-      state.keywordSortOrder = event.target.value;
-      if (!state.composing) {
-        scheduleRender();
-      }
-    });
-
-    els.applyKeywordSort.addEventListener("click", function () {
-      state.keywordSortField = els.keywordSortField.value;
-      state.keywordSortOrder = els.keywordSortOrder.value;
-      state.page = 1;
-      renderDataViews();
-    });
-
-    els.clearKeywordSort.addEventListener("click", function () {
-      state.keywordSortOrder = "";
-      els.keywordSortOrder.value = "";
-      state.page = 1;
-      renderDataViews();
-    });
-
-    els.facetField.addEventListener("change", function (event) {
-      state.facetField = event.target.value;
-      els.facetMin.value = "";
-      els.facetMax.value = "";
-      renderFacetOptions();
-    });
-
-    els.facetOptions.addEventListener("click", function (event) {
-      if (!event.target.classList.contains("facet-option")) {
-        return;
-      }
-      addEqualityFilter(state.facetField, event.target.dataset.value);
-    });
-
-    els.applyFacetRange.addEventListener("click", function () {
-      var filter = newFilter(state.facetField, "between");
-      filter.min = els.facetMin.value.trim();
-      filter.max = els.facetMax.value.trim();
-      state.advancedFilters.push(filter);
-      renderAdvancedFilterRows();
-      renderDataViews();
+      renderTableHead();
+      renderResultsOnly();
     });
 
     els.columnList.addEventListener("change", function (event) {
@@ -1285,7 +1448,8 @@
       } else {
         state.visibleColumns.delete(event.target.dataset.column);
       }
-      renderDataViews();
+      renderTableHead();
+      renderResultsOnly();
     });
 
     els.columnSearch.addEventListener("input", function (event) {
@@ -1295,83 +1459,106 @@
 
     els.showCoreColumns.addEventListener("click", function () {
       state.visibleColumns = new Set();
-      CORE_COLUMNS.forEach(function (column) {
-        if (state.columns.indexOf(column) !== -1 && !DEFAULT_HIDDEN_COLUMNS.has(column)) {
+      (state.config.defaultVisibleColumns || []).forEach(function (column) {
+        if (state.columns.indexOf(column) !== -1) {
           state.visibleColumns.add(column);
         }
       });
-      renderDataViews();
+      renderTableHead();
+      renderColumnList();
+      renderResultsOnly();
     });
 
     els.showAllColumns.addEventListener("click", function () {
       state.visibleColumns = new Set(state.columns);
-      renderDataViews();
+      renderTableHead();
+      renderColumnList();
+      renderResultsOnly();
     });
 
     els.resetFilters.addEventListener("click", function () {
-      state.advancedFilters = [];
+      state.columnFilters = {};
+      state.rangeFilters = cloneDefaultRangeFilters();
+      state.featureFilters = cloneDefaultFeatureFilters();
       state.search = "";
       state.brand = "";
-      state.rootStatus = "";
-      state.blStatus = "";
+      state.series = "";
       state.sortField = "";
       state.sortDir = "asc";
-      state.keywordSortOrder = "";
+      state.sortLevels = [];
+      state.cardLimit = 24;
       state.page = 1;
       els.globalSearch.value = "";
-      els.keywordSortOrder.value = "";
-      renderAdvancedFilterRows();
-      renderDataViews();
+      renderEverything();
     });
 
     els.prevPage.addEventListener("click", function () {
       state.page = Math.max(1, state.page - 1);
-      renderDataViews();
+      renderResultsOnly();
     });
 
     els.nextPage.addEventListener("click", function () {
       state.page += 1;
-      renderDataViews();
+      renderResultsOnly();
     });
 
-    els.jumpPage.addEventListener("click", jumpToPage);
+    function jumpToPage() {
+      var pageCount = Math.max(1, Math.ceil(getFilteredRows().length / state.pageSize));
+      var rawValue = els.pageJump.value.trim();
+      var requested = Number(rawValue);
+      if (!rawValue || !Number.isInteger(requested)) {
+        els.pageJump.value = String(state.page);
+        return;
+      }
+      state.page = Math.min(pageCount, Math.max(1, requested));
+      renderResultsOnly();
+    }
+
+    els.goPage.addEventListener("click", jumpToPage);
     els.pageJump.addEventListener("keydown", function (event) {
       if (event.key === "Enter") {
+        event.preventDefault();
         jumpToPage();
       }
     });
 
-    els.saveHistory.addEventListener("click", saveHistory);
-    els.connectGist.addEventListener("click", function () {
-      setSyncStatus("正在连接...");
-      findOrCreateGist()
-        .then(function () {
-          setSyncStatus("已连接私有 Gist");
-        })
-        .catch(function (error) {
-          setSyncStatus(error.message);
-        });
+    els.saveHistory.addEventListener("click", saveRemoteHistory);
+    els.copySyncId.addEventListener("click", function () {
+      navigator.clipboard.writeText(state.syncId).catch(function () {});
+      els.historyStatus.textContent = "同步码已复制";
     });
-    els.pullHistory.addEventListener("click", pullHistory);
-    els.pushHistory.addEventListener("click", pushHistory);
-
+    els.loadHistory.addEventListener("click", function () {
+      state.syncId = els.historySyncId.value.trim();
+      localStorage.setItem(STORAGE_SYNC_KEY, state.syncId);
+      loadRemoteHistory();
+    });
+    els.saveGithubToken.addEventListener("click", function () {
+      var token = els.githubToken.value.trim();
+      if (!token) {
+        els.historyStatus.textContent = "Token 留空，继续使用本机已有设置";
+        return;
+      }
+      state.githubToken = token;
+      localStorage.setItem(STORAGE_GITHUB_TOKEN_KEY, token);
+      els.githubToken.value = "";
+      els.githubToken.placeholder = "已保存，留空保持不变";
+      loadRemoteHistory();
+    });
+    els.clearGithubToken.addEventListener("click", function () {
+      state.githubToken = "";
+      localStorage.removeItem(STORAGE_GITHUB_TOKEN_KEY);
+      els.githubToken.value = "";
+      els.githubToken.placeholder = "仅保存在本机";
+      els.historyStatus.textContent = "GitHub Token 已清除，当前使用本机缓存";
+    });
     els.historyList.addEventListener("click", function (event) {
-      var item = event.target.closest(".history-item");
-      if (!item) {
+      var button = event.target.closest("button[data-history-id]");
+      if (!button) {
         return;
       }
-      var record = state.history.find(function (entry) { return entry.id === item.dataset.id; });
-      if (!record) {
-        return;
-      }
-      if (event.target.classList.contains("history-delete")) {
-        state.history = state.history.filter(function (entry) { return entry.id !== record.id; });
-        writeLocalJson(STORAGE_KEYS.history, state.history);
-        renderHistory();
-        return;
-      }
-      if (event.target.classList.contains("history-apply")) {
-        applyCriteria(record.criteria || {});
+      var item = state.histories.find(function (history) { return history.id === button.dataset.historyId; });
+      if (item) {
+        applySnapshot(item.state || {});
       }
     });
 
@@ -1379,24 +1566,66 @@
     els.exportJson.addEventListener("click", exportCurrentJson);
   }
 
+  function initializeRows(rows) {
+    var normalized = (Array.isArray(rows) ? rows : []).map(function (row) {
+      if (!row["品牌"] && row["brand"]) {
+        row["品牌"] = row["brand"];
+      }
+      return row;
+    });
+    state.rows = normalized;
+    state.expandedSeries.clear();
+    state.seriesViewSignature = "";
+    state.cardLimit = 24;
+    state.rangeFilters = cloneDefaultRangeFilters();
+    state.featureFilters = cloneDefaultFeatureFilters();
+    state.columns = buildColumns(state.rows);
+    state.visibleColumns = new Set();
+    (state.config.defaultVisibleColumns || []).forEach(function (column) {
+      if (state.columns.indexOf(column) !== -1) {
+        state.visibleColumns.add(column);
+      }
+    });
+    if (!state.visibleColumns.size) {
+      state.visibleColumns = new Set(state.columns.slice(0, Math.min(18, state.columns.length)));
+    }
+  }
+
   function loadData() {
-    return fetchJson("data/manifest.json")
-      .then(function (manifest) {
-        state.manifest = manifest;
-        return fetchJson(manifest.files.latestJson || "data/latest.json");
-      })
-      .then(function (data) {
-        state.latestRows = Array.isArray(data) ? data : [];
-      })
-      .catch(function () {
-        state.manifest = null;
-        state.latestRows = SAMPLE_ROWS;
-        els.dataMeta.textContent = "本地预览示例 · GitHub Pages 部署后自动加载最新 Release 数据";
+    return Promise.all([
+      fetchJson("filter_conditions.json").catch(function () { return fallbackConfig; }),
+      fetchJson("data/manifest.json").catch(function () { return null; })
+    ]).then(function (results) {
+      state.config = Object.assign({}, fallbackConfig, results[0] || {});
+      state.manifest = results[1];
+      if (!state.manifest) {
+        initializeRows(SAMPLE_ROWS);
+        els.dataMeta.textContent = "本地预览示例 · GitHub Pages 部署后自动加载最新数据";
+        return;
+      }
+      return fetchJson(state.manifest.files.latestJson || "data/latest.json").then(function (latest) {
+        initializeRows(latest);
+        var dateText = state.manifest.date ? "数据日期 " + state.manifest.date : "最新数据";
+        els.dataMeta.textContent = dateText + " · 综合收录 " + state.rows.length + " 台手机";
       });
+    });
+  }
+
+  function initSync() {
+    state.syncId = localStorage.getItem(STORAGE_SYNC_KEY) || DEFAULT_SYNC_ID || generateSyncId();
+    localStorage.setItem(STORAGE_SYNC_KEY, state.syncId);
+    state.githubToken = localStorage.getItem(STORAGE_GITHUB_TOKEN_KEY) || "";
+    if (state.githubToken) {
+      els.githubToken.placeholder = "已保存，留空保持不变";
+    }
+    loadCachedHistories();
+    renderHistory();
+    return loadRemoteHistory();
   }
 
   bindEvents();
   loadData().then(function () {
-    setDataset();
+    renderEverything();
+    initSync();
   });
-})();
+}());
