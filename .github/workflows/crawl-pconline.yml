@@ -194,7 +194,7 @@ jobs:
           if [ $EXIT_CODE -eq 10 ]; then
             echo "Step1 未完成，正常结束本次运行"
             if [ "${{ github.event.inputs.debug_mode || 'false' }}" != "true" ]; then
-              git add -A
+              git add crawl_state/
               git diff --cached --quiet || git commit -m "chore: update PConline crawl progress [skip ci]"
               bash scripts/git_sync_progress.sh "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
             fi
@@ -274,7 +274,7 @@ jobs:
           fi
           git config user.name "github-actions[bot]"
           git config user.email "xuerui911@gmail.com"
-          git add -A
+          git add crawl_state/
           git diff --cached --quiet || git commit -m "chore: update PConline crawl data [skip ci]"
           bash scripts/git_sync_progress.sh "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
 

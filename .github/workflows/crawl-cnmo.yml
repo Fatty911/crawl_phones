@@ -283,7 +283,7 @@ jobs:
           fi
           git config user.name "github-actions[bot]"
           git config user.email "xuerui911@gmail.com"
-          git add -A
+          git add crawl_state/
           git diff --cached --quiet || git commit -m "chore: update CNMO crawl data [skip ci]"
           bash scripts/git_sync_progress.sh "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
 

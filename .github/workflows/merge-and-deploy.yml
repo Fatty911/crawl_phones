@@ -99,6 +99,18 @@ jobs:
       is_half_month_complete: ${{ needs.check-half-month-complete.outputs.is_complete }}
       crawl_time: ${{ steps.date.outputs.time }}
     steps:
+      - name: Maximize build space
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 4096
+          temp-reserve-mb: 1024
+          swap-size-mb: 1024
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-codeql: 'true'
+          remove-docker-images: 'true'
+
       - name: 检出代码
         uses: actions/checkout@main
 
@@ -501,7 +513,7 @@ jobs:
             mkdir -p docs/phones/data
             cp "data/merged_phones_${DATE}.json" docs/phones/data/latest.json
           fi
-          git add -A
+          git add docs/phones/data/latest.json
           if git diff --cached --quiet; then
             echo "没有变更，跳过提交"
           else
