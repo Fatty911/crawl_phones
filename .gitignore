@@ -38,25 +38,9 @@ ai_search/
 .vscode/
 .idea/
 
-# data/ 目录存放爬虫产出和合并数据，需要追踪
-# 只忽略超大临时文件
-data/tmp/
-# 爬虫中间数据文件通过 artifact 传递，不入仓
-data/zol_phones_*.json
-data/zol_phones_*.csv
-data/pconline_phones_*.json
-data/pconline_phones_*.csv
-data/cnmo_phones_*.json
-data/cnmo_phones_*.csv
-data/cnmo_products_*.json
-data/merged_phones_*.json
-data/merged_phones_*.csv
-data/diff_phones_*.csv
-data/*_zol_phones_*.json
-data/*_zol_phones_*.csv
-data/*_pconline_phones_*.json
-data/*_pconline_phones_*.csv
-data/*_cnmo_phones_*.json
-data/*_cnmo_phones_*.csv
+# data/ 只作为 Actions 运行期工作目录；完整产物由短期 artifact 传递，
+# 最新稳定版本由 Release/Pages 发布，禁止再次写入 Git 历史。
+/data/*
+!/data/.gitkeep
 .omo/run-continuation/
 .review-evidence/

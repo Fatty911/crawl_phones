@@ -216,7 +216,7 @@ jobs:
           path: |
             crawl_state/cnmo/json/
             crawl_state/cnmo/progress.json
-          retention-days: 90
+          retention-days: 3
 
       - name: Parse and merge data
         if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true'
@@ -296,7 +296,7 @@ jobs:
           path: |
             data/cnmo_phones_*.json
             data/cnmo_phones_*.csv
-          retention-days: 90
+          retention-days: 3
           if-no-files-found: error
 
       - name: 检测新增数据并触发合并分析

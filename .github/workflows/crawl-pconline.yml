@@ -220,7 +220,7 @@ jobs:
           path: |
             crawl_state/pconline/json/
             crawl_state/pconline/progress.json
-          retention-days: 90
+          retention-days: 3
 
       - name: Parse and merge data
         if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true'
@@ -287,7 +287,7 @@ jobs:
           path: |
             data/pconline_phones_*.json
             data/pconline_phones_*.csv
-          retention-days: 90
+          retention-days: 3
           if-no-files-found: error
 
       - name: 检测新增数据并触发合并分析

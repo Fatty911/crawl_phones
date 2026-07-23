@@ -544,7 +544,7 @@ jobs:
           path: |
             data/merged_phones_${{ steps.date.outputs.date }}.csv
             data/merged_phones_${{ steps.date.outputs.date }}.json
-          retention-days: 90
+          retention-days: 3
           if-no-files-found: error
 
   search-root-info:
@@ -588,7 +588,7 @@ jobs:
         with:
           name: phone-root-info-${{ needs.merge-data.outputs.crawl_date }}
           path: phones_with_root_info.json
-          retention-days: 90
+          retention-days: 3
 
   create-release:
     runs-on: ubuntu-latest

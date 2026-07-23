@@ -224,7 +224,7 @@ jobs:
           path: |
             crawl_state/zol/json/
             crawl_state/zol/progress.json
-          retention-days: 90
+          retention-days: 3
 
       - name: Parse and merge data
         if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true'
@@ -291,7 +291,7 @@ jobs:
           path: |
             data/zol_phones_*.json
             data/zol_phones_*.csv
-          retention-days: 90
+          retention-days: 3
           if-no-files-found: error
 
       - name: 检测新增数据并触发合并分析
