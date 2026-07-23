@@ -165,7 +165,7 @@ setTimeout(() => {
         filtered = [row for row in rows if (release_year(row) or 0) >= 2022]
         source_count = lambda source: sum(source in str(row.get("数据来源", "")) for row in rows)
         verified_count = sum(
-            row.get("验证状态", "") in ("三源一致", "双源一致")
+            bool(row.get("验证状态")) and row.get("验证状态") != "单源"
             for row in rows
         )
         self.assertEqual(str(len(rows)), metrics["totalCount"])
@@ -1143,11 +1143,11 @@ class PagesPaginationContractTests(unittest.TestCase):
         self.assertIn('id="goPage"', html)
         self.assertIn("function jumpToPage()", script)
 
-    def test_pages_count_two_and_three_source_comparisons_as_verified(self) -> None:
+    def test_pages_count_any_non_single_source_status_as_verified(self) -> None:
         script = (ROOT / "docs/phones/app.js").read_text(encoding="utf-8")
-        self.assertIn('"三源一致"', script)
-        self.assertIn('"双源一致"', script)
-        self.assertIn("verifiedCount", script)
+        self.assertIn('row["验证状态"] && row["验证状态"] !== "单源"', script)
+        self.assertIn('badge.textContent = vs', script)
+        self.assertIn('els.verifiedCount.textContent = String(multiSourceCount)', script)
 
 
 class CnmoDatasetValidationTests(unittest.TestCase):
