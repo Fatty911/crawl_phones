@@ -116,6 +116,12 @@ def check_crawler_workflow(path: Path, errors: list[str]) -> None:
         f"{path.name} final artifact must fail when files are missing",
         errors,
     )
+    if source == "cnmo":
+        assert_condition(
+            "steps.validate_data.outputs.has_data == 'true'" in str(upload.get("if", "")),
+            f"{path.name} final artifact upload is not gated by valid CNMO data",
+            errors,
+        )
     dispatch_if = str(dispatch.get("if", ""))
     dispatch_run = str(dispatch.get("run", ""))
     assert_condition(
