@@ -261,6 +261,12 @@ jobs:
             echo "has_data=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Fail debug run without valid CNMO data
+        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && github.event.inputs.debug_mode == 'true' && steps.validate_data.outputs.has_data != 'true'
+        run: |
+          echo "CNMO debug run did not produce a valid 20-30 row dataset; failing instead of reporting an empty success."
+          exit 1
+
       - name: Generate summary
         if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true'
         run: python scripts/crawl_cnmo.py --step 3
