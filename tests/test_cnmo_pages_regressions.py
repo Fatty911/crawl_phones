@@ -122,7 +122,7 @@ const sandbox = {
 vm.createContext(sandbox);
 vm.runInContext(fs.readFileSync("docs/phones/app.js", "utf8"), sandbox);
 setTimeout(() => {
-  const ids = ["totalCount", "zolCount", "pconlineCount", "cnmoCount", "verifiedCount", "dataMeta"];
+  const ids = ["visibleCount", "totalCount", "zolCount", "pconlineCount", "cnmoCount", "verifiedCount", "dataMeta"];
   const output = Object.fromEntries(ids.map((id) => [id, getElement(id).textContent]));
   process.stdout.write(JSON.stringify(output));
 }, 50);
@@ -168,6 +168,7 @@ setTimeout(() => {
             bool(row.get("验证状态")) and row.get("验证状态") != "单源"
             for row in rows
         )
+        self.assertEqual(str(len(filtered)), metrics["visibleCount"])
         self.assertEqual(str(len(rows)), metrics["totalCount"])
         self.assertEqual(str(source_count("中关村在线")), metrics["zolCount"])
         self.assertEqual(str(source_count("太平洋电脑网")), metrics["pconlineCount"])

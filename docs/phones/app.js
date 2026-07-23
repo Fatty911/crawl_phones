@@ -356,8 +356,20 @@
     return true;
   }
 
+  function releaseYear(row) {
+    var fields = ["上市时间", "国内发布时间", "发布时间", "发布日期", "上市日期"];
+    for (var i = 0; i < fields.length; i += 1) {
+      var match = String(row[fields[i]] || "").match(/(^|[^\d])((?:19|20)\d{2})(?!\d)/);
+      if (match) {
+        return Number(match[2]);
+      }
+    }
+    return null;
+  }
+
   function rowMatchesDefaultRowType(row) {
-    return true;
+    var year = releaseYear(row);
+    return year !== null && year >= 2022;
   }
 
   function parseCustomOrder(text) {
@@ -450,7 +462,7 @@
   }
 
   function getFilteredRows() {
-    var rows = state.rows.slice();
+    var rows = state.rows.filter(rowMatchesDefaultRowType);
 
     var search = normalizeText(state.search);
 
