@@ -522,9 +522,19 @@ jobs:
             if git push; then
               echo "✅ git push 成功"
             else
-              echo "⚠️ git push 失败，尝试 pull --rebase 后重试..."
+              echo "⚠️ git push 失败，使用隔离 worktree 重放提交后重试..."
+              retry_dir="$(mktemp -d "${RUNNER_TEMP}/phone-merge-push.XXXXXX")"
+              cleanup_retry_worktree() {
+                git worktree remove --force "$retry_dir" >/dev/null 2>&1 || true
+                rmdir "$retry_dir" >/dev/null 2>&1 || true
+              }
+              trap cleanup_retry_worktree EXIT
+              git worktree add --detach "$retry_dir" HEAD
               for i in 1 2 3; do
-                if git pull --rebase origin main && git push; then
+                git -C "$retry_dir" rebase --abort >/dev/null 2>&1 || true
+                if git -C "$retry_dir" fetch origin main && \
+                   git -C "$retry_dir" rebase origin/main && \
+                   git -C "$retry_dir" push origin HEAD:main; then
                   echo "✅ 重试 $i 成功"
                   exit 0
                 fi
