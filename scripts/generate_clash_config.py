@@ -31,6 +31,21 @@ def decode_base64_text(value: str) -> str:
     return base64.b64decode(normalized).decode('utf-8')
 
 
+class QuotedYamlString(str):
+    pass
+
+
+class QuotedSafeDumper(yaml.SafeDumper):
+    pass
+
+
+def _represent_quoted_yaml_string(dumper, value):
+    return dumper.represent_scalar('tag:yaml.org,2002:str', str(value), style="'")
+
+
+QuotedSafeDumper.add_representer(QuotedYamlString, _represent_quoted_yaml_string)
+
+
 class ClashConfigGenerator:
     def __init__(self, config_path: str = "/root/.config/mihomo/config.yaml"):
         self.config_path = config_path
@@ -571,8 +586,9 @@ class ClashConfigGenerator:
 # 节点数量: {len(all_proxies)}
 
 """
-        return header + yaml.safe_dump(
+        return header + yaml.dump(
             config,
+            Dumper=QuotedSafeDumper,
             allow_unicode=True,
             sort_keys=False,
             width=4096,
@@ -588,7 +604,7 @@ class ClashConfigGenerator:
         short_id = sanitized_reality_opts.get('short-id')
         if short_id is not None:
             if isinstance(short_id, str) and self._is_valid_reality_short_id(short_id):
-                sanitized_reality_opts['short-id'] = short_id.strip()
+                sanitized_reality_opts['short-id'] = QuotedYamlString(short_id.strip())
             else:
                 sanitized_reality_opts.pop('short-id', None)
         sanitized['reality-opts'] = sanitized_reality_opts

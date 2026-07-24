@@ -191,6 +191,42 @@ class SetupProxyRuntimeTests(unittest.TestCase):
         self.assertEqual("/news", reality_opts["spider-x"])
         self.assertNotIn("short-id", reality_opts)
 
+    def test_generated_proxy_yaml_quotes_reality_short_ids(self) -> None:
+        config = ClashConfigGenerator().generate_config_from_proxies(
+            [
+                {
+                    "name": "LeadingZeroReality",
+                    "type": "vless",
+                    "server": "reality.example.test",
+                    "port": 443,
+                    "uuid": "00000000-0000-0000-0000-000000000006",
+                    "tls": True,
+                    "reality-opts": {
+                        "public-key": "sample-public-key",
+                        "short-id": "09561058",
+                    },
+                },
+                {
+                    "name": "ScientificNotationReality",
+                    "type": "vless",
+                    "server": "reality.example.test",
+                    "port": 443,
+                    "uuid": "00000000-0000-0000-0000-000000000007",
+                    "tls": True,
+                    "reality-opts": {
+                        "public-key": "sample-public-key",
+                        "short-id": "34010e92",
+                    },
+                },
+            ]
+        )
+
+        self.assertIn("short-id: '09561058'", config)
+        self.assertIn("short-id: '34010e92'", config)
+        parsed = yaml.safe_load(config)
+        self.assertEqual("09561058", parsed["proxies"][0]["reality-opts"]["short-id"])
+        self.assertEqual("34010e92", parsed["proxies"][1]["reality-opts"]["short-id"])
+
     def test_enabled_proxy_bypasses_github_artifact_endpoints(self) -> None:
         captured: dict[str, str] = {}
         process = SimpleNamespace(pid=1234, terminate=lambda: None)
