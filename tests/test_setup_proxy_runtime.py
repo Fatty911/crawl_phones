@@ -163,6 +163,34 @@ class SetupProxyRuntimeTests(unittest.TestCase):
         assert proxy is not None
         self.assertEqual("ABCDEF", proxy["reality-opts"]["short-id"])
 
+    def test_generated_proxy_yaml_sanitizes_invalid_reality_short_id(self) -> None:
+        parsed = yaml.safe_load(
+            ClashConfigGenerator().generate_config_from_proxies(
+                [
+                    {
+                        "name": "RawReality",
+                        "type": "vless",
+                        "server": "reality.example.test",
+                        "port": 443,
+                        "uuid": "00000000-0000-0000-0000-000000000005",
+                        "tls": True,
+                        "flow": "xtls-rprx-vision",
+                        "client-fingerprint": "chrome",
+                        "reality-opts": {
+                            "public-key": "sample-public-key",
+                            "short-id": "null",
+                            "spider-x": "/news",
+                        },
+                    }
+                ]
+            )
+        )
+
+        reality_opts = parsed["proxies"][0]["reality-opts"]
+        self.assertEqual("sample-public-key", reality_opts["public-key"])
+        self.assertEqual("/news", reality_opts["spider-x"])
+        self.assertNotIn("short-id", reality_opts)
+
     def test_enabled_proxy_bypasses_github_artifact_endpoints(self) -> None:
         captured: dict[str, str] = {}
         process = SimpleNamespace(pid=1234, terminate=lambda: None)

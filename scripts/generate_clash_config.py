@@ -123,16 +123,6 @@ class ClashConfigGenerator:
                         return value
                 return default
 
-            def is_valid_reality_short_id(value):
-                normalized = value.strip()
-                if normalized.lower() in ('null', 'none', 'nil'):
-                    return False
-                return (
-                    len(normalized) % 2 == 0
-                    and len(normalized) <= 16
-                    and bool(re.fullmatch(r'[0-9a-fA-F]+', normalized))
-                )
-            
             proxy = {
                 'name': parsed.fragment or 'vless',
                 'type': 'vless',
@@ -169,7 +159,7 @@ class ClashConfigGenerator:
                 if public_key:
                     reality_opts['public-key'] = public_key
                 short_id = first_param('sid', 'short-id')
-                if short_id and is_valid_reality_short_id(short_id):
+                if short_id and self._is_valid_reality_short_id(short_id):
                     reality_opts['short-id'] = short_id.strip()
                 spider_x = first_param('spx', 'spider-x', 'spiderx')
                 if spider_x:
@@ -504,7 +494,10 @@ class ClashConfigGenerator:
         if not all_proxies:
             print("警告: 没有可用代理节点，将直连")
 
-        proxies = [self._drop_none_values(proxy) for proxy in all_proxies]
+        proxies = [
+            self._drop_none_values(self._sanitize_proxy_for_mihomo(proxy))
+            for proxy in all_proxies
+        ]
         proxy_names = [p['name'] for p in proxies]
         auto_proxies = proxy_names if proxy_names else ['DIRECT']
 
@@ -583,6 +576,32 @@ class ClashConfigGenerator:
             allow_unicode=True,
             sort_keys=False,
             width=4096,
+        )
+
+    def _sanitize_proxy_for_mihomo(self, proxy):
+        sanitized = dict(proxy)
+        reality_opts = sanitized.get('reality-opts')
+        if not isinstance(reality_opts, dict):
+            return sanitized
+
+        sanitized_reality_opts = dict(reality_opts)
+        short_id = sanitized_reality_opts.get('short-id')
+        if short_id is not None:
+            if isinstance(short_id, str) and self._is_valid_reality_short_id(short_id):
+                sanitized_reality_opts['short-id'] = short_id.strip()
+            else:
+                sanitized_reality_opts.pop('short-id', None)
+        sanitized['reality-opts'] = sanitized_reality_opts
+        return sanitized
+
+    def _is_valid_reality_short_id(self, value):
+        normalized = value.strip()
+        if normalized.lower() in ('null', 'none', 'nil'):
+            return False
+        return (
+            len(normalized) % 2 == 0
+            and len(normalized) <= 16
+            and bool(re.fullmatch(r'[0-9a-fA-F]+', normalized))
         )
 
     def _drop_none_values(self, value):
