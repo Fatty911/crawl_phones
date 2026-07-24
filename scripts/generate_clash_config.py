@@ -111,7 +111,17 @@ class ClashConfigGenerator:
         """解析vless链接"""
         try:
             parsed = urlparse(link)
-            params = parse_qs(parsed.query)
+            params = parse_qs(parsed.query, keep_blank_values=True)
+
+            def first_param(*names, default=None, keep_blank=False):
+                for name in names:
+                    values = params.get(name)
+                    if not values:
+                        continue
+                    value = values[0]
+                    if value or keep_blank:
+                        return value
+                return default
             
             proxy = {
                 'name': parsed.fragment or 'vless',
@@ -122,28 +132,52 @@ class ClashConfigGenerator:
                 'udp': True
             }
             
-            flow = params.get('flow', [None])[0]
+            flow = first_param('flow')
             if flow:
                 proxy['flow'] = flow
             
-            security = params.get('security', [None])[0]
-            if security == 'tls':
+            security = first_param('security')
+            encryption = first_param('encryption')
+            if encryption:
+                proxy['encryption'] = encryption
+            elif security == 'reality':
+                proxy['encryption'] = 'none'
+
+            if security in ('tls', 'reality'):
                 proxy['tls'] = True
-                sni = params.get('sni', [None])[0]
+                sni = first_param('sni', 'host')
                 if sni:
                     proxy['servername'] = sni
+
+            client_fingerprint = first_param('fp', 'client-fingerprint')
+            if client_fingerprint:
+                proxy['client-fingerprint'] = client_fingerprint
+
+            if security == 'reality':
+                reality_opts = {}
+                public_key = first_param('pbk', 'public-key')
+                if public_key:
+                    reality_opts['public-key'] = public_key
+                short_id = first_param('sid', 'short-id', keep_blank=True)
+                if short_id is not None:
+                    reality_opts['short-id'] = short_id
+                spider_x = first_param('spx', 'spider-x', 'spiderx')
+                if spider_x:
+                    reality_opts['spider-x'] = spider_x
+                if reality_opts:
+                    proxy['reality-opts'] = reality_opts
             
-            net = params.get('type', ['tcp'])[0]
+            net = first_param('type', default='tcp')
             if net == 'ws':
                 proxy['network'] = 'ws'
                 proxy['ws-opts'] = {
-                    'path': params.get('path', ['/'])[0],
-                    'headers': {'Host': params.get('host', [proxy['server']])[0]}
+                    'path': first_param('path', default='/'),
+                    'headers': {'Host': first_param('host', default=proxy['server'])}
                 }
             elif net == 'grpc':
                 proxy['network'] = 'grpc'
                 proxy['grpc-opts'] = {
-                    'grpc-service-name': params.get('serviceName', [''])[0]
+                    'grpc-service-name': first_param('serviceName', default='')
                 }
             
             return proxy

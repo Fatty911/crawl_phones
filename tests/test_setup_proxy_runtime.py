@@ -48,6 +48,53 @@ class SetupProxyRuntimeTests(unittest.TestCase):
         self.assertIn(name, parsed["proxy-groups"][0]["proxies"])
         self.assertIn(name, parsed["proxy-groups"][1]["proxies"])
 
+    def test_vless_reality_vision_link_round_trips_to_mihomo_yaml(self) -> None:
+        link = (
+            "vless://00000000-0000-0000-0000-000000000001@reality.example.test:443"
+            "?security=reality"
+            "&sni=www.microsoft.com"
+            "&fp=chrome"
+            "&pbk=sample-public-key"
+            "&sid="
+            "&spx=%2Fnews"
+            "&type=tcp"
+            "&flow=xtls-rprx-vision"
+            "#RealityVision"
+        )
+
+        proxy = ClashConfigGenerator().parse_vless(link)
+
+        self.assertIsNotNone(proxy)
+        assert proxy is not None
+        self.assertEqual("RealityVision", proxy["name"])
+        self.assertEqual("vless", proxy["type"])
+        self.assertEqual("reality.example.test", proxy["server"])
+        self.assertEqual(443, proxy["port"])
+        self.assertEqual("00000000-0000-0000-0000-000000000001", proxy["uuid"])
+        self.assertTrue(proxy["tls"])
+        self.assertEqual("none", proxy["encryption"])
+        self.assertEqual("xtls-rprx-vision", proxy["flow"])
+        self.assertEqual("www.microsoft.com", proxy["servername"])
+        self.assertEqual("chrome", proxy["client-fingerprint"])
+        self.assertEqual(
+            {
+                "public-key": "sample-public-key",
+                "short-id": "",
+                "spider-x": "/news",
+            },
+            proxy["reality-opts"],
+        )
+
+        parsed = yaml.safe_load(ClashConfigGenerator().generate_config_from_proxies([proxy]))
+
+        written_proxy = parsed["proxies"][0]
+        self.assertEqual("none", written_proxy["encryption"])
+        self.assertTrue(written_proxy["tls"])
+        self.assertEqual("sample-public-key", written_proxy["reality-opts"]["public-key"])
+        self.assertEqual("", written_proxy["reality-opts"]["short-id"])
+        self.assertIn("RealityVision", parsed["proxy-groups"][0]["proxies"])
+        self.assertIn("RealityVision", parsed["proxy-groups"][1]["proxies"])
+
     def test_enabled_proxy_bypasses_github_artifact_endpoints(self) -> None:
         captured: dict[str, str] = {}
         process = SimpleNamespace(pid=1234, terminate=lambda: None)
