@@ -9,6 +9,7 @@ import time
 from typing import List, Dict, Optional
 from urllib.parse import urlparse, parse_qs
 import re
+import yaml
 
 
 SUBSCRIPTION_USER_AGENT = os.getenv(
@@ -456,87 +457,101 @@ class ClashConfigGenerator:
                                      mixed_port: int = 7890, socks_port: int = 7891,
                                      external_controller: str = "127.0.0.1:9090") -> str:
         """从已解析节点生成Clash配置文件"""
-        
         if not all_proxies:
             print("警告: 没有可用代理节点，将直连")
-        
-        proxy_names = [p['name'] for p in all_proxies]
-        
-        # AUTO组的代理列表，如果没有节点则使用DIRECT
+
+        proxies = [self._drop_none_values(proxy) for proxy in all_proxies]
+        proxy_names = [p['name'] for p in proxies]
         auto_proxies = proxy_names if proxy_names else ['DIRECT']
-        
-        config = f"""# Clash配置 - 自动生成
+
+        config = {
+            'mixed-port': mixed_port,
+            'socks-port': socks_port,
+            'allow-lan': False,
+            'bind-address': '127.0.0.1',
+            'mode': 'rule',
+            'log-level': 'info',
+            'ipv6': False,
+            'external-controller': external_controller,
+            'dns': {
+                'enable': True,
+                'ipv6': False,
+                'enhanced-mode': 'fake-ip',
+                'fake-ip-range': '198.18.0.1/16',
+                'fake-ip-filter': [
+                    '*.lan',
+                    'localhost.ptlogin2.qq.com',
+                    '+.srv.nintendo.net',
+                    '+.stun.playstation.net',
+                    '+.msftconnecttest.com',
+                    '+.msftncsi.com',
+                    '+.xboxlive.com',
+                ],
+                'nameserver': [
+                    '223.5.5.5',
+                    '119.29.29.29',
+                ],
+                'fallback': [
+                    'tls://8.8.8.8:853',
+                    'tls://1.1.1.1:853',
+                ],
+                'fallback-filter': {
+                    'geoip': True,
+                    'geoip-code': 'CN',
+                    'ipcidr': ['240.0.0.0/4'],
+                },
+            },
+            'proxies': proxies,
+            'proxy-groups': [
+                {
+                    'name': 'PROXY',
+                    'type': 'select',
+                    'proxies': ['BALANCE', 'DIRECT', *proxy_names],
+                },
+                {
+                    'name': 'BALANCE',
+                    'type': 'load-balance',
+                    'proxies': auto_proxies,
+                    'url': 'https://www.baidu.com',
+                    'interval': 60,
+                    'strategy': 'round-robin',
+                    'health-check': {
+                        'enable': True,
+                        'url': 'https://www.baidu.com',
+                        'interval': 60,
+                    },
+                },
+            ],
+            'rules': [
+                'GEOIP,LAN,DIRECT',
+                'GEOIP,CN,DIRECT',
+                'MATCH,PROXY',
+            ],
+        }
+
+        header = f"""# Clash配置 - 自动生成
 # 生成时间: {time.strftime('%Y-%m-%d %H:%M:%S')}
 # 节点数量: {len(all_proxies)}
 
-mixed-port: {mixed_port}
-socks-port: {socks_port}
-allow-lan: false
-bind-address: "127.0.0.1"
-mode: rule
-log-level: info
-ipv6: false
-external-controller: {external_controller}
-
-dns:
-  enable: true
-  ipv6: false
-  enhanced-mode: fake-ip
-  fake-ip-range: 198.18.0.1/16
-  fake-ip-filter:
-    - '*.lan'
-    - localhost.ptlogin2.qq.com
-    - '+.srv.nintendo.net'
-    - '+.stun.playstation.net'
-    - '+.msftconnecttest.com'
-    - '+.msftncsi.com'
-    - '+.xboxlive.com'
-  nameserver:
-    - 223.5.5.5
-    - 119.29.29.29
-  fallback:
-    - tls://8.8.8.8:853
-    - tls://1.1.1.1:853
-  fallback-filter:
-    geoip: true
-    geoip-code: CN
-    ipcidr:
-      - 240.0.0.0/4
-
-proxies:
 """
-        
-        for proxy in all_proxies:
-            config += self._proxy_to_yaml(proxy)
-        
-        config += f"""
-proxy-groups:
-  - name: "PROXY"
-    type: select
-    proxies:
-      - BALANCE
-      - DIRECT
-{self._format_proxy_list(proxy_names, 6)}
+        return header + yaml.safe_dump(
+            config,
+            allow_unicode=True,
+            sort_keys=False,
+            width=4096,
+        )
 
-  - name: "BALANCE"
-    type: load-balance
-    proxies:
-{self._format_proxy_list(auto_proxies, 6)}
-    url: 'https://www.baidu.com'
-    interval: 60
-    strategy: round-robin
-    health-check:
-      enable: true
-      url: 'https://www.baidu.com'
-      interval: 60
-
-rules:
-  - GEOIP,LAN,DIRECT
-  - GEOIP,CN,DIRECT
-  - MATCH,PROXY
-"""
-        
-        return config
+    def _drop_none_values(self, value):
+        """Remove optional None values before writing mihomo YAML."""
+        if isinstance(value, dict):
+            return {
+                key: self._drop_none_values(item)
+                for key, item in value.items()
+                if item is not None
+            }
+        if isinstance(value, list):
+            return [self._drop_none_values(item) for item in value]
+        return value
     
     def _proxy_to_yaml(self, proxy: Dict, indent: int = 2) -> str:
         """将代理配置转为YAML格式"""
