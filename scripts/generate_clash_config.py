@@ -158,8 +158,8 @@ class ClashConfigGenerator:
                 public_key = first_param('pbk', 'public-key')
                 if public_key:
                     reality_opts['public-key'] = public_key
-                short_id = first_param('sid', 'short-id', keep_blank=True)
-                if short_id is not None:
+                short_id = first_param('sid', 'short-id')
+                if short_id:
                     reality_opts['short-id'] = short_id
                 spider_x = first_param('spx', 'spider-x', 'spiderx')
                 if spider_x:

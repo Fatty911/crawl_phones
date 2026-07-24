@@ -55,7 +55,7 @@ class SetupProxyRuntimeTests(unittest.TestCase):
             "&sni=www.microsoft.com"
             "&fp=chrome"
             "&pbk=sample-public-key"
-            "&sid="
+            "&sid=abc123"
             "&spx=%2Fnews"
             "&type=tcp"
             "&flow=xtls-rprx-vision"
@@ -79,7 +79,7 @@ class SetupProxyRuntimeTests(unittest.TestCase):
         self.assertEqual(
             {
                 "public-key": "sample-public-key",
-                "short-id": "",
+                "short-id": "abc123",
                 "spider-x": "/news",
             },
             proxy["reality-opts"],
@@ -91,9 +91,35 @@ class SetupProxyRuntimeTests(unittest.TestCase):
         self.assertEqual("none", written_proxy["encryption"])
         self.assertTrue(written_proxy["tls"])
         self.assertEqual("sample-public-key", written_proxy["reality-opts"]["public-key"])
-        self.assertEqual("", written_proxy["reality-opts"]["short-id"])
+        self.assertEqual("abc123", written_proxy["reality-opts"]["short-id"])
         self.assertIn("RealityVision", parsed["proxy-groups"][0]["proxies"])
         self.assertIn("RealityVision", parsed["proxy-groups"][1]["proxies"])
+
+    def test_vless_reality_empty_short_id_is_omitted(self) -> None:
+        link = (
+            "vless://00000000-0000-0000-0000-000000000002@reality.example.test:443"
+            "?security=reality"
+            "&sni=www.microsoft.com"
+            "&fp=chrome"
+            "&pbk=sample-public-key"
+            "&sid="
+            "&type=tcp"
+            "&flow=xtls-rprx-vision"
+            "#EmptyShortId"
+        )
+
+        proxy = ClashConfigGenerator().parse_vless(link)
+
+        self.assertIsNotNone(proxy)
+        assert proxy is not None
+        self.assertEqual("none", proxy["encryption"])
+        self.assertTrue(proxy["tls"])
+        self.assertEqual("sample-public-key", proxy["reality-opts"]["public-key"])
+        self.assertNotIn("short-id", proxy["reality-opts"])
+
+        parsed = yaml.safe_load(ClashConfigGenerator().generate_config_from_proxies([proxy]))
+
+        self.assertNotIn("short-id", parsed["proxies"][0]["reality-opts"])
 
     def test_enabled_proxy_bypasses_github_artifact_endpoints(self) -> None:
         captured: dict[str, str] = {}
