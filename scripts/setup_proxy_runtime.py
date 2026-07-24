@@ -249,6 +249,14 @@ def test_local_proxy(urls: list[str], max_retries: int = 3, retry_delay: int = 5
     return False
 
 
+def build_proxy_test_urls(target_urls: list[str]) -> list[str]:
+    urls: list[str] = []
+    for url in [*target_urls, *DEFAULT_TEST_URLS]:
+        if url not in urls:
+            urls.append(url)
+    return urls
+
+
 def disable_proxy(github_env: str, reason: str) -> int:
     print(f"{reason}，将无代理直连")
     append_github_env(
@@ -314,7 +322,7 @@ def main() -> int:
             pass
         return disable_proxy(args.github_env, "mihomo 控制端口未就绪")
 
-    test_urls = args.test_url or DEFAULT_TEST_URLS
+    test_urls = build_proxy_test_urls(args.test_url)
     if not test_local_proxy(test_urls):
         process.terminate()
         # Print mihomo log for debugging
