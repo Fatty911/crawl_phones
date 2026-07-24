@@ -122,6 +122,16 @@ class ClashConfigGenerator:
                     if value or keep_blank:
                         return value
                 return default
+
+            def is_valid_reality_short_id(value):
+                normalized = value.strip()
+                if normalized.lower() in ('null', 'none', 'nil'):
+                    return False
+                return (
+                    len(normalized) % 2 == 0
+                    and len(normalized) <= 16
+                    and bool(re.fullmatch(r'[0-9a-fA-F]+', normalized))
+                )
             
             proxy = {
                 'name': parsed.fragment or 'vless',
@@ -159,8 +169,8 @@ class ClashConfigGenerator:
                 if public_key:
                     reality_opts['public-key'] = public_key
                 short_id = first_param('sid', 'short-id')
-                if short_id:
-                    reality_opts['short-id'] = short_id
+                if short_id and is_valid_reality_short_id(short_id):
+                    reality_opts['short-id'] = short_id.strip()
                 spider_x = first_param('spx', 'spider-x', 'spiderx')
                 if spider_x:
                     reality_opts['spider-x'] = spider_x

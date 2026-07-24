@@ -121,6 +121,48 @@ class SetupProxyRuntimeTests(unittest.TestCase):
 
         self.assertNotIn("short-id", parsed["proxies"][0]["reality-opts"])
 
+    def test_vless_reality_invalid_short_ids_are_omitted(self) -> None:
+        invalid_short_ids = ("null", "None", "nil", "xyz", "abc", "001122334455667788")
+        for short_id in invalid_short_ids:
+            with self.subTest(short_id=short_id):
+                link = (
+                    "vless://00000000-0000-0000-0000-000000000003@reality.example.test:443"
+                    "?security=reality"
+                    "&sni=www.microsoft.com"
+                    "&fp=chrome"
+                    "&pbk=sample-public-key"
+                    f"&sid={short_id}"
+                    "&type=tcp"
+                    "&flow=xtls-rprx-vision"
+                    "#InvalidShortId"
+                )
+
+                proxy = ClashConfigGenerator().parse_vless(link)
+
+                self.assertIsNotNone(proxy)
+                assert proxy is not None
+                self.assertEqual("sample-public-key", proxy["reality-opts"]["public-key"])
+                self.assertNotIn("short-id", proxy["reality-opts"])
+
+    def test_vless_reality_uppercase_short_id_is_preserved(self) -> None:
+        link = (
+            "vless://00000000-0000-0000-0000-000000000004@reality.example.test:443"
+            "?security=reality"
+            "&sni=www.microsoft.com"
+            "&fp=chrome"
+            "&pbk=sample-public-key"
+            "&sid=ABCDEF"
+            "&type=tcp"
+            "&flow=xtls-rprx-vision"
+            "#UppercaseShortId"
+        )
+
+        proxy = ClashConfigGenerator().parse_vless(link)
+
+        self.assertIsNotNone(proxy)
+        assert proxy is not None
+        self.assertEqual("ABCDEF", proxy["reality-opts"]["short-id"])
+
     def test_enabled_proxy_bypasses_github_artifact_endpoints(self) -> None:
         captured: dict[str, str] = {}
         process = SimpleNamespace(pid=1234, terminate=lambda: None)
