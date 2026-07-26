@@ -695,7 +695,7 @@ def model_key(row):
         flags=re.IGNORECASE,
     )
     name = re.sub(
-        r'(?<![a-z0-9])(?:\d+\s*(?:[gt]b)?\s*[+/]+\s*\d+\s*[gt]b?|\d+\s*[gt]b?)$',
+        r'(?<![a-z0-9])(?:\d+\s*(?:[gt]b)?\s*[+/]+\s*\d+\s*[gt]b?|\d+\s*[gt]b)$',
         '',
         name,
         flags=re.IGNORECASE,
