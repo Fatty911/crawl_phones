@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "defaultDataset": "latest",
+  "hiddenByDefault": ["数据来源", "source"],
+  "dropIfUniformPositive": [],
+  "defaultVisibleColumns": [
+    "型号", "品牌", "上市时间", "价格", "验证状态", "数据来源",
+    "处理器", "内存", "存储", "屏幕", "屏占比", "电池", "机身厚度",
+    "机身重量", "指纹识别", "面部识别", "网络类型", "NFC", "无线连接",
+    "机身接口", "有线充电", "无线充电", "快充协议", "交叉验证差异",
+    "散热", "广角", "Geekbench6单核", "root或越狱"
+  ],
+  "columnAliases": {
+    "NFC": ["NFC功能"],
+    "WLAN功能": ["WiFi(WLAN)"],
+    "定位导航": ["定位系统"],
+    "机身接口": ["数据接口", "USB接口"],
+    "GPU": ["GPU型号"],
+    "手机颜色": ["机身颜色"],
+    "网络类型": ["网络制式"]
+  },
+  "conditions": [
+    {"id": "price", "label": "价格", "type": "range", "field": "价格", "unit": "元", "defaultMin": "0", "defaultMax": "10000"},
+    {"id": "battery", "label": "电池容量", "type": "range", "field": "电池", "unit": "mAh", "defaultMin": "3000", "defaultMax": "8000"},
+    {"id": "memory", "label": "运行内存", "type": "range", "field": "内存", "unit": "GB", "defaultMin": "4", "defaultMax": "24"},
+    {"id": "storage", "label": "机身存储", "type": "range", "field": "存储", "unit": "GB", "defaultMin": "64", "defaultMax": "1024"},
+    {"id": "weight", "label": "机身重量", "type": "range", "field": "机身重量", "unit": "g", "defaultMin": "100", "defaultMax": "300"},
+    {"id": "nfc", "label": "NFC", "type": "feature", "fields": ["NFC"], "keywords": ["NFC"], "requireKeyword": true},
+    {"id": "face_id", "label": "面部识别", "type": "feature", "fields": ["面部识别", "生物识别设计", "感应器"], "keywords": ["面部", "人脸"], "requireKeyword": true},
+    {"id": "fingerprint", "label": "指纹识别", "type": "feature", "fields": ["指纹识别", "生物识别设计", "感应器"], "keywords": ["指纹"], "requireKeyword": true},
+    {"id": "wireless_charging", "label": "无线充电", "type": "feature", "fields": ["无线充电", "无线反向充电"], "keywords": ["无线充电", "无线反向充电"]},
+    {"id": "fast_charging", "label": "快速充电", "type": "feature", "fields": ["有线充电", "快充协议", "充电"], "keywords": ["快充", "闪充", "超级充电"], "requireKeyword": true}
+  ],
+  "centerConditionGroups": [
+    {"id": "ranges", "label": "核心规格", "conditionIds": ["price", "battery", "memory", "storage", "weight"]},
+    {"id": "features", "label": "常用功能", "conditionIds": ["nfc", "face_id", "fingerprint", "wireless_charging", "fast_charging"]}
+  ]
+}

@@ -151,11 +151,26 @@
   }
 
   function cloneDefaultRangeFilters() {
-    return JSON.parse(JSON.stringify(DEFAULT_RANGE_FILTERS));
+    var result = {};
+    (state.config.conditions || []).forEach(function (condition) {
+      if (condition.type === "range" && condition.defaultEnabled) {
+        result[condition.id] = {
+          min: condition.defaultMin != null ? String(condition.defaultMin) : "",
+          max: condition.defaultMax != null ? String(condition.defaultMax) : ""
+        };
+      }
+    });
+    return result;
   }
 
   function cloneDefaultFeatureFilters() {
-    return Object.assign({}, DEFAULT_FEATURE_FILTERS);
+    var result = {};
+    (state.config.conditions || []).forEach(function (condition) {
+      if (condition.type === "feature" && condition.defaultEnabled) {
+        result[condition.id] = true;
+      }
+    });
+    return result;
   }
 
   function firstNumber(value) {
@@ -299,6 +314,56 @@
     return false;
   }
 
+  var VALUE_COLUMN_PATTERN = /^(.+?)\s+-\s+(\S+.*)$/;
+
+  function appendUniqueValue(current, value) {
+    var next = String(value == null ? "" : value).trim();
+    if (!hasPositiveValue(next)) {
+      return current;
+    }
+    if (!hasPositiveValue(current)) {
+      return next;
+    }
+    var parts = String(current).split(/[,，]\s*/);
+    return parts.indexOf(next) === -1 ? current + ", " + next : current;
+  }
+
+  function columnAliasMap() {
+    var map = {};
+    var aliases = (state.config && state.config.columnAliases) || {};
+    Object.keys(aliases).forEach(function (standard) {
+      (aliases[standard] || []).forEach(function (alias) {
+        map[alias] = standard;
+      });
+    });
+    return map;
+  }
+
+  function normalizeRowColumns(rows) {
+    var aliasMap = columnAliasMap();
+    var booleanMarkers = ["支持", "是", "有", "●", "√", "true"];
+    return rows.map(function (row) {
+      var next = Object.assign({}, row);
+      Object.keys(row).forEach(function (column) {
+        var value = row[column];
+        var valueMatch = VALUE_COLUMN_PATTERN.exec(column);
+        if (valueMatch) {
+          var parent = valueMatch[1].trim();
+          var normalizedValue = booleanMarkers.indexOf(String(value).trim().toLowerCase()) !== -1 ? valueMatch[2].trim() : value;
+          next[parent] = appendUniqueValue(next[parent], normalizedValue);
+          delete next[column];
+          return;
+        }
+        var standard = aliasMap[column];
+        if (standard && standard !== column) {
+          next[standard] = appendUniqueValue(next[standard], value);
+          delete next[column];
+        }
+      });
+      return next;
+    });
+  }
+
   function buildColumns(rows) {
     var seen = new Set();
     var columns = [];
@@ -324,6 +389,9 @@
     if (condition.type === "range") {
       var filter = state.rangeFilters[condition.id] || {};
       var rowValue = firstNumber(row[condition.field]);
+      if (rowValue != null && /tb/i.test(String(row[condition.field] || "")) && (condition.field === "存储" || condition.field === "内存")) {
+        rowValue *= 1024;
+      }
       if (rowValue == null) {
         return false;
       }
@@ -347,9 +415,11 @@
         if (!hasPositiveValue(val)) {
           return false;
         }
+        var exactFieldHit = fields.indexOf(key) !== -1;
         var keyHit = fields.some(function (field) { return key.indexOf(field) !== -1 || field.indexOf(key) !== -1; });
         var valHit = keywords.some(function (keyword) { return String(val).indexOf(keyword) !== -1; });
-        return condition.requireKeyword ? valHit : (keyHit || valHit);
+        var explicitSupport = ["支持", "是", "有", "●", "√", "true"].indexOf(String(val).trim().toLowerCase()) !== -1;
+        return condition.requireKeyword ? (valHit || (exactFieldHit && explicitSupport)) : (keyHit || valHit);
       });
     }
 
@@ -597,7 +667,8 @@
           input.dataset.conditionId = condition.id;
           input.dataset.side = side;
           var active = state.rangeFilters[condition.id] || {};
-          input.value = active[side] != null ? active[side] : (condition[side] != null ? condition[side] : "");
+          var defaultKey = side === "min" ? "defaultMin" : "defaultMax";
+          input.value = active[side] != null ? active[side] : (condition[defaultKey] != null ? condition[defaultKey] : "");
           controls.appendChild(input);
         });
         var button = document.createElement("button");
@@ -727,7 +798,7 @@
   }
 
   function renderDownloads() {
-    var files = state.manifest && state.manifest.files ? state.manifest.files : {};
+    var files = state.manifest && state.manifest.files ? state.manifest.files : { latestJson: "data/latest.json" };
     var links = [["完整 JSON", files.latestJson], ["完整 CSV", files.latestCsv], ["默认筛选 JSON", files.filteredJson], ["默认筛选 CSV", files.filteredCsv]];
     els.downloadList.textContent = "";
     links.forEach(function (item) {
@@ -784,16 +855,55 @@
       els.centerSeriesFilter.value = state.series;
     }
     els.centerConditionList.textContent = "";
-    (state.config.conditions || []).forEach(function (condition) {
-      var label = document.createElement("label");
-      var input = document.createElement("input");
-      input.type = "checkbox";
-      input.dataset.conditionId = condition.id;
-      input.checked = condition.type === "feature" ? Boolean(state.featureFilters[condition.id]) : Boolean(state.rangeFilters[condition.id]);
-      label.appendChild(input);
-      label.appendChild(document.createTextNode(conditionTagLabel(condition)));
-      els.centerConditionList.appendChild(label);
+    var conditions = state.config.conditions || [];
+    var groups = state.config.centerConditionGroups || [{ label: "核心条件", conditionIds: conditions.map(function (condition) { return condition.id; }) }];
+    groups.forEach(function (group) {
+      var wrapper = document.createElement("section");
+      wrapper.className = "center-condition-group";
+      var title = document.createElement("h4");
+      title.textContent = group.label;
+      wrapper.appendChild(title);
+      var options = document.createElement("div");
+      options.className = "center-condition-options";
+      (group.conditionIds || []).forEach(function (conditionId) {
+        var condition = conditions.find(function (item) { return item.id === conditionId; });
+        if (!condition) { return; }
+        options.appendChild(buildCenterConditionItem(condition));
+      });
+      wrapper.appendChild(options);
+      els.centerConditionList.appendChild(wrapper);
     });
+  }
+
+  function buildCenterConditionItem(condition) {
+    var wrapper = document.createElement("div");
+    wrapper.className = "center-condition-item";
+    var label = document.createElement("label");
+    var input = document.createElement("input");
+    input.type = "checkbox";
+    input.dataset.conditionId = condition.id;
+    input.checked = condition.type === "feature" ? Boolean(state.featureFilters[condition.id]) : Boolean(state.rangeFilters[condition.id]);
+    label.appendChild(input);
+    label.appendChild(document.createTextNode(condition.label + (condition.unit ? " (" + condition.unit + ")" : "")));
+    wrapper.appendChild(label);
+    if (condition.type === "range") {
+      var rangeInputs = document.createElement("div");
+      rangeInputs.className = "center-range-inputs";
+      ["min", "max"].forEach(function (side) {
+        var rangeInput = document.createElement("input");
+        rangeInput.type = "number";
+        rangeInput.inputMode = "decimal";
+        rangeInput.placeholder = side === "min" ? "最小" : "最大";
+        rangeInput.dataset.conditionId = condition.id;
+        rangeInput.dataset.side = side;
+        var active = state.rangeFilters[condition.id] || {};
+        var defaultKey = side === "min" ? "defaultMin" : "defaultMax";
+        rangeInput.value = active[side] != null ? active[side] : (condition[defaultKey] != null ? condition[defaultKey] : "");
+        rangeInputs.appendChild(rangeInput);
+      });
+      wrapper.appendChild(rangeInputs);
+    }
+    return wrapper;
   }
 
   function conditionTagLabel(condition) {
@@ -1277,13 +1387,28 @@
       var condition = (state.config.conditions || []).find(function (item) { return item.id === event.target.dataset.conditionId; });
       if (!condition) { return; }
       if (condition.type === "range") {
-        if (event.target.checked) { state.rangeFilters[condition.id] = { min: condition.min || "", max: condition.max || "" }; }
+        if (event.target.checked) { state.rangeFilters[condition.id] = { min: condition.defaultMin || "", max: condition.defaultMax || "" }; }
         else { delete state.rangeFilters[condition.id]; }
       } else {
         state.featureFilters[condition.id] = event.target.checked;
         if (!event.target.checked) { delete state.featureFilters[condition.id]; }
       }
       state.page = 1; state.cardLimit = 24; renderConditions(); renderCenterFilters(); renderResultsOnly();
+    });
+    els.centerConditionList.addEventListener("input", function (event) {
+      if (!event.target.dataset.side) { return; }
+      var id = event.target.dataset.conditionId;
+      var condition = (state.config.conditions || []).find(function (item) { return item.id === id; });
+      if (!state.rangeFilters[id]) {
+        state.rangeFilters[id] = {
+          min: condition && condition.defaultMin != null ? String(condition.defaultMin) : "",
+          max: condition && condition.defaultMax != null ? String(condition.defaultMax) : ""
+        };
+      }
+      state.rangeFilters[id][event.target.dataset.side] = event.target.value;
+      var checkbox = event.target.closest(".center-condition-item").querySelector('input[type="checkbox"]');
+      checkbox.checked = true;
+      state.page = 1; state.cardLimit = 24; renderConditions(); renderResultsOnly();
     });
     els.cardList.addEventListener("click", function (event) {
       var toggle = event.target.closest(".series-card-toggle");
@@ -1574,12 +1699,13 @@
   }
 
   function initializeRows(rows) {
-    var normalized = (Array.isArray(rows) ? rows : []).map(function (row) {
-      if (!row["品牌"] && row["brand"]) {
-        row["品牌"] = row["brand"];
+    var normalized = normalizeRowColumns((Array.isArray(rows) ? rows : []).map(function (row) {
+      var next = Object.assign({}, row);
+      if (!next["品牌"] && next["brand"]) {
+        next["品牌"] = next["brand"];
       }
-      return row;
-    });
+      return next;
+    }));
     state.rows = normalized;
     state.expandedSeries.clear();
     state.seriesViewSignature = "";
@@ -1605,15 +1731,14 @@
     ]).then(function (results) {
       state.config = Object.assign({}, fallbackConfig, results[0] || {});
       state.manifest = results[1];
-      if (!state.manifest) {
-        initializeRows(SAMPLE_ROWS);
-        els.dataMeta.textContent = "本地预览示例 · GitHub Pages 部署后自动加载最新数据";
-        return;
-      }
-      return fetchJson(state.manifest.files.latestJson || "data/latest.json").then(function (latest) {
+      var latestPath = state.manifest && state.manifest.files && state.manifest.files.latestJson || "data/latest.json";
+      return fetchJson(latestPath).then(function (latest) {
         initializeRows(latest);
-        var dateText = state.manifest.date ? "数据日期 " + state.manifest.date : "最新数据";
+        var dateText = state.manifest && state.manifest.date ? "数据日期 " + state.manifest.date : "最新数据";
         els.dataMeta.textContent = dateText + " · 综合收录 " + state.rows.length + " 台手机";
+      }).catch(function () {
+        initializeRows(SAMPLE_ROWS);
+        els.dataMeta.textContent = "最新数据加载失败 · 当前显示预览示例";
       });
     });
   }
