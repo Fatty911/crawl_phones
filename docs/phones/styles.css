@@ -682,8 +682,13 @@ tbody tr:hover td {
 .center-inline, .sort-level { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
 .center-inline label, .sort-level label { display: grid; gap: 5px; color: var(--muted); font-size: 12px; font-weight: 700; }
 .center-inline select, .sort-level select, .sort-level textarea { border: 1px solid var(--border); border-radius: 6px; padding: 8px; background: var(--surface); color: var(--text); }
-.center-condition-list { display: flex; flex-wrap: wrap; gap: 8px; }
-.center-condition-list label { border: 1px solid var(--border); border-radius: 999px; padding: 7px 10px; background: var(--surface-soft); }
+.center-condition-list { display: grid; gap: 12px; }
+.center-condition-group h4 { margin: 0 0 8px; color: var(--muted); font-size: 12px; }
+.center-condition-options { display: flex; flex-wrap: wrap; gap: 8px; }
+.center-condition-item { display: flex; align-items: center; gap: 8px; border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px; background: var(--surface-soft); }
+.center-condition-item label { white-space: nowrap; }
+.center-range-inputs { display: flex; gap: 4px; }
+.center-range-inputs input { width: 72px; min-width: 0; padding: 4px 6px; border: 1px solid var(--border); border-radius: 5px; background: var(--surface); }
 .selected-tags { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
 .selected-tags span { padding: 6px 10px; border-radius: 999px; background: var(--accent-soft); color: var(--accent-strong); font-size: 12px; font-weight: 700; }
 .card-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
