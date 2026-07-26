@@ -1090,6 +1090,15 @@ class MergeCnmoCoverageTests(unittest.TestCase):
                 self.assertEqual(expected, self.merge.model_storage_signature({"型号": name}))
         self.assertEqual((16, 512), self.merge.model_storage_signature({"型号": "测试 Pro", "内存": "16GB", "存储": "512GB"}))
 
+    def test_model_key_keeps_t_suffix_that_is_part_of_model_name(self) -> None:
+        oneplus_13t = {"型号": "一加13T(12GB+256GB)"}
+        oneplus_15t = {"型号": "一加15T(12GB+256GB)"}
+
+        self.assertEqual("oneplus13t", self.merge.model_key(oneplus_13t))
+        self.assertEqual("oneplus15t", self.merge.model_key(oneplus_15t))
+        self.assertNotEqual(self.merge.model_key(oneplus_13t), self.merge.model_key(oneplus_15t))
+        self.assertEqual((12, 256), self.merge.model_storage_signature(oneplus_13t))
+
     def test_ambiguous_or_different_capacity_stays_as_independent_cnmo_row(self) -> None:
         base = [
             {"型号": "测试 Pro（8GB/256GB）", "数据来源": "中关村在线", "验证状态": "单源"},
