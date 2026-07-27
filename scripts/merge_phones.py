@@ -715,6 +715,8 @@ def model_key(row):
         if name.startswith(cn):
             name = en + name[len(cn):]
             break
+    # RSR 已唯一标识联名版本；部分来源会额外保留“保时捷设计”营销后缀。
+    name = re.sub(r'(rsr)保时捷设计$', r'\1', name)
     # 去除常见后缀
     for suffix in ['5g版', '4g版', '5g', '4g', 'wifi版', '全网通', 'wifi']:
         if name.endswith(suffix):

@@ -1078,6 +1078,59 @@ class MergeCnmoCoverageTests(unittest.TestCase):
             with self.subTest(left=left, right=right):
                 self.assertNotEqual(self.merge.model_key({"型号": left}), self.merge.model_key({"型号": right}))
 
+    def test_rsr_porsche_marketing_suffix_matches_plain_rsr_model(self) -> None:
+        base = [
+            {
+                "型号": "荣耀Magic6 RSR保时捷设计",
+                "内存": "24GB",
+                "存储": "1TB",
+                "数据来源": "太平洋电脑网",
+                "验证状态": "单源",
+            }
+        ]
+        extra = [
+            {
+                "型号": "荣耀Magic6 RSR(24+1T)",
+                "数据来源": "CNMO",
+                "验证状态": "单源",
+            }
+        ]
+
+        self.assertEqual(self.merge.model_key(base[0]), self.merge.model_key(extra[0]))
+        appended, matched = self.merge.append_unique_single_source(base, extra, "CNMO")
+
+        self.assertEqual([], appended)
+        self.assertEqual(1, matched)
+        self.assertEqual("太平洋电脑网+CNMO", base[0]["数据来源"])
+        self.assertNotEqual(
+            self.merge.model_key({"型号": "荣耀Magic6 RSR保时捷设计"}),
+            self.merge.model_key({"型号": "荣耀Magic7 RSR"}),
+        )
+
+        different_capacity_base = [
+            {
+                "型号": "荣耀Magic7 RSR保时捷设计",
+                "内存": "16GB",
+                "存储": "512GB",
+                "数据来源": "太平洋电脑网",
+                "验证状态": "单源",
+            }
+        ]
+        different_capacity = [
+            {
+                "型号": "荣耀Magic7 RSR(24+1T)",
+                "数据来源": "CNMO",
+                "验证状态": "单源",
+            }
+        ]
+        appended, matched = self.merge.append_unique_single_source(
+            different_capacity_base, different_capacity, "CNMO"
+        )
+
+        self.assertEqual(1, len(appended))
+        self.assertEqual(0, matched)
+        self.assertEqual("太平洋电脑网", different_capacity_base[0]["数据来源"])
+
     def test_storage_signature_reads_irregular_and_field_capacity_formats(self) -> None:
         cases = {
             "vivo X300s()16GB/+512GB": (16, 512),
