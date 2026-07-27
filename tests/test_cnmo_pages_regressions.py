@@ -869,6 +869,44 @@ class MergeCnmoCoverageTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.merge = load_script_module("merge_phones_regression", ROOT / "scripts" / "merge_phones.py")
 
+    def test_audited_equivalent_headers_merge_without_collapsing_distinct_network_or_capacity_fields(self) -> None:
+        row = self.merge.norm_rows(
+            [
+                {
+                    "型号": "测试手机",
+                    "定位导航": "GPS+北斗",
+                    "定位系统": "支持GPS",
+                    "WiFi(WLAN)": "Wi-Fi 7",
+                    "WLAN功能": "支持802.11be",
+                    "NFC": "支持NFC",
+                    "NFC功能": "支持",
+                    "机身颜色": "黑色，白色",
+                    "手机颜色": "黑色,白色",
+                    "容量扩展": "支持MicroSD",
+                    "扩展容量": "1TB",
+                    "网络模式": "双卡双待",
+                    "网络类型": "5G，4G",
+                    "网络制式": "全网通5G",
+                    " 未审计字段 ": "保留原键",
+                }
+            ],
+            "CNMO",
+        )[0]
+
+        self.assertEqual("GPS+北斗|支持GPS", row["定位导航"])
+        self.assertEqual("Wi-Fi 7|支持802.11be", row["WLAN功能"])
+        self.assertEqual("支持NFC|支持", row["NFC"])
+        self.assertEqual("黑色，白色|黑色,白色", row["手机颜色"])
+        for alias in ("定位系统", "WiFi(WLAN)", "NFC功能", "机身颜色"):
+            self.assertNotIn(alias, row)
+        self.assertEqual("支持MicroSD", row["容量扩展"])
+        self.assertEqual("1TB", row["存储"])
+        self.assertNotIn("扩展容量", row)
+        self.assertEqual("双卡双待", row["网络模式"])
+        self.assertEqual("5G，4G", row["网络类型"])
+        self.assertEqual("全网通5G", row["网络制式"])
+        self.assertEqual("保留原键", row[" 未审计字段 "])
+
     def test_memory_and_storage_keep_only_objective_specifications(self) -> None:
         row = self.merge.norm_rows(
             [

@@ -139,6 +139,64 @@ class PreservePublishBaselineTests(unittest.TestCase):
         self.assertIn("Model 2", csv_text)
         self.assertIn("restored=1", result.stdout)
 
+    def test_cli_normalizes_audited_baseline_headers_and_preserves_conflicts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            baseline = tmp_path / "baseline.json"
+            candidate = tmp_path / "candidate.json"
+            candidate_csv = tmp_path / "candidate.csv"
+            baseline.write_text(
+                json.dumps(
+                    [
+                        {
+                            "手机ID": "1",
+                            "型号": "Model 1",
+                            "定位导航": "GPS+北斗",
+                            "定位系统": "支持GPS",
+                            "WiFi(WLAN)": "Wi-Fi 7",
+                            "WLAN功能": "支持802.11be",
+                            "NFC": "支持NFC",
+                            "NFC功能": "支持",
+                            "机身颜色": "黑色，白色",
+                            "手机颜色": "黑色,白色",
+                            "容量扩展": "支持MicroSD",
+                            "扩展容量": "1TB",
+                            "网络模式": "双卡双待",
+                            "网络类型": "5G，4G",
+                            "网络制式": "全网通5G",
+                    " 未审计字段 ": "保留原键",
+                        }
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            candidate.write_text("[]", encoding="utf-8")
+            candidate_csv.write_text("手机ID\n", encoding="utf-8")
+
+            result = subprocess.run(
+                [sys.executable, str(PRESERVE_SCRIPT), str(baseline), str(candidate), str(candidate_csv)],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            restored = json.loads(candidate.read_text(encoding="utf-8"))[0]
+
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertEqual("1", restored["手机ID"])
+        self.assertEqual("GPS+北斗|支持GPS", restored["定位导航"])
+        self.assertEqual("Wi-Fi 7|支持802.11be", restored["WLAN功能"])
+        self.assertEqual("支持NFC|支持", restored["NFC"])
+        self.assertEqual("黑色，白色|黑色,白色", restored["手机颜色"])
+        for alias in ("定位系统", "WiFi(WLAN)", "NFC功能", "机身颜色"):
+            self.assertNotIn(alias, restored)
+        self.assertEqual("支持MicroSD", restored["容量扩展"])
+        self.assertEqual("1TB", restored["扩展容量"])
+        self.assertEqual("双卡双待", restored["网络模式"])
+        self.assertEqual("5G，4G", restored["网络类型"])
+        self.assertEqual("全网通5G", restored["网络制式"])
+        self.assertEqual("保留原键", restored[" 未审计字段 "])
+
     def test_cli_cleans_marketing_copy_from_restored_baseline(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)

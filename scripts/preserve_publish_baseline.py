@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from merge_phones import clean_spec_value
+from merge_phones import clean_spec_value, normalize_audited_published_headers
 from verify_publish_superset import identity_key, identity_keys, load_rows, verify_superset
 
 
@@ -19,7 +19,10 @@ def preserve_baseline(
 ) -> tuple[list[dict[str, Any]], list[str]]:
     candidate_ids = {key for row in candidate for key in identity_keys(row)}
     missing_rows = [row for row in baseline if identity_key(row) not in candidate_ids]
-    merged = [*candidate, *(dict(row) for row in missing_rows)]
+    merged = [
+        normalize_audited_published_headers(row)
+        for row in [*candidate, *(dict(row) for row in missing_rows)]
+    ]
     for row in merged:
         for field in ("内存", "存储"):
             if field in row:

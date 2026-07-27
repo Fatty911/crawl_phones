@@ -31,6 +31,14 @@ VALIDATION_FIELDS = ('处理器', '内存', '存储', '屏幕', '电池', '摄�
 VALIDATION_MISSING_VALUES = {'', '-', '--', '/', 'n/a', 'null', '暂无', '无', '未知'}
 SOURCE_VALIDATION_ROWS_FIELD = '_source_validation_rows'
 
+AUDITED_EQUIVALENT_HEADER_ALIASES = {
+    '定位系统': '定位导航',
+    'WiFi(WLAN)': 'WLAN功能',
+    'NFC功能': 'NFC',
+    '机身颜色': '手机颜色',
+}
+
+
 HEADER_MAP = {
     '国内发布时间': '上市时间',
     '发布时间': '上市时间',
@@ -95,6 +103,7 @@ HEADER_MAP = {
     '厚度': '机身厚度',
     '重量': '机身重量',
     '机身重量': '机身重量',
+    **AUDITED_EQUIVALENT_HEADER_ALIASES,
 }
 
 
@@ -783,6 +792,32 @@ def norm(header):
         if key in header or header in key:
             return value
     return header
+
+
+def merge_distinct_header_values(existing, incoming):
+    pieces = []
+    for value in (existing, incoming):
+        if value is None or str(value).strip() in ('', '-', '--'):
+            continue
+        for piece in str(value).split('|'):
+            piece = piece.strip()
+            if piece and piece not in pieces:
+                pieces.append(piece)
+    if pieces:
+        return '|'.join(pieces)
+    return existing if existing is not None else incoming
+
+
+def normalize_audited_published_headers(row):
+    normalized = {}
+    for key, value in row.items():
+        stripped = str(key).strip()
+        canonical = AUDITED_EQUIVALENT_HEADER_ALIASES.get(stripped, key)
+        if canonical in normalized:
+            normalized[canonical] = merge_distinct_header_values(normalized[canonical], value)
+        else:
+            normalized[canonical] = value
+    return normalized
 
 
 def first_number_text(value):
