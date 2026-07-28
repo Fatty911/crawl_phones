@@ -340,6 +340,7 @@ def get_session():
 
 
 def crawl_list_page(session: requests.Session, page: int) -> List[Dict]:
+    logger.info("源站列表顺序，未验证为热度或销量")
     url = LIST_URL.format(page=page)
     logger.info(f"爬取列表页: {url}")
 

@@ -746,33 +746,52 @@ def fuzzy_model_key(row):
 
 
 def model_storage_signature(row):
+    """Return only a concrete capacity variant encoded by the model name or fields."""
     raw_name = str(row.get('型号') or row.get('name') or '')
     name = raw_name.replace('（', '(').replace('）', ')')
-    values = []
 
-    def append_amount(amount, unit='gb'):
-        values.append(int(amount) * (1024 if unit and unit.lower().startswith('t') else 1))
+    def amount(value, unit):
+        return int(value) * (1024 if unit and unit.lower().startswith('t') else 1)
 
-    candidates = re.findall(r'\(([^)]*)\)', name)
-    candidates.append(name)
-    if not any(re.search(r'(?:gb|tb|\d+\s*[+/]+\s*\d+\s*[gt]b?)', item, re.IGNORECASE) for item in candidates):
-        field_capacity = ' '.join(str(row.get(field, '') or '') for field in ('内存', '存储')).strip()
-        if field_capacity:
-            candidates.append(field_capacity)
+    pair = re.search(r'(\d+)\s*(?:gb)?\s*[+/]+\s*(\d+)\s*([gt]b?)', name, re.IGNORECASE)
+    if pair:
+        return (amount(pair.group(1), 'gb'), amount(pair.group(2), pair.group(3)))
+    for group in re.findall(r'\(([^)]*)\)', name):
+        amounts = re.findall(r'(\d+)\s*([gt]b?)', group, re.IGNORECASE)
+        if len(amounts) == 1:
+            return (amount(*amounts[0]),)
+    suffix = re.search(r'(\d+)\s*([gt]b?)\s*$', name, re.IGNORECASE)
+    if suffix:
+        return (amount(suffix.group(1), suffix.group(2)),)
+    memory = re.findall(r'(\d+)\s*([gt]b?)', str(row.get('内存') or ''), re.IGNORECASE)
+    storage = re.findall(r'(\d+)\s*([gt]b?)', str(row.get('存储') or ''), re.IGNORECASE)
+    if len(memory) == 1 and len(storage) == 1:
+        return (amount(*memory[0]), amount(*storage[0]))
+    if not memory and len(storage) == 1:
+        return (amount(*storage[0]),)
+    return ()
 
-    for group in candidates:
-        normalized = re.sub(r'\(\)', '', group)
-        pair = re.search(r'(\d+)\s*(?:gb)?\s*[+/]+\s*(\d+)\s*([gt]b?)', normalized, re.IGNORECASE)
-        if pair:
-            append_amount(pair.group(1), 'gb')
-            append_amount(pair.group(2), pair.group(3))
-            break
-        amounts = re.findall(r'(\d+)\s*([gt]b?)', normalized, re.IGNORECASE)
-        if amounts:
-            for amount, unit in amounts[:2]:
-                append_amount(amount, unit)
-            break
-    return tuple(values)
+
+def model_storage_signatures(row):
+    """Return concrete signatures or bounded RAM/storage option combinations."""
+    concrete = model_storage_signature(row)
+    if concrete:
+        return {concrete}
+
+    def amounts(field):
+        values = re.findall(r'(\d+)\s*([gt]b?)', str(row.get(field) or ''), re.IGNORECASE)
+        return {
+            int(value) * (1024 if unit and unit.lower().startswith('t') else 1)
+            for value, unit in values
+        }
+
+    memory = amounts('内存')
+    storage = amounts('存储')
+    if memory and storage and len(memory) * len(storage) <= 16:
+        return {(ram, capacity) for ram in memory for capacity in storage}
+    if not memory and storage and len(storage) <= 8:
+        return {(capacity,) for capacity in storage}
+    return set()
 
 
 
@@ -1140,14 +1159,22 @@ def append_unique_single_source(base_rows, extra_rows, source):
     for extra_row in extra_rows:
         family = model_key(extra_row)
         signature = model_storage_signature(extra_row)
+        signature_options = model_storage_signatures(extra_row)
         candidates = family_index.get(family, [])
-        same_variant = [
+        exact_variant = [
             index for index in candidates
-            if model_storage_signature(base_rows[index]) == signature
+            if signature and model_storage_signature(base_rows[index]) == signature
         ]
-        matched_index = same_variant[0] if len(same_variant) == 1 else None
-        if matched_index is None and not signature:
-            no_capacity = [index for index in candidates if not model_storage_signature(base_rows[index])]
+        matched_index = exact_variant[0] if len(exact_variant) == 1 else None
+        if matched_index is None and signature_options:
+            compatible = [
+                index for index in candidates
+                if signature_options & model_storage_signatures(base_rows[index])
+            ]
+            if len(compatible) == 1:
+                matched_index = compatible[0]
+        if matched_index is None and not signature_options:
+            no_capacity = [index for index in candidates if not model_storage_signatures(base_rows[index])]
             if len(no_capacity) == 1:
                 matched_index = no_capacity[0]
 

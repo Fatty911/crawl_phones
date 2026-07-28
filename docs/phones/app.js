@@ -98,6 +98,7 @@
     pageInfo: document.getElementById("pageInfo"),
     pageJump: document.getElementById("pageJump"),
     goPage: document.getElementById("goPage"),
+    advancedConditionSection: document.getElementById("advancedConditionSection"),
     conditionList: document.getElementById("conditionList"),
     fieldSelect: document.getElementById("fieldSelect"),
     fieldOperator: document.getElementById("fieldOperator"),
@@ -634,10 +635,24 @@
     });
   }
 
+  function sideConditions() {
+    var coreIds = Object.create(null);
+    (state.config.centerConditionGroups || []).forEach(function (group) {
+      (group.conditionIds || []).forEach(function (id) {
+        coreIds[id] = true;
+      });
+    });
+    return (state.config.conditions || []).filter(function (condition) {
+      return !coreIds[condition.id];
+    });
+  }
+
   function renderConditions() {
     var fragment = document.createDocumentFragment();
+    var conditions = sideConditions();
+    els.advancedConditionSection.hidden = conditions.length === 0;
     els.conditionList.textContent = "";
-    (state.config.conditions || []).forEach(function (condition) {
+    conditions.forEach(function (condition) {
       var item = document.createElement("div");
       item.className = "condition-item";
       item.dataset.conditionId = condition.id;

@@ -387,68 +387,41 @@ def _get_existing_phone_ids() -> set:
     return existing
 
 
-def _count_local_brands() -> Dict[str, int]:
-    """统计本地 zol/json/ 目录中各品牌手机型号数。
-    用作品牌热度的代理信号——主流品牌（型号多的）优先爬取。
-    数据 100% 来源于硬盘上已存在的 json 文件，不使用任何硬编码品牌列表。
-    """
-    brand_counts = {}
-    if not os.path.exists(zol_json_dir):
-        return brand_counts
-    for filename in os.listdir(zol_json_dir):
-        if not filename.endswith('.json'):
-            continue
-        try:
-            with open(os.path.join(zol_json_dir, filename), 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            brand = (data.get('品牌') or data.get('brand') or '').strip()
-            if not brand:
-                brand = derive_brand_from_name(data.get('型号', data.get('name', '')))
-            if brand:
-                brand_counts[brand] = brand_counts.get(brand, 0) + 1
-        except Exception:
-            continue
-    return brand_counts
+def _crawl_hot_list(session: requests.Session) -> Dict[str, int]:
+    """从 ZOL 热门手机排行动态抓取型号 ID 及页面名次。"""
+    url = 'https://top.zol.com.cn/compositor/57/cell_phone.html'
+    ranks: Dict[str, int] = {}
+    try:
+        human_delay("ZOL 热门手机排行")
+        resp = session.get(url, timeout=REQUEST_TIMEOUT)
+        if resp.status_code != 200:
+            logger.warning(f"ZOL 热门手机排行返回 HTTP {resp.status_code}，保持列表原始顺序")
+            return ranks
+        resp.encoding = 'gbk'
+        for match in re.finditer(r'cell_phone/index(\d+)\.shtml', resp.text):
+            phone_id = match.group(1)
+            if phone_id not in ranks:
+                ranks[phone_id] = len(ranks)
+    except Exception as exc:
+        logger.warning(f"ZOL 热门手机排行抓取失败，保持列表原始顺序: {exc}")
+        return {}
+    logger.info(f"ZOL 热门手机排行共 {len(ranks)} 个有序型号 ID（页面动态获取）")
+    return ranks
 
 
-def _crawl_hot_list(session: requests.Session) -> set:
-    """从 ZOL 热门榜（top.zol.com.cn）动态抓取热门型号 ID。
-    返回热门榜上出现的手机 ID 集合，约 ~110 条，用于优先级 1 爬取。
-    所有热度排序数据均从页面实时获取，不硬编码任何品牌列表。
-    """
-    hot_ids = set()
-    cat_id = '57'  # 57 = cell_phone 类目
-    for page in range(1, 4):  # 通常 3 页以内
-        url = f'https://top.zol.com.cn/compositor/{cat_id}/manu_attention.html'
-        if page > 1:
-            url = f'https://top.zol.com.cn/compositor/{cat_id}/manu_attention.html?page={page}'
-        try:
-            human_delay(f"ZOL 热门榜第{page}页")
-            resp = session.get(url, timeout=REQUEST_TIMEOUT)
-            if resp.status_code != 200:
-                break
-            resp.encoding = 'gbk'
-            # 热门榜每个条目链到 detail.zol.com.cn/cell_phone/index{id}.shtml
-            for m in re.finditer(r'cell_phone/index(\d+)\.shtml', resp.text):
-                hot_ids.add(m.group(1))
-        except Exception as e:
-            logger.warning(f"热门榜第{page}页抓取失败: {e}")
-            break
-    logger.info(f"ZOL 热门榜共 {len(hot_ids)} 个型号 ID（页面动态获取，无硬编码）")
-    return hot_ids
-
-
-def _sort_by_brand_heat(phones: List[Dict], local_brand_counts: Dict[str, int]) -> List[Dict]:
-    """按品牌热度重排：先用本地已爬数据的品牌计数作为热度信号，
-    在数据预热阶段后此函数会自动适应真实热度。
-    热度=已爬取该品牌手机数 + 0，确保主流品牌优先；新品牌会被均匀轮询到。
-    """
-    def heat_key(p):
-        brand = (p.get('品牌') or derive_brand_from_name(p.get('name', '')) or '').strip()
-        c = local_brand_counts.get(brand, 0)
-        # 返回二元组 (-c, brand): 品牌型号数降序，相同再按品牌名字典序，确保稳定
-        return (-c, brand)
-    return sorted(phones, key=heat_key)
+def _prioritize_hot_models(phones: List[Dict], ranks: Dict[str, int]) -> List[Dict]:
+    """榜内严格按页面名次，榜外保持列表扫描的原始顺序。"""
+    if not ranks:
+        return phones
+    source_order = {id(phone): index for index, phone in enumerate(phones)}
+    return sorted(
+        phones,
+        key=lambda phone: (
+            (0, ranks[str(phone.get('id'))])
+            if str(phone.get('id')) in ranks
+            else (1, source_order[id(phone)])
+        ),
+    )
 
 
 def _scan_all_models(session: requests.Session) -> List[Dict]:
@@ -493,20 +466,10 @@ def step1_crawl_list_and_detail():
         all_phones = _scan_all_models(session)
         existing_ids = _get_existing_phone_ids()
 
-        # 计算本地各品牌已爬数量（作为热度代理信号）
-        local_brand_counts = _count_local_brands()
-
-        # A 方案：从 ZOL 热门榜动态抓取热门型号 ID，优先爬取
-        hot_ids = _crawl_hot_list(session)
-        if hot_ids:
-            # 按 (是否热门, 热度) 排序：热门型号在前；同热门状态下按品牌热度
-            def priority_key(p):
-                is_hot = 0 if p['id'] in hot_ids else 1
-                brand = (p.get('品牌') or derive_brand_from_name(p.get('name', '')) or '').strip()
-                brand_heat = local_brand_counts.get(brand, 0)
-                return (is_hot, -brand_heat, brand, p.get('name', ''))
-            all_phones = sorted(all_phones, key=priority_key)
-            logger.info(f"已按 ZOL 热门榜（{len(hot_ids)} 个型号）+ 本地品牌热度重排，前 5 名: "
+        hot_ranks = _crawl_hot_list(session)
+        all_phones = _prioritize_hot_models(all_phones, hot_ranks)
+        if hot_ranks:
+            logger.info(f"已按 ZOL 热门手机排行（{len(hot_ranks)} 个有序型号）重排；榜外保持扫描原序，前 5 名: "
                         f"{[p['name'] for p in all_phones[:5]]}")
 
         new_phones = [p for p in all_phones if p['id'] not in existing_ids]

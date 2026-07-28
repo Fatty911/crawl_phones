@@ -229,62 +229,6 @@ FALLBACK_BRANDS = [
     'oneplus', 'realme', 'iqoo', 'samsung', 'motorola', 'nubia'
 ]
 
-# PHONE_BRAND_HEAT_ORDER 保留作为兜底；正常运行时不使用，爬虫会通过
-# crawl_brand_heat() 从 PConline 各品牌子页动态获取型号数排序。
-PHONE_BRAND_HEAT_ORDER = [
-    'apple', 'oppo', 'honor', 'vivo', 'miui', 'redmi',
-    'huawei', 'samsung', 'iqoo', 'realme', 'oneplus', 'bubugao',
-    'motorola', 'nubia', 'meizu', 'zte', 'lenovo',
-    'sony', 'google', 'nokia', 'nothing', 'tecno',
-]
-
-
-def crawl_brand_heat(session: requests.Session, brands: List[str], max_brands: int = 30) -> Dict[str, int]:
-    """从 PConline 各品牌子页动态抓取型号总数，作为品牌热度代理。
-    每个 mobile/{brand}/ 页包含"共 X 件"文本。失败时使用 PHONE_BRAND_HEAT_ORDER兜底。
-    """
-    heat: Dict[str, int] = {}
-    fall_back = {b.strip().lower(): idx for idx, b in enumerate(PHONE_BRAND_HEAT_ORDER)}
-    for brand in brands[:max_brands]:
-        try:
-            url = f'https://product.pconline.com.cn/mobile/{brand}/'
-            human_delay(f"PConline 品牌热度探测 {brand}")
-            resp = session.get(url, timeout=REQUEST_TIMEOUT)
-            if resp.status_code != 200:
-                # 用兜底位次
-                idx = fall_back.get(brand.lower(), 9999)
-                heat[brand] = -idx
-                continue
-            resp.encoding = 'gbk'
-            m = re.search(r'共\s*(\d+)\s*[件个款台条]', resp.text)
-            if m:
-                heat[brand] = int(m.group(1))
-            else:
-                idx = fall_back.get(brand.lower(), 9999)
-                heat[brand] = -idx
-        except Exception:
-            idx = fall_back.get(brand.lower(), 9999)
-            heat[brand] = -idx
-    return heat
-
-
-def sort_brands_by_heat(brands: List[str], session: Optional[requests.Session] = None) -> List[str]:
-    """按品牌销量热度排序，热门品牌优先爬取。
-    优先使用 crawl_brand_heat() 动态获取；若 session 为 None 则使用硬编码兜底。
-    """
-    if session is None:
-        session = get_session()
-    heat = crawl_brand_heat(session, brands)
-    if not heat:
-        heat_map = {b.strip().lower(): idx for idx, b in enumerate(PHONE_BRAND_HEAT_ORDER)}
-        sorted_brands = sorted(brands, key=lambda b: heat_map.get(b.strip().lower(), 999))
-        logger.info(f"品牌按热度(兜底排序)重排: {sorted_brands[:10]}...")
-        return sorted_brands
-    sorted_brands = sorted(brands, key=lambda b: -heat.get(b, 0))
-    logger.info(f"品牌按动态热度重排: {sorted_brands[:8]}...（共 {len(sorted_brands)} 个品牌的型号数为 {sum(heat.values())}）")
-    return sorted_brands
-
-
 def save_progress():
     with open(progress_file, 'w', encoding='utf-8') as f:
         json.dump(progress, f, ensure_ascii=False, indent=2)
@@ -561,12 +505,7 @@ def _scan_all_models(session: requests.Session, start_time: float) -> Tuple[List
     logger.info("=" * 70)
 
     brands = crawl_brand_list(session)
-    if MAX_TIME_PER_STEP > 0 or MAX_PHONES_PER_RUN > 0:
-        heat_map = {b.strip().lower(): idx for idx, b in enumerate(PHONE_BRAND_HEAT_ORDER)}
-        brands = sorted(brands, key=lambda b: heat_map.get(b.strip().lower(), 999))
-        logger.info(f"预算扫描模式：跳过动态品牌热度探测，使用兜底热度排序: {brands[:10]}...")
-    else:
-        brands = sort_brands_by_heat(brands, session)
+    logger.info("品牌按实时目录顺序扫描；品牌内型号保持源站默认最热门顺序（非销量）")
     logger.info(f"品牌列表 ({len(brands)}): {brands}")
 
     all_phones = []
@@ -742,7 +681,7 @@ def step1_crawl_list_and_detail():
     logger.info(f"从进度恢复: total_phones={phones_crawled}, processed={len(progress.get('processed_phones',[]))}, crawled={len(progress.get('crawled_phones',[]))}, brand_idx={progress.get('current_brand_index')}")
 
     brands = crawl_brand_list(session)
-    brands = sort_brands_by_heat(brands)
+    logger.info("品牌按实时目录顺序扫描；品牌内型号保持源站默认最热门顺序（非销量）")
     logger.info(f"品牌列表 ({len(brands)}): {brands}")
 
     current_brand_idx = progress.get('current_brand_index', 0)

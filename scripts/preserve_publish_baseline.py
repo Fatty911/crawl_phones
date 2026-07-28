@@ -17,8 +17,24 @@ from verify_publish_superset import identity_key, identity_keys, load_rows, veri
 def preserve_baseline(
     baseline: list[dict[str, Any]], candidate: list[dict[str, Any]]
 ) -> tuple[list[dict[str, Any]], list[str]]:
-    candidate_ids = {key for row in candidate for key in identity_keys(row)}
-    missing_rows = [row for row in baseline if identity_key(row) not in candidate_ids]
+    covered_ids = {key for row in candidate for key in identity_keys(row)}
+
+    def source_count(row: dict[str, Any]) -> int:
+        return len([part for part in str(row.get("数据来源", "")).split("+") if part.strip()])
+
+    ranked_baseline = sorted(
+        enumerate(baseline),
+        key=lambda item: (-source_count(item[1]), -len(identity_keys(item[1])), item[0]),
+    )
+    selected: list[tuple[int, dict[str, Any]]] = []
+    for index, row in ranked_baseline:
+        keys = identity_keys(row)
+        if not keys:
+            identity_key(row)
+        if any(key not in covered_ids for key in keys):
+            selected.append((index, row))
+            covered_ids.update(keys)
+    missing_rows = [row for _, row in sorted(selected, key=lambda item: item[0])]
     merged = [
         normalize_audited_published_headers(row)
         for row in [*candidate, *(dict(row) for row in missing_rows)]
