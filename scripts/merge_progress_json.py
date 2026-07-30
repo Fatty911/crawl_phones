@@ -62,9 +62,65 @@ def merge_progress(current: dict[str, Any], ours: dict[str, Any], theirs: dict[s
             default=len(merged.get("crawled_phones", [])),
         )
 
-    for key in ("current_page", "current_brand_index"):
-        if key in merged:
-            merged[key] = max_number(current.get(key), ours.get(key), theirs.get(key), default=1)
+    sources = [source for source in (current, ours, theirs) if source]
+    is_pconline = any(
+        "current_brand" in source or "brand_plan" in source for source in sources
+    )
+    if is_pconline:
+        cursor_sources = [
+            source
+            for source in sources
+            if isinstance(source.get("current_brand_index"), int)
+            and isinstance(source.get("current_page"), int)
+        ]
+        if cursor_sources:
+            plans = [source.get("brand_plan") for source in cursor_sources]
+            plans_are_comparable = bool(plans) and all(
+                isinstance(plan, list) and plan and plan == plans[0]
+                for plan in plans
+            )
+            if len(cursor_sources) > 1 and not plans_are_comparable:
+                merged["current_brand_index"] = 0
+                merged["current_brand"] = ""
+                merged["current_page"] = 1
+                merged["previous_list_brand"] = ""
+                merged["previous_list_page"] = 0
+                merged["previous_list_ids"] = []
+                merged["list_page_fingerprints"] = {}
+            else:
+                # A conflict must never synthesize a later page for another
+                # brand. Replay the earliest complete cursor bundle.
+                cursor_source = min(
+                    cursor_sources,
+                    key=lambda source: (
+                        source["current_brand_index"],
+                        source["current_page"],
+                    ),
+                )
+                for key in (
+                    "current_brand_index",
+                    "current_brand",
+                    "current_page",
+                    "brand_plan",
+                    "previous_list_brand",
+                    "previous_list_page",
+                    "previous_list_ids",
+                    "list_page_fingerprints",
+                ):
+                    if key in cursor_source:
+                        merged[key] = cursor_source[key]
+        merged["scan_complete"] = bool(sources) and all(
+            source.get("scan_complete") is True for source in sources
+        )
+    else:
+        for key in ("current_page", "current_brand_index"):
+            if key in merged:
+                merged[key] = max_number(
+                    current.get(key),
+                    ours.get(key),
+                    theirs.get(key),
+                    default=1,
+                )
 
     return merged
 

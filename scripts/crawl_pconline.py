@@ -17,6 +17,7 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from bs4 import BeautifulSoup
+from restore_pconline_cache import is_semantically_valid_record
 
 # 字段标准化映射（与 merge_phones.py 保持一致）
 HEADER_MAP = {
@@ -184,6 +185,20 @@ if os.path.exists(progress_file) and not args.restart:
         progress['current_brand_index'] = 0
     if 'current_page' not in progress:
         progress['current_page'] = 1
+    if 'current_brand' not in progress:
+        progress['current_brand'] = ''
+    if 'brand_plan' not in progress:
+        progress['brand_plan'] = []
+    if 'scan_complete' not in progress:
+        progress['scan_complete'] = False
+    if 'previous_list_brand' not in progress:
+        progress['previous_list_brand'] = ''
+    if 'previous_list_page' not in progress:
+        progress['previous_list_page'] = 0
+    if 'previous_list_ids' not in progress:
+        progress['previous_list_ids'] = []
+    if 'list_page_fingerprints' not in progress:
+        progress['list_page_fingerprints'] = {}
     if 'processed_phones' not in progress:
         progress['processed_phones'] = list(progress.get('crawled_phones', []))
     if 'skipped_phones' not in progress:
@@ -196,7 +211,14 @@ else:
         'skipped_phones': {},
         'total_phones': 0,
         'current_brand_index': 0,
-        'current_page': 1
+        'current_brand': '',
+        'current_page': 1,
+        'brand_plan': [],
+        'scan_complete': False,
+        'previous_list_brand': '',
+        'previous_list_page': 0,
+        'previous_list_ids': [],
+        'list_page_fingerprints': {}
     }
     logger.info('初始化新进度')
 
@@ -229,9 +251,55 @@ FALLBACK_BRANDS = [
     'oneplus', 'realme', 'iqoo', 'samsung', 'motorola', 'nubia'
 ]
 
+# IDC 2026 Q2 mainland China shipment ranking (published 2026-07-14):
+# https://www.idc.com/resource-center/blog/china-smartphone-market-decline-q2-2026/
+# OPPO and vivo are tied; their order follows IDC's published table.
+PCONLINE_BRAND_GROUPS = [
+    ('huawei', ('huawei',)),
+    ('apple', ('apple',)),
+    ('oppo', ('oppo', 'oneplus', 'realme')),
+    ('vivo', ('bubugao', 'vivo', 'iqoo')),
+    ('xiaomi', ('miui', 'redmi')),
+    ('honor', ('honor',)),
+    ('wiko', ('wiko',)),
+    ('lenovo', ('lenovo',)),
+    ('zte', ('zte',)),
+    ('samsung', ('samsung',)),
+]
+
+
+class ListPageFetchError(RuntimeError):
+    """A list page could not be verified as a real catalog page."""
+
+
+def order_pconline_brands(brands: List[str]) -> List[str]:
+    """Apply the dated IDC priority and a deterministic fallback order."""
+    available = set(brands)
+    ordered = []
+    grouped = set()
+    for _group_name, members in PCONLINE_BRAND_GROUPS:
+        for brand in members:
+            if brand in available:
+                ordered.append(brand)
+                grouped.add(brand)
+    ordered.extend(sorted(brand for brand in brands if brand not in grouped))
+    return ordered
+
+
 def save_progress():
     with open(progress_file, 'w', encoding='utf-8') as f:
         json.dump(progress, f, ensure_ascii=False, indent=2)
+
+
+def set_progress_cursor(brand_index: int, page: int) -> None:
+    brand_plan = progress.get('brand_plan', [])
+    progress['current_brand_index'] = brand_index
+    progress['current_brand'] = (
+        brand_plan[brand_index]
+        if isinstance(brand_plan, list) and 0 <= brand_index < len(brand_plan)
+        else ''
+    )
+    progress['current_page'] = page
 
 
 def mark_processed(phone_id: str, reason: str = ''):
@@ -240,6 +308,8 @@ def mark_processed(phone_id: str, reason: str = ''):
         processed.append(phone_id)
     if reason:
         progress.setdefault('skipped_phones', {})[phone_id] = reason
+    else:
+        progress.setdefault('skipped_phones', {}).pop(phone_id, None)
 
 
 def human_delay(label=""):
@@ -283,8 +353,9 @@ def crawl_brand_list(session: requests.Session) -> List[str]:
         resp.encoding = 'gbk'
         
         if resp.status_code != 200:
-            logger.warning(f"品牌目录页请求失败 (状态码: {resp.status_code})")
-            return FALLBACK_BRANDS
+            raise ListPageFetchError(
+                f"品牌目录页请求失败 (状态码: {resp.status_code})"
+            )
         
         soup = BeautifulSoup(resp.text, 'html.parser')
         links = soup.find_all('a', href=re.compile(r'/mobile/\w+/'))
@@ -308,12 +379,12 @@ def crawl_brand_list(session: requests.Session) -> List[str]:
             logger.info(f"从页面提取 {len(brands)} 个品牌: {brands}")
             return brands
         else:
-            logger.warning("页面未提取到品牌，使用兜底品牌列表")
-            return FALLBACK_BRANDS
+            raise ListPageFetchError("品牌目录页未提取到可验证品牌")
         
+    except ListPageFetchError:
+        raise
     except Exception as e:
-        logger.error(f"爬取品牌目录异常: {e}")
-        return FALLBACK_BRANDS
+        raise ListPageFetchError(f"爬取品牌目录异常: {e}") from e
 
 
 def crawl_list_page(session: requests.Session, brand: str, page: int = 1) -> List[Dict]:
@@ -332,14 +403,16 @@ def crawl_list_page(session: requests.Session, brand: str, page: int = 1) -> Lis
         resp.encoding = 'gbk'
         
         if resp.status_code != 200:
-            logger.warning(f"请求失败: {url} (状态码: {resp.status_code})")
-            return []
+            raise ListPageFetchError(f"请求失败: {url} (状态码: {resp.status_code})")
         
         soup = BeautifulSoup(resp.text, 'html.parser')
-        
+        catalog = soup.select_one('ul#JlistItems.list-type-tw')
+        if catalog is None:
+            raise ListPageFetchError(f"列表页缺少商品目录容器: {url}")
+
         phones = []
-        
-        links = soup.find_all('a', href=re.compile(r'//product\.pconline\.com\.cn/mobile/\w+/\d+\.html'))
+        seen_ids = set()
+        links = catalog.select('a.item-title-name[href]')
         for link in links:
             href = link.get('href', '')
             name = link.get_text(strip=True)
@@ -348,6 +421,9 @@ def crawl_list_page(session: requests.Session, brand: str, page: int = 1) -> Lis
                 brand_match = re.search(r'/mobile/(\w+)/\d+\.html', href)
                 if phone_id_match:
                     phone_id = phone_id_match.group(1)
+                    if phone_id in seen_ids:
+                        continue
+                    seen_ids.add(phone_id)
                     brand_name = brand_match.group(1) if brand_match else brand
                     # 跳过系列概览页（不是真正的手机详情页）
                     if brand_name == 'series':
@@ -363,9 +439,10 @@ def crawl_list_page(session: requests.Session, brand: str, page: int = 1) -> Lis
         logger.info(f"品牌={brand} 第{page}页 找到 {len(phones)} 个手机")
         return phones
         
+    except ListPageFetchError:
+        raise
     except Exception as e:
-        logger.error(f"爬取列表页异常: {e}")
-        return []
+        raise ListPageFetchError(f"爬取列表页异常: {url} - {e}") from e
 
 
 def crawl_detail_page(session: requests.Session, phone_id: str, brand: str = '') -> Optional[Dict]:
@@ -486,15 +563,95 @@ def extract_release_year(detail: Dict) -> Optional[int]:
     return None
 
 
+def _get_cached_phone_ids() -> set:
+    cached = set()
+    if os.path.exists(pconline_json_dir):
+        for filename in os.listdir(pconline_json_dir):
+            if not re.fullmatch(r'\d+\.json', filename):
+                continue
+            phone_id = filename[:-5]
+            try:
+                with open(
+                    os.path.join(pconline_json_dir, filename),
+                    "r",
+                    encoding="utf-8",
+                ) as handle:
+                    payload = json.load(handle)
+                if is_semantically_valid_record(payload, phone_id):
+                    cached.add(phone_id)
+            except (OSError, UnicodeError, json.JSONDecodeError):
+                continue
+    return cached
+
+
+def _write_phone_cache(phone_id: str, phone: Dict) -> None:
+    """Atomically replace one verified raw phone cache file."""
+    phone_file = os.path.join(pconline_json_dir, f"{phone_id}.json")
+    temporary = os.path.join(pconline_json_dir, f".{phone_id}.json.tmp")
+    try:
+        with open(temporary, "w", encoding="utf-8") as handle:
+            json.dump(phone, handle, ensure_ascii=False, indent=2)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, phone_file)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def _replayed_list_page(
+    brand: str, page: int, phones: List[Dict]
+) -> Optional[int]:
+    signature = sorted(str(phone.get("id", "")) for phone in phones)
+    if not signature:
+        return None
+    history = progress.get("list_page_fingerprints", {})
+    brand_history = history.get(brand, {}) if isinstance(history, dict) else {}
+    if isinstance(brand_history, dict):
+        for known_page, known_ids in brand_history.items():
+            try:
+                known_page_number = int(known_page)
+            except (TypeError, ValueError):
+                continue
+            if (
+                known_page_number != page
+                and isinstance(known_ids, list)
+                and signature == sorted(str(value) for value in known_ids)
+            ):
+                return known_page_number
+    if (
+        progress.get("previous_list_brand") == brand
+        and progress.get("previous_list_page") != page
+        and signature
+        == sorted(str(value) for value in progress.get("previous_list_ids", []))
+    ):
+        return int(progress.get("previous_list_page") or 0)
+    return None
+
+
+def _remember_list_page(brand: str, page: int, phones: List[Dict]) -> None:
+    ids = [str(phone.get("id", "")) for phone in phones]
+    progress["previous_list_brand"] = brand
+    progress["previous_list_page"] = page
+    progress["previous_list_ids"] = ids
+    history = progress.setdefault("list_page_fingerprints", {})
+    if not isinstance(history, dict):
+        history = {}
+        progress["list_page_fingerprints"] = history
+    brand_history = history.setdefault(brand, {})
+    if not isinstance(brand_history, dict):
+        brand_history = {}
+        history[brand] = brand_history
+    brand_history[str(page)] = ids
+
+
 def _get_existing_phone_ids() -> set:
-    """获取本地已存手机的ID集合（基于json文件实际存在性）"""
-    existing = set()
-    if not os.path.exists(pconline_json_dir):
-        return existing
-    for filename in os.listdir(pconline_json_dir):
-        if filename.endswith('.json'):
-            phone_id = filename.replace('.json', '')
-            existing.add(phone_id)
+    """Return IDs backed by raw JSON or a verified pre-MIN_YEAR result."""
+    existing = _get_cached_phone_ids()
+    for phone_id, reason in progress.get('skipped_phones', {}).items():
+        match = re.fullmatch(r'year:(\d{4})', str(reason))
+        if match and int(match.group(1)) < MIN_YEAR:
+            existing.add(str(phone_id))
     return existing
 
 
@@ -504,16 +661,24 @@ def _scan_all_models(session: requests.Session, start_time: float) -> Tuple[List
     logger.info("增量扫描模式：全量扫描所有品牌型号...")
     logger.info("=" * 70)
 
-    brands = crawl_brand_list(session)
-    logger.info("品牌按实时目录顺序扫描；品牌内型号保持源站默认最热门顺序（非销量）")
+    brands = order_pconline_brands(crawl_brand_list(session))
+    logger.info("品牌按 IDC 2026 Q2 中国大陆出货量固定优先级扫描")
     logger.info(f"品牌列表 ({len(brands)}): {brands}")
+    progress['brand_plan'] = brands
+    progress['scan_complete'] = False
 
     all_phones = []
+    seen_ids = set()
     truncated = False
     next_brand_index = len(brands)
     next_page = 1
-    current_brand_idx = progress.get('current_brand_index', 0)
+    current_brand = progress.get('current_brand', '')
+    if current_brand in brands:
+        current_brand_idx = brands.index(current_brand)
+    else:
+        current_brand_idx = 0
     current_page = progress.get('current_page', 1)
+    set_progress_cursor(current_brand_idx, current_page)
     # 扫描候选保留 3 倍余量，避免已存在机型过滤后拿不到足够新增详情。
     scan_limit = MAX_PHONES_PER_RUN * 3 if MAX_PHONES_PER_RUN > 0 else 0
 
@@ -534,12 +699,40 @@ def _scan_all_models(session: requests.Session, start_time: float) -> Tuple[List
                 next_page = page
                 break
 
-            phones = crawl_list_page(session, brand, page)
+            try:
+                phones = crawl_list_page(session, brand, page)
+            except ListPageFetchError as exc:
+                logger.warning(f"品牌={brand} 第{page}页暂时无法验证: {exc}")
+                truncated = True
+                next_brand_index = bi
+                next_page = page
+                break
             if not phones:
                 next_brand_index = bi + 1
                 next_page = 1
                 break
-            all_phones.extend(phones)
+            replayed_page = _replayed_list_page(brand, page, phones)
+            if replayed_page is not None:
+                logger.warning(
+                    f"品牌={brand} 第{page}页重复返回第{replayed_page}页，保留游标重试"
+                )
+                truncated = True
+                next_brand_index = bi
+                next_page = page
+                break
+            new_on_page = [phone for phone in phones if phone['id'] not in seen_ids]
+            if not new_on_page and len(phones) >= 25:
+                logger.warning(
+                    f"品牌={brand} 第{page}页与已扫描完整页重复，保留游标重试"
+                )
+                truncated = True
+                next_brand_index = bi
+                next_page = page
+                break
+            _remember_list_page(brand, page, phones)
+            for phone in new_on_page:
+                seen_ids.add(phone['id'])
+            all_phones.extend(new_on_page)
             if len(phones) < 25:
                 next_brand_index = bi + 1
                 next_page = 1
@@ -576,17 +769,26 @@ def step1_crawl_list_and_detail():
 
     # 增量模式：先全量扫描所有型号，与本地已有对比，仅爬取新增
     if INCREMENTAL_MODE:
-        all_phones, scan_truncated, next_brand_index, next_page = _scan_all_models(session, start_time)
+        try:
+            all_phones, scan_truncated, next_brand_index, next_page = (
+                _scan_all_models(session, start_time)
+            )
+        except ListPageFetchError as exc:
+            logger.warning(f"品牌目录暂时无法验证，保留当前游标: {exc}")
+            save_progress()
+            if AUTO_MODE:
+                sys.exit(10)
+            return
         existing_ids = _get_existing_phone_ids()
         new_phones = [p for p in all_phones if p['id'] not in existing_ids]
 
         logger.info(f"全量扫描完成：共 {len(all_phones)} 个型号，新增 {len(new_phones)} 个，已有 {len(all_phones) - len(new_phones)} 个")
 
         if not new_phones:
-            progress['current_brand_index'] = next_brand_index
-            progress['current_page'] = next_page
+            set_progress_cursor(next_brand_index, next_page)
+            progress['scan_complete'] = not scan_truncated
             logger.info("增量模式：未发现新增型号，无需爬取详情")
-            progress['total_phones'] = 0
+            progress['total_phones'] = len(_get_cached_phone_ids())
             save_progress()
             if scan_truncated and AUTO_MODE:
                 logger.info('增量扫描未完成，等待下次继续扫描')
@@ -594,13 +796,14 @@ def step1_crawl_list_and_detail():
             return
 
         # 仅对新增型号爬取详情
+        retryable_failure = False
         for phone in new_phones:
             # 时间限制检查
             if MAX_TIME_PER_STEP > 0:
                 elapsed = time.time() - start_time
                 if elapsed >= MAX_TIME_PER_STEP:
                     logger.info(f"达到时间限制 ({MAX_TIME_PER_STEP}秒)，保存进度")
-                    progress['total_phones'] = phones_crawled
+                    progress['total_phones'] = len(_get_cached_phone_ids())
                     save_progress()
                     if AUTO_MODE:
                         logger.info('未完成，等待下次继续')
@@ -610,7 +813,7 @@ def step1_crawl_list_and_detail():
             # 手机数量限制检查
             if MAX_PHONES_PER_RUN > 0 and phones_crawled >= MAX_PHONES_PER_RUN:
                 logger.info(f"达到手机数量限制 ({MAX_PHONES_PER_RUN}个)，保存进度")
-                progress['total_phones'] = phones_crawled
+                progress['total_phones'] = len(_get_cached_phone_ids())
                 save_progress()
                 if AUTO_MODE:
                     logger.info('达到数量上限，等待下次继续')
@@ -621,10 +824,12 @@ def step1_crawl_list_and_detail():
             detail = crawl_detail_page(session, phone_id, phone.get('brand', ''))
             if detail:
                 phone.update(detail)
+                params_loaded = False
 
                 release_year = extract_release_year(phone)
                 if not release_year:
                     params = crawl_param_page(session, phone_id, phone.get('brand', ''))
+                    params_loaded = True
                     if params:
                         phone.update(params)
                         release_year = extract_release_year(phone)
@@ -632,6 +837,7 @@ def step1_crawl_list_and_detail():
                 if release_year and release_year >= MIN_YEAR:
                     if '处理器' not in phone:
                         params = crawl_param_page(session, phone_id, phone.get('brand', ''))
+                        params_loaded = True
                         if params:
                             phone.update(params)
 
@@ -646,12 +852,29 @@ def step1_crawl_list_and_detail():
                         else:
                             phone['品牌'] = derive_brand_from_name(phone.get('型号', phone.get('name', '')))
 
-                    phone_file = os.path.join(pconline_json_dir, f"{phone_id}.json")
-                    with open(phone_file, 'w', encoding='utf-8') as f:
-                        json.dump(phone, f, ensure_ascii=False, indent=2)
+                    if (
+                        not is_semantically_valid_record(phone, phone_id)
+                        and not params_loaded
+                    ):
+                        params = crawl_param_page(
+                            session, phone_id, phone.get('brand', '')
+                        )
+                        if params:
+                            phone.update(params)
+                            phone = normalize_phone_fields(phone)
+                    if not is_semantically_valid_record(phone, phone_id):
+                        retryable_failure = True
+                        logger.info(
+                            f"待重试: {phone.get('型号', phone.get('name', '未知'))} "
+                            "- 详情字段不足以形成有效原始缓存"
+                        )
+                        continue
+                    _write_phone_cache(phone_id, phone)
 
                     phones_crawled += 1
-                    progress.setdefault('crawled_phones', []).append(phone_id)
+                    crawled = progress.setdefault('crawled_phones', [])
+                    if phone_id not in crawled:
+                        crawled.append(phone_id)
                     mark_processed(phone_id)
                     # 实时持久化：每成功爬取一个立即保存进度
                     save_progress()
@@ -660,14 +883,22 @@ def step1_crawl_list_and_detail():
                     mark_processed(phone_id, f"year:{release_year}")
                     logger.info(f"跳过: {phone.get('name', phone.get('型号', '未知'))} ({release_year}年) - 不在近五年范围内")
                 else:
-                    mark_processed(phone_id, "no_release_year")
-                    logger.info(f"跳过: {phone.get('name', phone.get('型号', '未知'))} - 无法获取发布年份")
+                    retryable_failure = True
+                    logger.info(f"待重试: {phone.get('name', phone.get('型号', '未知'))} - 无法获取发布年份")
             else:
+                retryable_failure = True
                 logger.warning(f"✗ 详情页爬取失败: {phone.get('name', phone.get('型号', '未知'))}")
 
-        progress['total_phones'] = phones_crawled
-        progress['current_brand_index'] = next_brand_index
-        progress['current_page'] = next_page
+        progress['total_phones'] = len(_get_cached_phone_ids())
+        if retryable_failure:
+            progress['scan_complete'] = False
+            save_progress()
+            logger.info("存在待重试详情，保留原扫描游标并等待下次继续")
+            if AUTO_MODE:
+                sys.exit(10)
+            return
+        set_progress_cursor(next_brand_index, next_page)
+        progress['scan_complete'] = not scan_truncated
         save_progress()
         if scan_truncated:
             logger.info("增量扫描未完成，本次已处理当前扫描片段，等待下次继续")
@@ -677,147 +908,222 @@ def step1_crawl_list_and_detail():
         logger.info(f"增量模式完成：新增 {phones_crawled} 个手机")
         return
 
-    # 非增量模式：原有逻辑（全量爬取，支持断点续传）
+    # 非增量模式：全量爬取，详情失败保留最早游标但不阻塞后续手机。
     logger.info(f"从进度恢复: total_phones={phones_crawled}, processed={len(progress.get('processed_phones',[]))}, crawled={len(progress.get('crawled_phones',[]))}, brand_idx={progress.get('current_brand_index')}")
 
-    brands = crawl_brand_list(session)
-    logger.info("品牌按实时目录顺序扫描；品牌内型号保持源站默认最热门顺序（非销量）")
+    try:
+        brands = order_pconline_brands(crawl_brand_list(session))
+    except ListPageFetchError as exc:
+        logger.warning(f"品牌目录暂时无法验证，保留当前游标: {exc}")
+        save_progress()
+        if AUTO_MODE:
+            sys.exit(10)
+        return
+    progress['brand_plan'] = brands
+    progress['scan_complete'] = False
+    logger.info("品牌按 IDC 2026 Q2 中国大陆出货量固定优先级扫描")
     logger.info(f"品牌列表 ({len(brands)}): {brands}")
 
-    current_brand_idx = progress.get('current_brand_index', 0)
+    current_brand = progress.get('current_brand', '')
+    current_brand_idx = (
+        brands.index(current_brand)
+        if current_brand in brands
+        else progress.get('current_brand_index', 0)
+    )
+    if not isinstance(current_brand_idx, int) or not 0 <= current_brand_idx < len(brands):
+        current_brand_idx = 0
     current_page = progress.get('current_page', 1)
+    existing_ids = _get_existing_phone_ids()
+    retry_cursor = None
 
+    def save_checkpoint(brand_index, page):
+        cursor_brand, cursor_page = retry_cursor or (brand_index, page)
+        set_progress_cursor(cursor_brand, cursor_page)
+        progress['total_phones'] = len(_get_cached_phone_ids())
+        save_progress()
+
+    set_progress_cursor(current_brand_idx, current_page)
     for bi in range(current_brand_idx, len(brands)):
         brand = brands[bi]
         page = current_page if bi == current_brand_idx else 1
-        progress['current_brand_index'] = bi
-        progress['current_page'] = page
+        seen_brand_ids = set()
+        if retry_cursor is None:
+            set_progress_cursor(bi, page)
 
         while True:
-            # 时间限制检查
-            if MAX_TIME_PER_STEP > 0:
-                elapsed = time.time() - start_time
-                if elapsed >= MAX_TIME_PER_STEP:
-                    logger.info(f"达到时间限制 ({MAX_TIME_PER_STEP}秒)，保存进度")
-                    progress['total_phones'] = phones_crawled
-                    progress['current_page'] = page
-                    save_progress()
-                    if AUTO_MODE:
-                        logger.info('未完成，等待下次继续')
-                        sys.exit(10)
-                    return
+            if MAX_TIME_PER_STEP > 0 and time.time() - start_time >= MAX_TIME_PER_STEP:
+                logger.info(f"达到时间限制 ({MAX_TIME_PER_STEP}秒)，保存进度")
+                save_checkpoint(bi, page)
+                if AUTO_MODE:
+                    logger.info('未完成，等待下次继续')
+                    sys.exit(10)
+                return
 
-            # 手机数量限制检查
             if MAX_PHONES_PER_RUN > 0 and phones_crawled >= MAX_PHONES_PER_RUN:
                 logger.info(f"达到手机数量限制 ({MAX_PHONES_PER_RUN}个)，保存进度")
-                progress['total_phones'] = phones_crawled
-                progress['current_page'] = page
-                save_progress()
+                save_checkpoint(bi, page)
                 if AUTO_MODE:
                     logger.info('达到数量上限，等待下次继续')
                     sys.exit(10)
                 return
 
-            phones = crawl_list_page(session, brand, page)
+            try:
+                phones = crawl_list_page(session, brand, page)
+            except ListPageFetchError as exc:
+                logger.warning(f"品牌={brand} 第{page}页暂时无法验证: {exc}")
+                save_checkpoint(bi, page)
+                if AUTO_MODE:
+                    sys.exit(10)
+                return
 
             if not phones:
-                progress['current_brand_index'] = bi + 1
-                progress['current_page'] = 1
-                progress['total_phones'] = phones_crawled
+                if retry_cursor is None:
+                    set_progress_cursor(bi + 1, 1)
+                progress['total_phones'] = len(_get_cached_phone_ids())
                 save_progress()
                 break
 
-            progress['current_page'] = page
+            replayed_page = _replayed_list_page(brand, page, phones)
+            if replayed_page is not None:
+                logger.warning(
+                    f"品牌={brand} 第{page}页重复返回第{replayed_page}页，保留游标重试"
+                )
+                save_checkpoint(bi, page)
+                if AUTO_MODE:
+                    sys.exit(10)
+                return
 
-            for phone in phones:
-                if MAX_TIME_PER_STEP > 0:
-                    elapsed = time.time() - start_time
-                    if elapsed >= MAX_TIME_PER_STEP:
-                        logger.info(f"达到时间限制 ({MAX_TIME_PER_STEP}秒)，保存进度")
-                        progress['total_phones'] = phones_crawled
-                        progress['current_page'] = page
-                        save_progress()
-                        if AUTO_MODE:
-                            logger.info('未完成，等待下次继续')
-                            sys.exit(10)
-                        return
+            new_on_page = [
+                phone for phone in phones if phone["id"] not in seen_brand_ids
+            ]
+            if not new_on_page and len(phones) >= 25:
+                logger.warning(
+                    f"品牌={brand} 第{page}页与本次已扫描完整页重复，保留游标重试"
+                )
+                save_checkpoint(bi, page)
+                if AUTO_MODE:
+                    sys.exit(10)
+                return
+            _remember_list_page(brand, page, phones)
+            for phone in new_on_page:
+                seen_brand_ids.add(phone["id"])
+
+            for phone in new_on_page:
+                if MAX_TIME_PER_STEP > 0 and time.time() - start_time >= MAX_TIME_PER_STEP:
+                    logger.info(f"达到时间限制 ({MAX_TIME_PER_STEP}秒)，保存进度")
+                    save_checkpoint(bi, page)
+                    if AUTO_MODE:
+                        logger.info('未完成，等待下次继续')
+                        sys.exit(10)
+                    return
 
                 if MAX_PHONES_PER_RUN > 0 and phones_crawled >= MAX_PHONES_PER_RUN:
                     logger.info(f"达到手机数量限制 ({MAX_PHONES_PER_RUN}个)，保存进度")
-                    progress['total_phones'] = phones_crawled
-                    progress['current_page'] = page
-                    save_progress()
+                    save_checkpoint(bi, page)
                     if AUTO_MODE:
                         logger.info('达到数量上限，等待下次继续')
                         sys.exit(10)
                     return
 
                 phone_id = phone['id']
-
-                if phone_id in progress.get('processed_phones', []) or phone_id in progress.get('crawled_phones', []):
+                if phone_id in existing_ids:
                     continue
 
                 detail = crawl_detail_page(session, phone_id, phone.get('brand', ''))
                 if detail:
                     phone.update(detail)
-
+                    params_loaded = False
                     release_year = extract_release_year(phone)
                     if not release_year:
-                        params = crawl_param_page(session, phone_id, phone.get('brand', ''))
+                        params = crawl_param_page(
+                            session, phone_id, phone.get('brand', '')
+                        )
+                        params_loaded = True
                         if params:
                             phone.update(params)
                             release_year = extract_release_year(phone)
 
                     if release_year and release_year >= MIN_YEAR:
                         if '处理器' not in phone:
-                            params = crawl_param_page(session, phone_id, phone.get('brand', ''))
+                            params = crawl_param_page(
+                                session, phone_id, phone.get('brand', '')
+                            )
+                            params_loaded = True
                             if params:
                                 phone.update(params)
-
-                        # 字段标准化：将原始字段名映射为统一标准名
                         phone = normalize_phone_fields(phone)
-
-                        # 从型号名推导品牌（优先使用URL brand的中文翻译）
                         if not phone.get('品牌'):
                             url_brand = phone.get('brand', '')
                             if url_brand and url_brand in PCONLINE_BRAND_MAP:
                                 phone['品牌'] = PCONLINE_BRAND_MAP[url_brand]
                             else:
-                                phone['品牌'] = derive_brand_from_name(phone.get('型号', phone.get('name', '')))
-
-                        phone_file = os.path.join(pconline_json_dir, f"{phone_id}.json")
-                        with open(phone_file, 'w', encoding='utf-8') as f:
-                            json.dump(phone, f, ensure_ascii=False, indent=2)
-
+                                phone['品牌'] = derive_brand_from_name(
+                                    phone.get('型号', phone.get('name', ''))
+                                )
+                        if (
+                            not is_semantically_valid_record(phone, phone_id)
+                            and not params_loaded
+                        ):
+                            params = crawl_param_page(
+                                session, phone_id, phone.get('brand', '')
+                            )
+                            if params:
+                                phone.update(params)
+                                phone = normalize_phone_fields(phone)
+                        if not is_semantically_valid_record(phone, phone_id):
+                            retry_cursor = retry_cursor or (bi, page)
+                            set_progress_cursor(*retry_cursor)
+                            logger.info(
+                                f"待重试: {phone.get('型号', phone.get('name', '未知'))} "
+                                "- 详情字段不足以形成有效原始缓存"
+                            )
+                            continue
+                        _write_phone_cache(phone_id, phone)
                         phones_crawled += 1
-                        progress['crawled_phones'].append(phone_id)
+                        crawled = progress.setdefault('crawled_phones', [])
+                        if phone_id not in crawled:
+                            crawled.append(phone_id)
                         mark_processed(phone_id)
-                        # 实时持久化
-                        save_progress()
+                        existing_ids.add(phone_id)
+                        save_checkpoint(bi, page)
                         logger.info(f"✓ 保存: {phone.get('name', phone.get('型号', '未知'))} ({release_year}年) - 共{phones_crawled}个")
                     elif release_year:
                         mark_processed(phone_id, f"year:{release_year}")
+                        existing_ids.add(phone_id)
+                        save_checkpoint(bi, page)
                         logger.info(f"跳过: {phone.get('name', phone.get('型号', '未知'))} ({release_year}年) - 不在近五年范围内")
                     else:
-                        mark_processed(phone_id, "no_release_year")
-                        logger.info(f"跳过: {phone.get('name', phone.get('型号', '未知'))} - 无法获取发布年份")
+                        retry_cursor = retry_cursor or (bi, page)
+                        set_progress_cursor(*retry_cursor)
+                        logger.info(f"待重试: {phone.get('name', phone.get('型号', '未知'))} - 无法获取发布年份")
                 else:
+                    retry_cursor = retry_cursor or (bi, page)
+                    set_progress_cursor(*retry_cursor)
                     logger.warning(f"✗ 详情页爬取失败: {phone.get('name', phone.get('型号', '未知'))}")
 
-            progress['total_phones'] = phones_crawled
-            progress['current_brand_index'] = bi
-            progress['current_page'] = page + 1
+            progress['total_phones'] = len(_get_cached_phone_ids())
+            if retry_cursor is None:
+                set_progress_cursor(bi, page + 1)
             save_progress()
 
             if len(phones) < 25:
-                progress['current_brand_index'] = bi + 1
-                progress['current_page'] = 1
-                progress['total_phones'] = phones_crawled
+                if retry_cursor is None:
+                    set_progress_cursor(bi + 1, 1)
+                progress['total_phones'] = len(_get_cached_phone_ids())
                 save_progress()
                 break
             page += 1
 
-    progress['total_phones'] = phones_crawled
+    progress['total_phones'] = len(_get_cached_phone_ids())
+    if retry_cursor is not None:
+        set_progress_cursor(*retry_cursor)
+        save_progress()
+        logger.info("存在待重试详情，已处理后续页面并保留最早失败游标")
+        if AUTO_MODE:
+            sys.exit(10)
+        return
+    set_progress_cursor(len(brands), 1)
+    progress['scan_complete'] = True
     save_progress()
     logger.info(f"步骤1完成！共爬取 {phones_crawled} 个手机")
 

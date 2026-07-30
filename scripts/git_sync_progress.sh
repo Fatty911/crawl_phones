@@ -51,7 +51,7 @@ resolve_rebase_conflicts() {
   while IFS= read -r path; do
     [ -n "$path" ] || continue
     case "$path" in
-      zol/progress.json|pconline/progress.json)
+      crawl_state/zol/progress.json|crawl_state/pconline/progress.json)
         local ours theirs
         ours="$(mktemp)"
         theirs="$(mktemp)"

@@ -43,6 +43,14 @@ def check_crawler_workflow(path: Path, errors: list[str]) -> None:
     dispatch = next((step for step in steps if step.get("name") == "触发合并分析工作流"), {})
     commit = next((step for step in steps if step.get("name") == "Mark crawl complete and commit"), {})
     early = next((step for step in steps if step.get("name") == "Upload crawl data (early, after step1)"), {})
+    incomplete_commit = next(
+        (
+            step
+            for step in steps
+            if step.get("name") == "Commit incomplete crawl progress"
+        ),
+        {},
+    )
 
     assert_condition(not schedules, f"{path.name} should not rely on GitHub Actions schedule", errors)
     assert_condition("WORKFLOW_START_EPOCH" in text, f"{path.name} missing workflow start budget", errors)
@@ -97,10 +105,36 @@ def check_crawler_workflow(path: Path, errors: list[str]) -> None:
         f"{path.name} debug run can upload stable early state",
         errors,
     )
-    if source in {"zol", "pconline"}:
+    if source == "zol":
         assert_condition(
             'if [ "${{ github.event.inputs.debug_mode || \'false\' }}" != "true" ]; then' in text,
             f"{path.name} exit 10 branch can sync debug progress",
+            errors,
+        )
+    elif source == "pconline":
+        early_if = str(early.get("if", ""))
+        incomplete_if = str(incomplete_commit.get("if", ""))
+        assert_condition(
+            "always()" in early_if
+            and "github.event.inputs.debug_mode != 'true'" in early_if,
+            "crawl-pconline.yml early cache is not failure-safe and debug-isolated",
+            errors,
+        )
+        assert_condition(
+            "github.event.inputs.debug_mode != 'true'" in incomplete_if
+            and "steps.step1.outputs.complete == 'false'" in incomplete_if,
+            "crawl-pconline.yml incomplete progress sync is not safely gated",
+            errors,
+        )
+        assert_condition(
+            early.get("id") == "early_cache"
+            and "steps.early_cache.outcome == 'success'" in incomplete_if,
+            "crawl-pconline.yml can sync a cursor without a saved raw cache",
+            errors,
+        )
+        assert_condition(
+            steps.index(early) < steps.index(incomplete_commit),
+            "crawl-pconline.yml must upload raw cache before syncing its cursor",
             errors,
         )
     upload_with = upload.get("with", {})

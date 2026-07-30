@@ -108,15 +108,26 @@ def main() -> None:
             classification_text = lines[step_start] + " " + (
                 artifact_name.group(1) if artifact_name else ""
             )
+            raw_cache = (
+                workflow.name == "crawl-pconline.yml"
+                and "pconline-phone-data-early-" in classification_text
+            )
             diagnostic = "if: failure()" in block or bool(
                 re.search(r"(?i)(error|failure|diagnostic)[-_ ]?(log|artifact)?", classification_text)
             )
-            expected = 7 if diagnostic else 3
+            expected = 30 if raw_cache else 7 if diagnostic else 3
+            artifact_type = (
+                "PConline raw cache"
+                if raw_cache
+                else "diagnostic"
+                if diagnostic
+                else "success"
+            )
             if retention is None:
                 errors.append(f"{workflow.name}: upload-artifact step lacks retention-days")
             elif int(retention.group(1)) != expected:
                 errors.append(
-                    f"{workflow.name}: {'diagnostic' if diagnostic else 'success'} artifact "
+                    f"{workflow.name}: {artifact_type} artifact "
                     f"retention must be {expected}, got {retention.group(1)}"
                 )
     if errors:

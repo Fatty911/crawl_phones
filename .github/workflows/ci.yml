@@ -33,7 +33,7 @@ jobs:
         run: pip install -r requirements.txt PyYAML
 
       - name: Compile Python files
-        run: python -m py_compile scripts/crawl_zol.py scripts/crawl_pconline.py scripts/merge_phones.py scripts/search_root_info.py scripts/proxy_manager.py scripts/generate_clash_config.py scripts/ai_verify_root_status.py
+        run: python -m py_compile scripts/crawl_zol.py scripts/crawl_pconline.py scripts/restore_pconline_cache.py scripts/merge_phones.py scripts/search_root_info.py scripts/proxy_manager.py scripts/generate_clash_config.py scripts/ai_verify_root_status.py
 
       - name: Validate syntax
         run: python scripts/validate_syntax.py

@@ -41,6 +41,7 @@ jobs:
     timeout-minutes: 390
     permissions:
       contents: write
+      actions: read
     steps:
       - uses: actions/checkout@main
         with:
@@ -94,7 +95,7 @@ jobs:
           elif [ ! -f "$CURRENT_PERIOD_FILE" ] || [ "$(cat "$CURRENT_PERIOD_FILE")" != "$CRAWL_PERIOD" ]; then
             echo "进入新的半月周期 $CRAWL_PERIOD，保留已处理手机列表"
             if [ -f crawl_state/pconline/progress.json ]; then
-              python3 -c "import json; p=json.load(open('crawl_state/pconline/progress.json')); p['current_brand_index']=0; p['current_page']=1; p['total_phones']=0; json.dump(p,open('crawl_state/pconline/progress.json','w'),indent=2); print('已重置品牌索引，保留已处理手机列表')"
+              python3 -c "import json; p=json.load(open('crawl_state/pconline/progress.json')); p['current_brand_index']=0; p['current_brand']=''; p['current_page']=1; p['brand_plan']=[]; p['scan_complete']=False; p['previous_list_brand']=''; p['previous_list_page']=0; p['previous_list_ids']=[]; p['list_page_fingerprints']={}; p['total_phones']=0; json.dump(p,open('crawl_state/pconline/progress.json','w'),indent=2); print('已重置品牌索引，保留已处理手机列表')"
             fi
           fi
           echo "$CRAWL_PERIOD" > "$CURRENT_PERIOD_FILE"
@@ -134,6 +135,17 @@ jobs:
         uses: actions/setup-python@main
         with:
           python-version: '3.12'
+
+      - name: Restore latest PConline raw cache
+        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && github.event.inputs.force_restart != 'true' && github.event.inputs.debug_mode != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python scripts/restore_pconline_cache.py \
+            --repo "${{ github.repository }}" \
+            --destination crawl_state/pconline/json \
+            --branch "$GITHUB_REF_NAME" \
+            --exclude-run-id "$GITHUB_RUN_ID"
 
       - name: Install dependencies
         if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true'
@@ -188,16 +200,8 @@ jobs:
           set -e
           echo "PConline step1 exit code: $EXIT_CODE"
 
-          git config user.name "github-actions[bot]"
-          git config user.email "xuerui911@gmail.com"
-
           if [ $EXIT_CODE -eq 10 ]; then
             echo "Step1 未完成，正常结束本次运行"
-            if [ "${{ github.event.inputs.debug_mode || 'false' }}" != "true" ]; then
-              git add crawl_state/
-              git diff --cached --quiet || git commit -m "chore: update PConline crawl progress [skip ci]"
-              bash scripts/git_sync_progress.sh "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
-            fi
             echo "complete=false" >> "$GITHUB_OUTPUT"
             echo "failed=false" >> "$GITHUB_OUTPUT"
             exit 0
@@ -212,22 +216,32 @@ jobs:
           echo "failed=false" >> "$GITHUB_OUTPUT"
 
       - name: Upload crawl data (early, after step1)
-        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && github.event.inputs.debug_mode != 'true'
-        continue-on-error: true
+        id: early_cache
+        if: always() && steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && github.event.inputs.debug_mode != 'true' && steps.step1.outcome != 'skipped'
         uses: actions/upload-artifact@v4
         with:
           name: pconline-phone-data-early-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             crawl_state/pconline/json/
             crawl_state/pconline/progress.json
-          retention-days: 3
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Commit incomplete crawl progress
+        if: always() && steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && github.event.inputs.debug_mode != 'true' && steps.step1.outcome == 'success' && steps.step1.outputs.complete == 'false' && steps.step1.outputs.failed != 'true' && steps.early_cache.outcome == 'success'
+        run: |
+          git config user.name "Fatty911"
+          git config user.email "xuerui911@gmail.com"
+          git add crawl_state/
+          git diff --cached --quiet || git commit -m "chore: update PConline crawl progress [skip ci]"
+          GIT_SYNC_BRANCH="$GITHUB_REF_NAME" bash scripts/git_sync_progress.sh "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
 
       - name: Parse and merge data
-        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true'
+        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true' && steps.step1.outputs.complete == 'true'
         run: python scripts/crawl_pconline.py --step 2
 
       - name: Validate generated PConline data
-        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true'
+        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true' && steps.step1.outputs.complete == 'true'
         id: validate_data
         run: |
           TODAY=$(date +%Y%m%d)
@@ -257,29 +271,22 @@ jobs:
           fi
 
       - name: Generate summary
-        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true'
+        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true' && steps.step1.outputs.complete == 'true'
         run: python scripts/crawl_pconline.py --step 3
 
       - name: Mark crawl complete and commit
-        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true' && github.event.inputs.debug_mode != 'true'
+        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true' && steps.step1.outputs.complete == 'true' && github.event.inputs.debug_mode != 'true'
         run: |
-          if [ "${{ steps.step1.outputs.complete }}" = "true" ]; then
-            touch "$PCONLINE_DONE_MARKER"
-            echo "爬取完成（扫描所有品牌），标记半月周期"
-          elif [ "${{ steps.validate_data.outputs.has_data }}" = "true" ] && [ -f "data/pconline_phones_$(date +%Y%m%d).json" ]; then
-            touch "$PCONLINE_DONE_MARKER"
-            echo "爬取完成（有有效数据），标记半月周期"
-          else
-            echo "本次爬取未完成，仅同步进度"
-          fi
-          git config user.name "github-actions[bot]"
+          touch "$PCONLINE_DONE_MARKER"
+          echo "爬取完成（扫描所有品牌），标记半月周期"
+          git config user.name "Fatty911"
           git config user.email "xuerui911@gmail.com"
           git add crawl_state/
           git diff --cached --quiet || git commit -m "chore: update PConline crawl data [skip ci]"
-          bash scripts/git_sync_progress.sh "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
+          GIT_SYNC_BRANCH="$GITHUB_REF_NAME" bash scripts/git_sync_progress.sh "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
 
       - name: Upload crawl data
-        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true'
+        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true' && steps.step1.outputs.complete == 'true'
         id: upload_data
         uses: actions/upload-artifact@v4
         with:
@@ -291,7 +298,7 @@ jobs:
           if-no-files-found: error
 
       - name: 检测新增数据并触发合并分析
-        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true'
+        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true' && steps.step1.outputs.complete == 'true'
         id: check_new_data
         run: |
           echo "pconline_data_file=${{ steps.validate_data.outputs.pconline_data_file }}" >> "$GITHUB_OUTPUT"
@@ -305,7 +312,7 @@ jobs:
           fi
 
       - name: 触发合并分析工作流
-        if: steps.upload_data.outcome == 'success' && steps.validate_data.outputs.has_data == 'true'
+        if: steps.step1.outputs.complete == 'true' && steps.upload_data.outcome == 'success' && steps.validate_data.outputs.has_data == 'true'
         env:
           GH_TOKEN: ${{ secrets.ACTION_PAT }}
         run: |
