@@ -1,0 +1,42 @@
+{
+  "updated": "2026-07-31",
+  "source": "https://artificialanalysis.ai/leaderboards/models?status=all",
+  "criterion": "AA Intelligence Index >= 50",
+  "models": [
+    {
+      "name": "Claude Opus 5 (max)",
+      "aa_index": 61,
+      "creator": "Anthropic",
+      "api_model": "claude-opus-5-20250115",
+      "api_provider": "anthropic"
+    },
+    {
+      "name": "GPT-5.6 Sol (max)",
+      "aa_index": 59,
+      "creator": "OpenAI",
+      "api_model": "gpt-5.6-sol",
+      "api_provider": "openai"
+    },
+    {
+      "name": "Kimi K3",
+      "aa_index": 57,
+      "creator": "Kimi",
+      "api_model": "k3",
+      "api_provider": "kimi"
+    },
+    {
+      "name": "GPT-5.6 Sol (high)",
+      "aa_index": 56,
+      "creator": "OpenAI",
+      "api_model": "gpt-5.6-sol",
+      "api_provider": "openai"
+    },
+    {
+      "name": "Grok 4.5 (high)",
+      "aa_index": 54,
+      "creator": "SpaceXAI",
+      "api_model": "grok-4.5",
+      "api_provider": "xai"
+    }
+  ]
+}
