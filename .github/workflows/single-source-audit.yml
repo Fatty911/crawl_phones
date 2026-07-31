@@ -1,0 +1,115 @@
+name: Single Source Audit
+
+on:
+  workflow_run:
+    workflows: ["Deploy Pages"]
+    types:
+      - completed
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+  actions: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests beautifulsoup4 lxml
+
+      - name: Fetch latest.json from Pages
+        run: |
+          REPO=$(echo ${{ github.repository }} | sed 's|.*/||')
+          case "$REPO" in
+            crawl_cars) PAGES_URL="https://cars.jiucai.eu.org/data/latest.json" ;;
+            crawl_phones) PAGES_URL="https://phones.jiucai.eu.org/data/latest.json" ;;
+            crawl_laptops) PAGES_URL="https://nbs.jiucai.eu.org/data/latest.json" ;;
+            *) echo "Unknown repo"; exit 0 ;;
+          esac
+          echo "PAGES_URL=$PAGES_URL"
+          mkdir -p ./data
+          curl -fsSL "$PAGES_URL" -o ./data/latest.json || echo "FETCH_FAILED"
+
+      - name: Analyze single-source data
+        run: |
+          python3 scripts/analyze_single_source.py --data ./data/latest.json --output ./audit_report.json
+          cat ./audit_report.json | head -50
+
+      - name: Call AA 50+ LLM for root cause analysis
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          KIMI_API_KEY: ${{ secrets.KIMI_API_KEY }}
+          XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+        run: |
+          python3 scripts/llm_single_source_audit.py --data ./data/latest.json --report ./audit_report.json --output ./llm_analysis.md
+          echo "=== LLM Analysis ==="
+          head -80 ./llm_analysis.md || true
+
+      - name: Create or update issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = fs.readFileSync('./audit_report.json', 'utf8');
+            const analysis = fs.existsSync('./llm_analysis.md') ? fs.readFileSync('./llm_analysis.md', 'utf8') : 'No LLM analysis available';
+            const reportData = JSON.parse(report);
+            const title = `Single-source audit: ${reportData.single_rate}% single (${reportData.single_count}/${reportData.total})`;
+            const body = `## Single Source Audit Report
+
+            **Generated:** ${new Date().toISOString()}
+            **Total rows:** ${reportData.total}
+            **Multi-source:** ${reportData.multi_count} (${reportData.multi_rate}%)
+            **Single-source:** ${reportData.single_count} (${reportData.single_rate}%)
+
+            ### Root Causes
+
+            ${JSON.stringify(reportData.causes, null, 2)}
+
+            ### LLM Analysis (AA 50+ model)
+
+            ${analysis}
+
+            ### Source Distribution
+
+            ${JSON.stringify(reportData.source_distribution, null, 2)}
+            `;
+
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'single-source-audit'
+            });
+
+            const existing = issues.data.find(i => i.title.startsWith('Single-source audit:'));
+            if (existing) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.number,
+                title,
+                body
+              });
+              console.log(`Updated issue #${existing.number}`);
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+                labels: ['single-source-audit', 'automated']
+              });
+              console.log('Created new issue');
+            }
