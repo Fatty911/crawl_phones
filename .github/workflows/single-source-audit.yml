@@ -2,7 +2,7 @@ name: Single Source Audit
 
 on:
   workflow_run:
-    workflows: ["部署手机配置网页"]
+    workflows: ["部署车型配置网页"]
     types:
       - completed
   workflow_dispatch:
@@ -48,10 +48,17 @@ jobs:
 
       - name: Call AA 50+ LLM for root cause analysis
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          # The script tries multiple env var names per provider (first found wins).
+          # Map the repo's actual secrets onto the names the script checks.
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           KIMI_API_KEY: ${{ secrets.KIMI_API_KEY }}
+          MOONSHOT_API_KEY: ${{ secrets.MOONSHOT_API_KEY }}
+          KIMI_CODINGPLAN_API_KEY: ${{ secrets.KIMI_CODINGPLAN_API_KEY }}
+          ZEN_API_KEY: ${{ secrets.ZEN_API_KEY }}
           XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+          NVIDIA_NIM_API_KEY: ${{ secrets.NVIDIA_NIM_API_KEY }}
         run: |
           python3 scripts/llm_single_source_audit.py --data ./data/latest.json --report ./audit_report.json --output ./llm_analysis.md
           echo "=== LLM Analysis ==="

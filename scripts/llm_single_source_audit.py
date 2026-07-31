@@ -32,7 +32,7 @@ AA_MODELS = [
         "provider": "anthropic",
         "model": "claude-opus-5-20250115",
         "max_tokens": 16000,
-        "env_key": "ANTHROPIC_API_KEY",
+        "env_keys": ["ANTHROPIC_API_KEY"],
         "endpoint": "https://api.anthropic.com/v1/messages",
     },
     {
@@ -41,7 +41,7 @@ AA_MODELS = [
         "provider": "openai",
         "model": "gpt-5.6-sol",
         "max_tokens": 16000,
-        "env_key": "OPENAI_API_KEY",
+        "env_keys": ["OPENAI_API_KEY", "DEEPSEEK_API_KEY", "ZEN_API_KEY"],
         "endpoint": "https://api.openai.com/v1/chat/completions",
     },
     {
@@ -50,7 +50,7 @@ AA_MODELS = [
         "provider": "kimi",
         "model": "k3",
         "max_tokens": 12000,
-        "env_key": "KIMI_API_KEY",
+        "env_keys": ["KIMI_API_KEY", "MOONSHOT_API_KEY", "KIMI_CODINGPLAN_API_KEY"],
         "endpoint": "https://api.moonshot.cn/v1/chat/completions",
     },
     {
@@ -59,7 +59,7 @@ AA_MODELS = [
         "provider": "openai",
         "model": "gpt-5.6-sol",
         "max_tokens": 8000,
-        "env_key": "OPENAI_API_KEY",
+        "env_keys": ["OPENAI_API_KEY", "DEEPSEEK_API_KEY", "ZEN_API_KEY"],
         "endpoint": "https://api.openai.com/v1/chat/completions",
     },
     {
@@ -68,7 +68,7 @@ AA_MODELS = [
         "provider": "xai",
         "model": "grok-4.5",
         "max_tokens": 8000,
-        "env_key": "XAI_API_KEY",
+        "env_keys": ["XAI_API_KEY"],
         "endpoint": "https://api.x.ai/v1/chat/completions",
     },
 ]
@@ -139,9 +139,18 @@ def build_prompt(report: dict, data_sample: list[dict]) -> str:
 """
 
 
+def _first_key(model: dict) -> str | None:
+    """Return first available API key from candidate env var names."""
+    for name in model.get("env_keys", []):
+        val = os.environ.get(name)
+        if val:
+            return val
+    return None
+
+
 def call_openai_compatible(model: dict, prompt: str) -> str | None:
     """Call OpenAI-compatible API (OpenAI, Kimi, xAI)."""
-    key = os.environ.get(model["env_key"])
+    key = _first_key(model)
     if not key:
         return None
     body = json.dumps({
@@ -170,7 +179,7 @@ def call_openai_compatible(model: dict, prompt: str) -> str | None:
 
 def call_anthropic(model: dict, prompt: str) -> str | None:
     """Call Anthropic API."""
-    key = os.environ.get(model["env_key"])
+    key = _first_key(model)
     if not key:
         return None
     body = json.dumps({
