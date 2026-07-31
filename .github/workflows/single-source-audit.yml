@@ -2,7 +2,7 @@ name: Single Source Audit
 
 on:
   workflow_run:
-    workflows: ["Deploy Pages"]
+    workflows: ["部署手机配置网页"]
     types:
       - completed
   workflow_dispatch:
