@@ -49,7 +49,7 @@ AA_MODELS = [
         "aa_index": 50,
         "provider": "nvidia-nim",
         "model": "deepseek-ai/deepseek-v4-flash",
-        "max_tokens": 12000,
+        "max_tokens": 4000,
         "env_keys": ["NVIDIA_NIM_API_KEY"],
         "endpoint": "https://integrate.api.nvidia.com/v1/chat/completions",
     },
@@ -178,7 +178,7 @@ def call_openai_compatible(model: dict, prompt: str) -> str | None:
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=120) as resp:
+        with urllib.request.urlopen(req, timeout=180) as resp:
             result = json.loads(resp.read().decode("utf-8"))
             return result["choices"][0]["message"]["content"]
     except Exception as exc:
@@ -207,7 +207,7 @@ def call_anthropic(model: dict, prompt: str) -> str | None:
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=120) as resp:
+        with urllib.request.urlopen(req, timeout=180) as resp:
             result = json.loads(resp.read().decode("utf-8"))
             return result["content"][0]["text"]
     except Exception as exc:
