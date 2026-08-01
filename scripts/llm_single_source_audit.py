@@ -45,6 +45,15 @@ AA_MODELS = [
         "endpoint": "https://api.openai.com/v1/chat/completions",
     },
     {
+        "name": "DeepSeek V4 Flash 0731 (max)",
+        "aa_index": 50,
+        "provider": "nvidia-nim",
+        "model": "deepseek-ai/deepseek-v4-flash",
+        "max_tokens": 12000,
+        "env_keys": ["NVIDIA_NIM_API_KEY"],
+        "endpoint": "https://integrate.api.nvidia.com/v1/chat/completions",
+    },
+    {
         "name": "Kimi K3",
         "aa_index": 57,
         "provider": "kimi",
