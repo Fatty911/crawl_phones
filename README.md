@@ -48,8 +48,7 @@ crawl_phones/
     ├── crawl-zol.yml         # 中关村在线爬虫工作流
     ├── crawl-pconline.yml    # 太平洋电脑网爬虫工作流
     ├── crawl-trigger.yml     # cron-job.org 入口触发器
-    ├── deploy-pages.yml      # 静态网页独立发布工作流
-    └── merge-and-deploy.yml  # 合并、AI搜索、发布工作流
+    └── merge-and-deploy.yml  # 合并、AI搜索、Pages 发布工作流
 ```
 
 ## 核心功能
@@ -184,7 +183,7 @@ CI 会在 `main` 推送后运行：
 1. 用 `gh run list --all`、`gh run view --log`、Release artifact 和 `https://phones.jiucai.eu.org/data/latest.json` 同时确认当前失败点。
 2. 在本地或干净临时 clone 中修改源码、workflow、合并脚本或 Pages 前端，并运行适用的 Python 编译、workflow 护栏和前端语法检查。
 3. 提交并推送非 bot 修复提交，避免只留下进度 JSON 或合并数据自动提交。
-4. 手动触发 debug 模式爬虫 workflow，样本量控制在二三十条，验证“爬虫 -> artifact -> merge-and-deploy -> deploy-pages -> Pages 数据”的短链路。
+4. 手动触发 debug 模式爬虫 workflow，样本量控制在二三十条，验证“爬虫 -> artifact -> merge-and-deploy 的 deploy-pages job -> Pages 数据”的短链路。
 5. 若已有 schedule/外部触发 workflow 正在运行，按北京时间 08:00-12:30、13:00-22:00 窗口、GitHub Actions 6 小时限制和合并/部署预计耗时估算下一次检查时间，不要重复抢跑长任务。
 6. Pages 验证不只看 HTTP 200；要检查 `latest.json` 行数、双源/验证字段、关键字段覆盖率和前端默认列是否符合预期。
 
@@ -244,7 +243,7 @@ CI 会在 `main` 推送后运行：
 ### GitHub Pages（推荐）
 
 1. 在仓库 **Settings → Pages → Build and deployment** 中选择 **GitHub Actions**
-2. 每次合并分析工作流成功后，网页会自动更新到最新数据；`deploy-pages.yml` 也可独立发布网页外壳并使用最近一份 Release 数据
+2. `merge-and-deploy.yml` 会在合并分析成功后直接执行 `deploy-pages` job，网页自动更新到最新数据
 3. 自定义域名固定为 `phones.jiucai.eu.org`，发布产物会包含 `docs/phones/CNAME`
 4. 访问 `https://phones.jiucai.eu.org/`
 

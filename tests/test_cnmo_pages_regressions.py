@@ -1339,16 +1339,21 @@ class CnmoWorkflowTests(unittest.TestCase):
         self.assertIn("三个爬虫都已完成", check_step)
         self.assertIn("CNMO完成:", check_step)
 
-    def test_independent_pages_deploy_rejects_tiny_or_shrinking_release(self) -> None:
-        text = (ROOT / ".github/workflows/deploy-pages.yml").read_text(encoding="utf-8")
-        self.assertIn('if [ "$ROWS" -lt 10 ]; then', text)
-        tiny_release_block = text.split('if [ "$ROWS" -lt 10 ]; then', 1)[1].split('DATE=$(basename "$MERGED_JSON"', 1)[0]
-        self.assertIn("continue", tiny_release_block)
-        self.assertIn("--pattern 'merged_phones_*.json'", text)
-        self.assertIn("MERGED_JSON=$(ls release-files/merged_phones_*.json", text)
-        self.assertIn('cp release-files/merged_phones_*.csv "site/data/merged_phones_${DATE}.csv"', text)
-        self.assertIn("scripts/verify_publish_superset.py /tmp/phones-pages-baseline.json site/data/latest.json", text)
-        self.assertIn("scripts/verify_publish_superset.py docs/phones/data/latest.json site/data/latest.json", text)
+    def test_pages_deploy_rejects_tiny_or_shrinking_release(self) -> None:
+        text = (ROOT / ".github/workflows/merge-and-deploy.yml").read_text(encoding="utf-8")
+        merge_check = text.split("- name: 检查合并结果", 1)[1].split(
+            "- name: 发布前校验线上基线超集", 1
+        )[0]
+        self.assertIn('if [ "$ROWS" -lt 10 ]; then', merge_check)
+        self.assertIn("疑似爬虫数据不完整，拒绝发布", merge_check)
+        self.assertIn("exit 1", merge_check)
+        self.assertIn("scripts/verify_publish_superset.py", text)
+        self.assertIn("/tmp/phones-pages-baseline.json", text)
+        self.assertIn('"data/merged_phones_${DATE}.json"', text)
+        deploy_job = text.split("  deploy-pages:", 1)[1]
+        self.assertIn('cp "release-files/merged_phones_${DATE}.csv"', deploy_job)
+        self.assertIn("scripts/verify_publish_superset.py", deploy_job)
+        self.assertIn("/tmp/phones-pages-baseline.json site/data/latest.json", deploy_job)
         self.assertNotIn("跳过超集校验", text)
 
 
