@@ -388,7 +388,7 @@ jobs:
             single_source_repair.patch
             single_source_root_cause.md
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: 3
 
   publish:
     needs: propose
