@@ -6,10 +6,21 @@ on:
     branches:
       - main
       - master
+  schedule:
+    - cron: "17 20 * * *"
   workflow_dispatch:
+    inputs:
+      target:
+        description: '手动运行目标'
+        required: false
+        type: choice
+        options:
+          - ci
+          - storage
+          - all
+        default: ci
 
-permissions:
-  contents: read
+permissions: {}
 
 env:
   PYTHONIOENCODING: utf-8
@@ -17,8 +28,18 @@ env:
 jobs:
   validate:
     name: Python and workflow checks
+    if: >-
+      github.event_name != 'schedule' &&
+      (
+        github.event_name != 'workflow_dispatch' ||
+        inputs.target == '' ||
+        inputs.target == 'ci' ||
+        inputs.target == 'all'
+      )
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -43,3 +64,21 @@ jobs:
 
       - name: Run unit tests
         run: python -m unittest discover -s tests -p 'test_*.py'
+
+  storage-policy:
+    name: Storage policy
+    if: >-
+      github.event_name == 'schedule' ||
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (
+        github.event_name == 'workflow_dispatch' &&
+        (inputs.target == 'storage' || inputs.target == 'all')
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - run: python scripts/validate_storage_policy.py
