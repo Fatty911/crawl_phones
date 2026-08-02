@@ -29,7 +29,8 @@ env:
   PAGES_URL: https://phones.jiucai.eu.org/data/latest.json
   PAGES_WORKFLOW_NAMES: 合并分析并发布
   PAGES_RUN_ID: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.id || inputs.pages_run_id }}
-  SOURCE_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.source_sha }}
+  PAGES_SOURCE_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.source_sha }}
+  SOURCE_SHA: ${{ github.event_name == 'workflow_run' && github.sha || inputs.source_sha }}
   PAGES_ARTIFACT_NAME: github-pages
   NVIDIA_NIM_MODEL: deepseek-ai/deepseek-v4-flash
 
@@ -47,12 +48,13 @@ jobs:
       status: ${{ steps.result.outputs.status }}
       chain_id: ${{ steps.result.outputs.chain_id || steps.context.outputs.chain_id }}
       round: ${{ steps.result.outputs.round || steps.context.outputs.round }}
+      base_sha: ${{ steps.result.outputs.base_sha || github.sha }}
       issue_number: ${{ steps.context.outputs.issue_number }}
     steps:
       - name: Checkout exact Pages source SHA
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.source_sha }}
+          ref: ${{ github.event_name == 'workflow_run' && github.sha || inputs.source_sha }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -77,7 +79,7 @@ jobs:
             printf '%s\n' 'reason=invalid-pages-run-id' >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if ! [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+          if ! [[ "$PAGES_SOURCE_SHA" =~ ^[0-9a-f]{40}$ && "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
             printf '%s\n' 'reason=invalid-source-sha' >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -90,12 +92,25 @@ jobs:
             printf '%s\n' 'reason=main-moved-after-pages-run' >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          if [[ "$remote_main_sha" != "$PAGES_SOURCE_SHA" ]]; then
+            if [[ "$REPO_KIND" != "phones" ]]; then
+              printf '%s\n' 'reason=main-moved-after-pages-run' >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            generated_commit="$(gh api "repos/$GITHUB_REPOSITORY/commits/$remote_main_sha")"
+            parent_sha="$(printf '%s' "$generated_commit" | python3 -c 'import json,sys; print((json.load(sys.stdin).get("parents") or [{}])[0].get("sha", ""))')"
+            commit_message="$(printf '%s' "$generated_commit" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("commit", {}).get("message", ""))')"
+            if [[ "$parent_sha" != "$PAGES_SOURCE_SHA" || "$commit_message" != "chore: update merged phone data "* ]]; then
+              printf '%s\n' 'reason=main-moved-after-pages-run' >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
 
           if ! gh api "repos/$GITHUB_REPOSITORY/actions/runs/$PAGES_RUN_ID" > "$RUNNER_TEMP/single-source-pages-run.json"; then
             printf '%s\n' 'reason=pages-run-not-readable' >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if ! PAGES_WORKFLOW_NAMES="$PAGES_WORKFLOW_NAMES" SOURCE_SHA="$SOURCE_SHA" python3 - <<'PY'
+          if ! PAGES_WORKFLOW_NAMES="$PAGES_WORKFLOW_NAMES" PAGES_SOURCE_SHA="$PAGES_SOURCE_SHA" python3 - <<'PY'
           import json
           import os
 
@@ -107,7 +122,7 @@ jobs:
               run.get("status") == "completed",
               run.get("conclusion") == "success",
               run.get("head_branch") == "main" or run.get("event") == "release",
-              run.get("head_sha") == os.environ["SOURCE_SHA"],
+              run.get("head_sha") == os.environ["PAGES_SOURCE_SHA"],
           ]
           if not all(checks):
               raise SystemExit(1)
@@ -117,7 +132,7 @@ jobs:
             exit 0
           fi
 
-          CHAIN_ID="$(python3 - "$SOURCE_SHA" "$PAGES_RUN_ID" "$GITHUB_REPOSITORY" <<'PY'
+          CHAIN_ID="$(python3 - "$PAGES_SOURCE_SHA" "$PAGES_RUN_ID" "$GITHUB_REPOSITORY" <<'PY'
           import hashlib
           import re
           import subprocess
@@ -301,6 +316,7 @@ jobs:
               output.write("status=" + str(result.get("status") or "no-op") + "\n")
               output.write("chain_id=" + str(result.get("chain_id") or "") + "\n")
               output.write("round=" + str(result.get("round") or 0) + "\n")
+              output.write("base_sha=" + str(result.get("base_sha") or "") + "\n")
           PY
 
       - name: Update chain issue without exposing raw model output
@@ -402,7 +418,7 @@ jobs:
       - name: Checkout exact proposal base
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.source_sha }}
+          ref: ${{ needs.propose.outputs.base_sha }}
           fetch-depth: 0
           persist-credentials: false
 
