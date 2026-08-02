@@ -3,7 +3,6 @@ name: Pages 后单源根因修复
 on:
   workflow_run:
     workflows:
-      - 部署手机配置网页
       - 合并分析并发布
 
     types:
@@ -28,7 +27,7 @@ permissions: {}
 env:
   REPO_KIND: phones
   PAGES_URL: https://phones.jiucai.eu.org/data/latest.json
-  PAGES_WORKFLOW_NAMES: 部署手机配置网页|合并分析并发布
+  PAGES_WORKFLOW_NAMES: 合并分析并发布
   PAGES_RUN_ID: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.id || inputs.pages_run_id }}
   SOURCE_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.source_sha }}
   PAGES_ARTIFACT_NAME: github-pages
@@ -481,10 +480,9 @@ jobs:
         run: |
           set -euo pipefail
           printf 'dispatch_started=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
-          gh workflow run deploy-pages.yml \
+          gh workflow run merge-and-deploy.yml \
             --repo "$GITHUB_REPOSITORY" \
-            --ref main \
-            -f mode=deploy_and_audit
+            --ref main
 
       - name: Wait for the dispatched Pages run
         id: pages
@@ -498,7 +496,7 @@ jobs:
           set -euo pipefail
           printf '%s\n' 'pages_status=not-observed' >> "$GITHUB_OUTPUT"
           for attempt in $(seq 1 30); do
-            run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/deploy-pages.yml/runs?branch=main&event=workflow_dispatch&per_page=20" | REPAIR_COMMIT_SHA="$REPAIR_COMMIT_SHA" DISPATCH_STARTED="$DISPATCH_STARTED" python3 -c 'import json,os,sys; sha=os.environ["REPAIR_COMMIT_SHA"]; start=os.environ["DISPATCH_STARTED"]; runs=json.load(sys.stdin).get("workflow_runs",[]); match=next((r for r in runs if r.get("head_sha")==sha and r.get("created_at","") >= start), None); print(json.dumps(match or {}))')"
+            run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/merge-and-deploy.yml/runs?branch=main&event=workflow_dispatch&per_page=20" | REPAIR_COMMIT_SHA="$REPAIR_COMMIT_SHA" DISPATCH_STARTED="$DISPATCH_STARTED" python3 -c 'import json,os,sys; sha=os.environ["REPAIR_COMMIT_SHA"]; start=os.environ["DISPATCH_STARTED"]; runs=json.load(sys.stdin).get("workflow_runs",[]); match=next((r for r in runs if r.get("head_sha")==sha and r.get("created_at","") >= start), None); print(json.dumps(match or {}))')"
             if [[ "$run_json" != "{}" ]]; then
               run_id="$(printf '%s' "$run_json" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("id", ""))')"
               status="$(printf '%s' "$run_json" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("status", ""))')"

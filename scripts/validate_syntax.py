@@ -74,7 +74,6 @@ def default_files() -> list[Path]:
         ROOT / ".github/workflows/crawl-pconline.yml",
         ROOT / ".github/workflows/crawl-cnmo.yml",
         ROOT / ".github/workflows/crawl-trigger.yml",
-        ROOT / ".github/workflows/deploy-pages.yml",
         ROOT / ".github/workflows/merge-and-deploy.yml",
         ROOT / ".github/workflows/ci.yml",
         ROOT / "docs/phones/index.html",

@@ -290,13 +290,13 @@ def check_deploy_pages_workflow(path: Path, errors: list[str]) -> None:
         has_rows_marker
         and has_date_marker
         and "continue" in tiny_release_block,
-        "deploy-pages.yml must skip releases with fewer than 10 merged rows",
+        "merge-and-deploy.yml Pages path must skip releases with fewer than 10 merged rows",
         errors,
     )
     assert_condition(
         "scripts/verify_publish_superset.py /tmp/phones-pages-baseline.json site/data/latest.json" in text
         and "https://phones.jiucai.eu.org/data/latest.json" in text,
-        "deploy-pages.yml must verify candidate latest.json is a superset of current Pages data",
+        "merge-and-deploy.yml Pages path must verify candidate latest.json is a superset of current Pages data",
         errors,
     )
     assert_condition(
@@ -305,14 +305,14 @@ def check_deploy_pages_workflow(path: Path, errors: list[str]) -> None:
         and "release-files/merged_phones_*.json" in text
         and "release-files/merged_phones_*.csv" in text
         and "release-files/data/merged_phones_" not in text,
-        "deploy-pages.yml must use the flat merged_phones release asset paths",
+        "merge-and-deploy.yml Pages path must use the flat merged_phones release asset paths",
         errors,
     )
     assert_condition(
         "python scripts/verify_publish_superset.py docs/phones/data/latest.json site/data/latest.json" in text
         and "拒绝发布以避免缩小稳定数据" in text
         and "跳过超集校验" not in text,
-        "deploy-pages.yml must fail closed or use repository baseline when Pages baseline cannot be fetched",
+        "merge-and-deploy.yml Pages path must fail closed or use repository baseline when Pages baseline cannot be fetched",
         errors,
     )
 
@@ -324,7 +324,6 @@ def main() -> int:
     check_trigger(ROOT / ".github/workflows/crawl-trigger.yml", errors)
     check_budget_script(ROOT / "scripts/crawl_budget.py", errors)
     check_merge_workflow(ROOT / ".github/workflows/merge-and-deploy.yml", errors)
-    check_deploy_pages_workflow(ROOT / ".github/workflows/deploy-pages.yml", errors)
     assert_condition((ROOT / "scripts/configure_cron_job_org.py").exists(), "missing cron-job.org configuration script", errors)
 
     if errors:
