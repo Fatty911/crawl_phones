@@ -86,7 +86,8 @@ jobs:
             printf '%s\n' 'reason=checkout-sha-mismatch' >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if [[ "$(git -c "http.extraheader=AUTHORIZATION: bearer $GH_TOKEN" ls-remote origin refs/heads/main | awk '{print $1}')" != "$SOURCE_SHA" ]]; then
+          remote_main_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha' 2>/dev/null || true)"
+          if [[ "$remote_main_sha" != "$SOURCE_SHA" ]]; then
             printf '%s\n' 'reason=main-moved-after-pages-run' >> "$GITHUB_OUTPUT"
             exit 0
           fi
