@@ -1,0 +1,597 @@
+name: Pages 后单源根因修复
+
+on:
+  workflow_run:
+    workflows:
+      - 部署手机配置网页
+      - 合并分析并发布
+
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      pages_run_id:
+        description: 成功 Pages workflow 的精确 run ID
+        required: true
+        type: string
+      source_sha:
+        description: 该 Pages run 的 workflow_run.head_sha
+        required: true
+        type: string
+
+concurrency:
+  group: single-source-repair-phones
+  cancel-in-progress: false
+
+permissions: {}
+
+env:
+  REPO_KIND: phones
+  PAGES_URL: https://phones.jiucai.eu.org/data/latest.json
+  PAGES_WORKFLOW_NAMES: 部署手机配置网页|合并分析并发布
+  PAGES_RUN_ID: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.id || inputs.pages_run_id }}
+  SOURCE_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.source_sha }}
+  PAGES_ARTIFACT_NAME: github-pages
+  NVIDIA_NIM_MODEL: deepseek-ai/deepseek-v4-flash
+
+jobs:
+  propose:
+    if: >-
+      github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && (github.event.workflow_run.head_branch == 'main' || github.event.workflow_run.event == 'release') && (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch' || github.event.workflow_run.event == 'release'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+    outputs:
+      status: ${{ steps.result.outputs.status }}
+      chain_id: ${{ steps.result.outputs.chain_id || steps.context.outputs.chain_id }}
+      round: ${{ steps.result.outputs.round || steps.context.outputs.round }}
+      issue_number: ${{ steps.context.outputs.issue_number }}
+    steps:
+      - name: Checkout exact Pages source SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Bind Pages artifact and repair chain
+        id: context
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s\n' 'ready=false' >> "$GITHUB_OUTPUT"
+          printf '%s\n' 'round=0' >> "$GITHUB_OUTPUT"
+          printf '%s\n' 'issue_number=' >> "$GITHUB_OUTPUT"
+          printf '%s\n' 'terminal=false' >> "$GITHUB_OUTPUT"
+
+          if ! [[ "$PAGES_RUN_ID" =~ ^[0-9]+$ ]]; then
+            printf '%s\n' 'reason=invalid-pages-run-id' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            printf '%s\n' 'reason=invalid-source-sha' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ "$(git rev-parse HEAD)" != "$SOURCE_SHA" ]]; then
+            printf '%s\n' 'reason=checkout-sha-mismatch' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ "$(git -c "http.extraheader=AUTHORIZATION: bearer $GH_TOKEN" ls-remote origin refs/heads/main | awk '{print $1}')" != "$SOURCE_SHA" ]]; then
+            printf '%s\n' 'reason=main-moved-after-pages-run' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if ! gh api "repos/$GITHUB_REPOSITORY/actions/runs/$PAGES_RUN_ID" > "$RUNNER_TEMP/single-source-pages-run.json"; then
+            printf '%s\n' 'reason=pages-run-not-readable' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! PAGES_WORKFLOW_NAMES="$PAGES_WORKFLOW_NAMES" SOURCE_SHA="$SOURCE_SHA" python3 - <<'PY'
+          import json
+          import os
+
+          with open(os.path.join(os.environ["RUNNER_TEMP"], "single-source-pages-run.json"), encoding="utf-8") as handle:
+              run = json.load(handle)
+          allowed = set(os.environ["PAGES_WORKFLOW_NAMES"].split("|"))
+          checks = [
+              run.get("name") in allowed,
+              run.get("status") == "completed",
+              run.get("conclusion") == "success",
+              run.get("head_branch") == "main" or run.get("event") == "release",
+              run.get("head_sha") == os.environ["SOURCE_SHA"],
+          ]
+          if not all(checks):
+              raise SystemExit(1)
+          PY
+          then
+            printf '%s\n' 'reason=pages-run-provenance-invalid' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          CHAIN_ID="$(python3 - "$SOURCE_SHA" "$PAGES_RUN_ID" "$GITHUB_REPOSITORY" <<'PY'
+          import hashlib
+          import re
+          import subprocess
+          import sys
+
+          sha, pages_run, repository = sys.argv[1:]
+          message = subprocess.check_output(
+              ["git", "log", "-1", "--format=%B", sha],
+              text=True,
+          )
+          match = re.search(
+              r"Single-Source-Repair-Chain:\s*([0-9a-f]{16,64})",
+              message,
+              flags=re.IGNORECASE,
+          )
+          if match:
+              print(match.group(1).lower())
+          else:
+              print(hashlib.sha256(f"{repository}:{pages_run}:{sha}".encode()).hexdigest()[:24])
+          PY
+          )"
+          printf 'chain_id=%s\n' "$CHAIN_ID" >> "$GITHUB_OUTPUT"
+
+          gh api -X GET search/issues -f q="repo:$GITHUB_REPOSITORY in:title single-source-repair chain=$CHAIN_ID" -f per_page=10 > "$RUNNER_TEMP/single-source-issues.json"
+          CHAIN_ID="$CHAIN_ID" python3 - <<'PY'
+          import json
+          import os
+          import re
+
+          chain_id = os.environ["CHAIN_ID"]
+          title = "[single-source-repair] chain=" + chain_id
+          previous_round = 0
+          issue_number = ""
+          with open(os.path.join(os.environ["RUNNER_TEMP"], "single-source-issues.json"), encoding="utf-8") as handle:
+              issues = json.load(handle).get("items", [])
+          for issue in issues:
+              if issue.get("pull_request") or issue.get("title") != title:
+                  continue
+              issue_number = str(issue["number"])
+              match = re.search(
+                  r"<!-- single-source-repair-state\s+(.+?)\s+-->",
+                  issue.get("body") or "",
+                  flags=re.DOTALL,
+              )
+              if match:
+                  try:
+                      state = json.loads(match.group(1))
+                      previous_round = int(state.get("round") or 0)
+                  except (TypeError, ValueError, json.JSONDecodeError):
+                      previous_round = 0
+              break
+          next_round = previous_round + 1
+          output = os.environ["GITHUB_OUTPUT"]
+          with open(output, "a", encoding="utf-8") as handle:
+              handle.write("issue_number=" + issue_number + "\n")
+              handle.write("round=" + str(next_round) + "\n")
+              if next_round > 3:
+                  handle.write("reason=max-repair-rounds\n")
+                  handle.write("round=3\n")
+                  handle.write("terminal=true\n")
+              else:
+                  handle.write("ready=true\n")
+                  handle.write("terminal=false\n")
+          PY
+
+          if [[ "$(grep '^ready=' "$GITHUB_OUTPUT" | tail -n 1)" != "ready=true" ]]; then
+            exit 0
+          fi
+
+          artifact_count="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$PAGES_RUN_ID/artifacts?name=github-pages&per_page=100" | python3 -c 'import json,sys; print(sum(1 for item in json.load(sys.stdin).get("artifacts", []) if item.get("name") == "github-pages" and not item.get("expired")))' )"
+          if [[ "$artifact_count" != "1" ]]; then
+            printf '%s\n' 'ready=false' >> "$GITHUB_OUTPUT"
+            printf '%s\n' 'reason=pages-artifact-not-unique' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          artifact_dir="$RUNNER_TEMP/pages-artifact-$PAGES_RUN_ID"
+          site_dir="$RUNNER_TEMP/pages-site-$PAGES_RUN_ID"
+          mkdir -p "$artifact_dir" "$site_dir"
+          gh run download "$PAGES_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "$PAGES_ARTIFACT_NAME" \
+            --dir "$artifact_dir"
+
+          archive_count="$(find "$artifact_dir" -type f \( -name artifact.tar -o -name '*.tar' \) | wc -l | tr -d ' ')"
+          if [[ "$archive_count" != "1" ]]; then
+            printf '%s\n' 'ready=false' >> "$GITHUB_OUTPUT"
+            printf '%s\n' 'reason=pages-artifact-format-invalid' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          archive_path="$(find "$artifact_dir" -type f \( -name artifact.tar -o -name '*.tar' \) -print -quit)"
+          tar -xf "$archive_path" -C "$site_dir"
+
+          latest_count="$(find "$site_dir" -type f -path '*/data/latest.json' | wc -l | tr -d ' ')"
+          if [[ "$latest_count" != "1" ]]; then
+            printf '%s\n' 'ready=false' >> "$GITHUB_OUTPUT"
+            printf '%s\n' 'reason=pages-latest-json-not-unique' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          latest_path="$(find "$site_dir" -type f -path '*/data/latest.json' -print -quit)"
+          cp "$latest_path" pages_latest.json
+          sha256sum pages_latest.json | awk '{print "pages_sha256=" $1}' >> "$GITHUB_OUTPUT"
+          printf '%s\n' 'ready=true' >> "$GITHUB_OUTPUT"
+
+      - name: Write deterministic no-op result when the input is not bound
+        if: steps.context.outputs.ready != 'true'
+        env:
+          CONTEXT_REASON: ${{ steps.context.outputs.reason }}
+          CONTEXT_CHAIN: ${{ steps.context.outputs.chain_id }}
+          CONTEXT_ROUND: ${{ steps.context.outputs.round }}
+          CONTEXT_TERMINAL: ${{ steps.context.outputs.terminal }}
+        shell: bash
+        run: |
+          python3 - "$CONTEXT_REASON" "$CONTEXT_CHAIN" "$CONTEXT_ROUND" "$CONTEXT_TERMINAL" "$SOURCE_SHA" "$PAGES_RUN_ID" "$REPO_KIND" "$PAGES_URL" "$GITHUB_OUTPUT" <<'PY'
+          import json
+          import sys
+
+          reason, chain_id, round_value, terminal, source_sha, pages_run_id, repo_kind, pages_url, output = sys.argv[1:]
+          result = {
+              "version": 1,
+              "status": "no-op",
+              "repo_kind": repo_kind,
+              "base_sha": source_sha,
+              "pages_run_id": pages_run_id,
+              "pages_url": pages_url,
+              "chain_id": chain_id,
+              "round": int(round_value or 0),
+              "terminal": terminal == "true",
+              "model": "deepseek-ai/deepseek-v4-flash",
+              "root_cause": "",
+              "confidence": 0.0,
+              "single_rate": 0.0,
+              "patch_sha256": "",
+              "reason": reason or "input-not-bound",
+              "analysis": "",
+              "evidence": [],
+          }
+          with open("single_source_repair_result.json", "w", encoding="utf-8") as handle:
+              json.dump(result, handle, ensure_ascii=False, indent=2)
+              handle.write("\n")
+          with open("single_source_root_cause.md", "w", encoding="utf-8") as handle:
+              handle.write("# Single-source repair proposal\n\n- status: no-op\n- reason: " + result["reason"] + "\n")
+          with open(output, "a", encoding="utf-8") as handle:
+              handle.write("status=no-op\n")
+          PY
+
+      - name: Ask NIM for a bounded repair proposal
+        if: steps.context.outputs.ready == 'true'
+        env:
+          NVIDIA_NIM_API_KEY: ${{ secrets.NVIDIA_NIM_API_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/single_source_repair.py \
+            --repo-kind "$REPO_KIND" \
+            --data pages_latest.json \
+            --output-dir . \
+            --base-sha "$SOURCE_SHA" \
+            --pages-run-id "$PAGES_RUN_ID" \
+            --pages-url "$PAGES_URL" \
+            --chain-id "${{ steps.context.outputs.chain_id }}" \
+            --round "${{ steps.context.outputs.round }}"
+
+      - name: Capture proposal status
+        id: result
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -f single_source_repair_result.json ]]; then
+            printf '%s\n' 'status=no-op' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          python3 - <<'PY'
+          import json
+          import os
+
+          with open("single_source_repair_result.json", encoding="utf-8") as handle:
+              result = json.load(handle)
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write("status=" + str(result.get("status") or "no-op") + "\n")
+              output.write("chain_id=" + str(result.get("chain_id") or "") + "\n")
+              output.write("round=" + str(result.get("round") or 0) + "\n")
+          PY
+
+      - name: Update chain issue without exposing raw model output
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            if (!fs.existsSync('single_source_repair_result.json')) {
+              console.log('no proposal result; skipping issue update');
+              return;
+            }
+            const result = JSON.parse(fs.readFileSync('single_source_repair_result.json', 'utf8'));
+            const chain = String(result.chain_id || process.env.CHAIN_ID || '');
+            if (!chain) {
+              console.log('no repair chain; skipping issue update');
+              return;
+            }
+            const title = '[single-source-repair] chain=' + chain;
+            const clean = value => String(value || '').replace(/\r?\n/g, ' ').slice(0, 1800);
+            const state = {
+              chain_id: result.chain_id || process.env.CHAIN_ID || '',
+              round: Number(result.round || 0),
+              terminal: Boolean(result.terminal),
+              status: result.status || 'no-op',
+              pages_run_id: String(result.pages_run_id || ''),
+              source_sha: String(result.base_sha || ''),
+              report_sha256: String(result.report_sha256 || ''),
+              patch_sha256: String(result.patch_sha256 || '')
+            };
+            const marker = '<!-- single-source-repair-state\n' + JSON.stringify(state) + '\n-->';
+            const body = marker + '\n\n' +
+              '状态: ' + clean(result.status) + '\n' +
+              'Pages run: ' + clean(result.pages_run_id) + '\n' +
+              '基线 SHA: ' + clean(result.base_sha) + '\n' +
+              '轮次: ' + clean(result.round) + '\n' +
+              '单源率: ' + clean(result.single_rate) + '%\n' +
+              '根因: ' + clean(result.root_cause) + '\n' +
+              '置信度: ' + clean(result.confidence) + '\n' +
+              '原因: ' + clean(result.reason) + '\n' +
+              '分析摘要: ' + clean(result.analysis) + '\n' +
+              '证据摘要: ' + clean((result.evidence || []).join(' | '));
+            const search = await github.rest.search.issuesAndPullRequests({
+              q: 'repo:' + context.repo.owner + '/' + context.repo.repo + ' in:title single-source-repair chain=' + chain,
+              per_page: 10
+            });
+            const existing = search.data.items.find(issue => !issue.pull_request && issue.title === title);
+            if (existing) {
+              const previous = (existing.body || '').match(/<!-- single-source-repair-state\s+(.+?)\s+-->/s);
+              if (previous) {
+                try {
+                  const previousState = JSON.parse(previous[1]);
+                  if (Number(previousState.round || 0) > state.round ||
+                      (previousState.terminal && !state.terminal)) return;
+                } catch (_) {}
+              }
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.number,
+                title,
+                body
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body
+              });
+            }
+        env:
+          CHAIN_ID: ${{ steps.context.outputs.chain_id }}
+
+      - name: Upload diagnosis and patch proposal
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: single-source-repair-proposal-${{ github.run_id }}
+          path: |
+            single_source_report.json
+            single_source_repair_result.json
+            single_source_repair.patch
+            single_source_root_cause.md
+          if-no-files-found: warn
+          retention-days: 14
+
+  publish:
+    needs: propose
+    if: needs.propose.outputs.status == 'approved'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: write
+      actions: write
+      issues: write
+    steps:
+      - name: Checkout exact proposal base
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Download the proposal artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: single-source-repair-proposal-${{ github.run_id }}
+          path: proposal
+
+      - name: Re-validate, apply, and push only the approved patch
+        id: push
+        env:
+          PUSH_TOKEN: ${{ secrets.ACTION_PAT || secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f proposal/single_source_repair.patch
+          test -f proposal/single_source_repair_result.json
+          python3 - "$SOURCE_SHA" "$PAGES_RUN_ID" "$REPO_KIND" "$PAGES_URL" <<'PY'
+          import hashlib
+          import json
+          import sys
+
+          source_sha, pages_run_id, repo_kind, pages_url = sys.argv[1:]
+          with open("proposal/single_source_repair_result.json", encoding="utf-8") as handle:
+              result = json.load(handle)
+          with open("proposal/single_source_repair.patch", encoding="utf-8") as handle:
+              patch = handle.read()
+          if result.get("status") != "approved":
+              raise SystemExit("proposal status is not approved")
+          if result.get("base_sha") != source_sha:
+              raise SystemExit("proposal base SHA mismatch")
+          if str(result.get("pages_run_id")) != pages_run_id:
+              raise SystemExit("proposal Pages run mismatch")
+          if result.get("repo_kind") != repo_kind or result.get("pages_url") != pages_url:
+              raise SystemExit("proposal repository or URL mismatch")
+          if not 1 <= int(result.get("round") or 0) <= 3:
+              raise SystemExit("proposal round is outside 1..3")
+          expected = result.get("patch_sha256")
+          actual = hashlib.sha256(patch.encode("utf-8")).hexdigest()
+          if not expected or expected != actual:
+              raise SystemExit("proposal patch SHA mismatch")
+          PY
+
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          git -c "http.extraheader=AUTHORIZATION: bearer $PUSH_TOKEN" fetch origin main --depth=1
+          test "$(git rev-parse origin/main)" = "$SOURCE_SHA"
+          python scripts/single_source_repair.py --repo-kind "$REPO_KIND" --check-patch proposal/single_source_repair.patch
+          git apply --whitespace=error proposal/single_source_repair.patch
+          python scripts/single_source_repair.py --repo-kind "$REPO_KIND" --validate-working-tree
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- $(git diff --name-only)
+          git diff --cached --check
+          git commit \
+            -m "fix: improve multi-source coverage [single-source-repair]" \
+            -m "Single-Source-Repair-Chain: ${{ needs.propose.outputs.chain_id }}" \
+            -m "Single-Source-Repair-Round: ${{ needs.propose.outputs.round }}" \
+            -m "Single-Source-Repair-Base-SHA: $SOURCE_SHA"
+          git -c "http.extraheader=AUTHORIZATION: bearer $PUSH_TOKEN" push origin HEAD:main
+          printf 'commit_sha=%s\n' "$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Trigger the next Pages deployment
+        id: dispatch
+        if: steps.push.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.ACTION_PAT || secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'dispatch_started=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+          gh workflow run deploy-pages.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref main \
+            -f mode=deploy_and_audit
+
+      - name: Wait for the dispatched Pages run
+        id: pages
+        if: steps.dispatch.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.ACTION_PAT || secrets.GITHUB_TOKEN }}
+          REPAIR_COMMIT_SHA: ${{ steps.push.outputs.commit_sha }}
+          DISPATCH_STARTED: ${{ steps.dispatch.outputs.dispatch_started }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s\n' 'pages_status=not-observed' >> "$GITHUB_OUTPUT"
+          for attempt in $(seq 1 30); do
+            run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/deploy-pages.yml/runs?branch=main&event=workflow_dispatch&per_page=20" | REPAIR_COMMIT_SHA="$REPAIR_COMMIT_SHA" DISPATCH_STARTED="$DISPATCH_STARTED" python3 -c 'import json,os,sys; sha=os.environ["REPAIR_COMMIT_SHA"]; start=os.environ["DISPATCH_STARTED"]; runs=json.load(sys.stdin).get("workflow_runs",[]); match=next((r for r in runs if r.get("head_sha")==sha and r.get("created_at","") >= start), None); print(json.dumps(match or {}))')"
+            if [[ "$run_json" != "{}" ]]; then
+              run_id="$(printf '%s' "$run_json" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("id", ""))')"
+              status="$(printf '%s' "$run_json" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("status", ""))')"
+              conclusion="$(printf '%s' "$run_json" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("conclusion", ""))')"
+              printf 'pages_run_id=%s\n' "$run_id" >> "$GITHUB_OUTPUT"
+              if [[ "$status" == "completed" ]]; then
+                if [[ "$conclusion" == "success" ]]; then
+                  printf '%s\n' 'pages_status=success' >> "$GITHUB_OUTPUT"
+                else
+                  printf '%s\n' 'pages_status=failure' >> "$GITHUB_OUTPUT"
+                  exit 1
+                fi
+                exit 0
+              fi
+            fi
+            sleep 20
+          done
+          printf '%s\n' 'pages_status=timeout' >> "$GITHUB_OUTPUT"
+          exit 1
+
+      - name: Update published chain state
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            if (!fs.existsSync('proposal/single_source_repair_result.json')) {
+              console.log('no proposal artifact; skipping published-state update');
+              return;
+            }
+            const result = JSON.parse(fs.readFileSync('proposal/single_source_repair_result.json', 'utf8'));
+            const chain = String(result.chain_id || process.env.CHAIN_ID || '');
+            if (!chain) {
+              console.log('no repair chain; skipping published-state update');
+              return;
+            }
+            const title = '[single-source-repair] chain=' + chain;
+            const pushOutcome = String(process.env.PUSH_OUTCOME || '');
+            const dispatchOutcome = String(process.env.DISPATCH_OUTCOME || '');
+            const pagesOutcome = String(process.env.PAGES_OUTCOME || '');
+            const status = pushOutcome !== 'success'
+              ? 'push-failed'
+              : dispatchOutcome !== 'success'
+                ? 'dispatch-failed'
+                : pagesOutcome === 'success'
+                  ? 'pages-succeeded'
+                : pagesOutcome === 'failure'
+                  ? 'pages-failed'
+                  : pagesOutcome === 'timeout'
+                    ? 'pages-timeout'
+                  : 'dispatch-accepted';
+            const state = {
+              chain_id: chain,
+              round: Number(result.round || 0),
+              terminal: Boolean(result.terminal),
+              status,
+              source_pages_run_id: String(result.pages_run_id || ''),
+              source_sha: String(result.base_sha || ''),
+              repair_commit_sha: String(process.env.COMMIT_SHA || ''),
+              report_sha256: String(result.report_sha256 || ''),
+              patch_sha256: String(result.patch_sha256 || ''),
+              pages_run_id: String(process.env.PAGES_RUN_ID || '')
+            };
+            const body = '<!-- single-source-repair-state\n' + JSON.stringify(state) +
+              '\n-->\n\n状态: ' + status +
+              '\n修复提交: ' + String(process.env.COMMIT_SHA || '') +
+              '\n下一次 Pages dispatch: ' + dispatchOutcome;
+            const search = await github.rest.search.issuesAndPullRequests({
+              q: 'repo:' + context.repo.owner + '/' + context.repo.repo + ' in:title single-source-repair chain=' + chain,
+              per_page: 10
+            });
+            const existing = search.data.items.find(issue => !issue.pull_request && issue.title === title);
+            if (existing) {
+              const previous = (existing.body || '').match(/<!-- single-source-repair-state\s+(.+?)\s+-->/s);
+              if (previous) {
+                try {
+                  const previousState = JSON.parse(previous[1]);
+                  if (Number(previousState.round || 0) > state.round ||
+                      (previousState.terminal && !state.terminal)) return;
+                } catch (_) {}
+              }
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.number,
+                title,
+                body
+              });
+            }
+        env:
+          CHAIN_ID: ${{ needs.propose.outputs.chain_id }}
+          PUSH_OUTCOME: ${{ steps.push.outcome }}
+          DISPATCH_OUTCOME: ${{ steps.dispatch.outcome }}
+          PAGES_OUTCOME: ${{ steps.pages.outputs.pages_status }}
+          PAGES_RUN_ID: ${{ steps.pages.outputs.pages_run_id }}
+          COMMIT_SHA: ${{ steps.push.outputs.commit_sha }}
