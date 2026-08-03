@@ -59,7 +59,7 @@ AA_MODELS = [
         "provider": "kimi",
         "model": "k3",
         "max_tokens": 12000,
-        "env_keys": ["KIMI_API_KEY", "MOONSHOT_API_KEY", "KIMI_CODINGPLAN_API_KEY"],
+        "env_keys": ["KIMI_API_KEY", "MOONSHOT_API_KEY"],
         "endpoint": "https://api.moonshot.cn/v1/chat/completions",
     },
     {
