@@ -17,6 +17,7 @@ crawl_phones/
 ├── crawl_zol.py              # 中关村在线爬虫脚本
 ├── crawl_pconline.py         # 太平洋电脑网爬虫脚本
 ├── merge_phones.py           # 数据合并脚本
+├── scripts/analysis/merge_evidence_report.py # 合并来源/状态证据报告
 ├── search_root_info.py       # AI搜索BL锁和Root信息
 ├── requirements.txt          # Python依赖
 ├── README.md                 # 项目说明
@@ -89,7 +90,10 @@ crawl_phones/
 - 数据规范化处理
 - 同名机型合并为单条记录，标记 `单源` / `双源一致` / `双源差异`
 - 差异对比（同一手机不同来源的配置差异）
+- 生成确定性的 `merge_evidence_report_YYYYMMDD.json`，记录原始来源行数、来源组合、验证状态、多源数量和配置差异行数，随 Release/Pages 一起发布
 - 输出合并CSV/JSON
+
+`scripts/validate_storage_policy.py` 还会阻止运行时 `data/` 被意外提交、阻止动态或宽泛的 `git add`，并检查 artifact retention；`single-source-repair.yml` 只会暂存四个受限业务脚本。
 
 ### 4. GitHub Pages展示
 

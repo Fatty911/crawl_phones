@@ -29,18 +29,22 @@ def stages_data_directory(text: str) -> bool:
 
     for line in logical_lines:
         stripped = line.strip()
-        if not stripped.startswith("git add "):
+        if not stripped.startswith("git add"):
             continue
+        if stripped == "git add" or not re.match(r"^git\s+add(?:\s|$)", stripped):
+            continue
+        if "$((" in stripped or "$(" in stripped or "`" in stripped:
+            return True
         try:
             arguments = shlex.split(stripped)
         except ValueError:
             return True
         for value in arguments[2:]:
-            if value == "--" or value.startswith("-"):
-                continue
             normalized = value.replace("\\", "/")
             while normalized.startswith("./"):
                 normalized = normalized[2:]
+            if value in {"-A", "--all", "-u", "--update", ".", "./"}:
+                return True
             if normalized == "data" or normalized.startswith("data/"):
                 return True
     return False

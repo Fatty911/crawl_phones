@@ -438,6 +438,17 @@ jobs:
             exit 0
           fi
 
+      - name: 生成合并证据报告
+        if: steps.validate.outputs.ready == 'true'
+        env:
+          DATE: ${{ steps.date.outputs.date }}
+        run: |
+          python scripts/analysis/merge_evidence_report.py \
+            --raw "data/zol_phones_*.json" "data/pconline_phones_*.json" "data/cnmo_phones_*.json" \
+            --merged "data/merged_phones_${DATE}.json" \
+            --diff "data/diff_phones_${DATE}.csv" \
+            --output "data/merge_evidence_report_${DATE}.json"
+
       - name: AI root/越狱验证
         if: steps.validate.outputs.ready == 'true'
         continue-on-error: true
@@ -554,6 +565,7 @@ jobs:
           path: |
             data/merged_phones_${{ steps.date.outputs.date }}.csv
             data/merged_phones_${{ steps.date.outputs.date }}.json
+            data/merge_evidence_report_${{ steps.date.outputs.date }}.json
           retention-days: 3
           if-no-files-found: error
 
@@ -640,6 +652,7 @@ jobs:
           files: |
             release-files/merged_phones_${{ needs.merge-data.outputs.crawl_date }}.csv
             release-files/merged_phones_${{ needs.merge-data.outputs.crawl_date }}.json
+            release-files/merge_evidence_report_${{ needs.merge-data.outputs.crawl_date }}.json
             release-files/phones_with_root_info.json
           fail_on_unmatched_files: false
           generate_release_notes: true
@@ -705,6 +718,9 @@ jobs:
           if [ -f "release-files/merged_phones_${DATE}.csv" ]; then
             cp "release-files/merged_phones_${DATE}.csv" "site/data/merged_phones_${DATE}.csv"
           fi
+          if [ -f "release-files/merge_evidence_report_${DATE}.json" ]; then
+            cp "release-files/merge_evidence_report_${DATE}.json" site/data/merge_evidence_report.json
+          fi
 
           touch site/.nojekyll
           python - <<'PY'
@@ -736,6 +752,8 @@ jobs:
                   "latestCsv": f"data/merged_phones_{date}.csv",
               },
           }
+          if os.path.exists("site/data/merge_evidence_report.json"):
+              manifest["files"]["mergeEvidenceReport"] = "data/merge_evidence_report.json"
           with open("site/data/manifest.json", "w", encoding="utf-8") as f:
               json.dump(manifest, f, ensure_ascii=False, indent=2)
           PY
