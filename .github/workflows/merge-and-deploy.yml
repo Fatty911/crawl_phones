@@ -449,18 +449,28 @@ jobs:
             --diff "data/diff_phones_${DATE}.csv" \
             --output "data/merge_evidence_report_${DATE}.json"
 
-      - name: AI root/越狱验证
+      - name: "Run configured free endpoints first: 免费端点优先的 AI root/越狱验证"
+        id: free_route
         if: steps.validate.outputs.ready == 'true'
         continue-on-error: true
         env:
           NVIDIA_NIM_API_KEY: ${{ secrets.NVIDIA_NIM_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          ZEN_API_KEY: ${{ secrets.ZEN_API_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_API_KEY: ${{ secrets.CLOUDFLARE_API_KEY }}
+          MODAL_API_KEY: ${{ secrets.MODAL_API_KEY }}
+          MODELSCOPE_API_KEY: ${{ secrets.MODELSCOPE_API_KEY }}
+          ATOMGIT_API_KEY: ${{ secrets.ATOMGIT_API_KEY }}
           MERGE_DATE: ${{ steps.date.outputs.date }}
         run: |
           MERGED="data/merged_phones_${MERGE_DATE}.json"
           if [ -s "$MERGED" ]; then
             echo "开始 AI root/越狱验证..."
-            if timeout --signal=KILL 27m python scripts/ai_verify_root_status.py "$MERGED"; then
+            if timeout --signal=KILL 27m python scripts/ai_verify_root_status.py "$MERGED" \
+              --route-metadata-output phone_free_route.json \
+              --plan-prompt-output phone_plan_prompt.md \
+              --github-output "$GITHUB_OUTPUT"; then
               echo "root/越狱验证完成"
             else
               EXIT_CODE=$?
@@ -470,6 +480,50 @@ jobs:
           else
             echo "跳过 root/越狱验证（无合并文件）"
           fi
+
+      - name: Set up Node.js for phone Plan fallback
+        if: steps.free_route.outputs.paid_required == 'true'
+        continue-on-error: true
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install fixed OpenCode CLI for phone Plan fallback
+        if: steps.free_route.outputs.paid_required == 'true'
+        continue-on-error: true
+        run: npm install --global opencode-ai@1.18.11
+
+      - name: Prepare isolated phone Plan Agent directory
+        if: steps.free_route.outputs.paid_required == 'true'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/opencode-agent"
+          cp phone_plan_prompt.md "$RUNNER_TEMP/opencode-agent/prompt.md"
+          echo "PLAN_REQUEST_ID=$(jq -r .request_id phone_free_route.manifest.json)" >> "$GITHUB_ENV"
+          echo "PLAN_PROMPT_SHA256=$(jq -r .prompt_sha256 phone_free_route.manifest.json)" >> "$GITHUB_ENV"
+
+      - name: Run Kimi Coding Plan through read-only OpenCode Agent
+        id: phone_plan_agent
+        if: steps.free_route.outputs.paid_required == 'true'
+        continue-on-error: true
+        env:
+          KIMI_CODINGPLAN_API_KEY: ${{ secrets.KIMI_CODINGPLAN_API_KEY }}
+          OPENCODE_CONFIG_CONTENT: >-
+            {"autoupdate":false,"provider":{"kimi-coding-plan":{"npm":"@ai-sdk/openai-compatible","name":"Kimi Coding Plan","options":{"baseURL":"https://api.kimi.com/coding/v1","apiKey":"{env:KIMI_CODINGPLAN_API_KEY}"},"models":{"kimi-k2.6":{"limit":{"context":262144,"output":32768}}}}},"agent":{"plan":{"model":"kimi-coding-plan/kimi-k2.6","permission":{"*":"deny","read":"allow","edit":"deny","bash":"deny","webfetch":"deny","task":"deny","question":"deny","external_directory":"deny"}}},"permission":{"*":"deny","read":"allow","edit":"deny","bash":"deny","webfetch":"deny","task":"deny","question":"deny","external_directory":"deny"}}
+        run: >-
+          opencode run --pure --agent plan --model kimi-coding-plan/kimi-k2.6 --format default --dir "$RUNNER_TEMP/opencode-agent" --file prompt.md "Return only one JSON object. Set request_id to $PLAN_REQUEST_ID and prompt_sha256 to $PLAN_PROMPT_SHA256. Include a responses array covering every request_id exactly once. Do not call tools or modify files." > phone_plan_response.json
+
+      - name: Apply phone Plan Agent fallback results
+        if: steps.free_route.outputs.paid_required == 'true' && steps.phone_plan_agent.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          MERGED="data/merged_phones_${{ steps.date.outputs.date }}.json"
+          python scripts/ai_verify_root_status.py "$MERGED" \
+            --agent-response-input phone_plan_response.json \
+            --plan-manifest-input phone_free_route.manifest.json
 
       - name: 保留线上基线身份
         if: steps.validate.outputs.ready == 'true'

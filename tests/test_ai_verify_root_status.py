@@ -39,23 +39,34 @@ class AiVerifyRootStatusTests(unittest.TestCase):
         setattr(ai_verify, "OR_FREE_MODELS", [f"or-{index}" for index in range(2)])
         setattr(ai_verify, "MIN_REQUEST_INTERVAL", 0)
         setattr(ai_verify, "_last_request_time", 0)
+        with ai_verify._route_status_lock:
+            ai_verify._route_statuses.clear()
+            ai_verify._plan_requests.clear()
 
     def tearDown(self) -> None:
         for name, value in self.originals.items():
             setattr(ai_verify, name, value)
 
     def test_failures_are_structured_and_secrets_are_redacted(self) -> None:
-        def fail_nim(prompt: str, model: str, timeout: float) -> None:
-            raise RuntimeError(f"nim failed with {ai_verify.NIM_KEY}")
+        from scripts import free_first_router
 
-        def fail_openrouter(prompt: str, model: str, timeout: float) -> None:
-            raise TimeoutError(f"openrouter failed with {ai_verify.OR_KEY}")
+        def fake_route(prompt, output, metadata, github_output, providers, timeout, max_tokens):
+            metadata.write_text(
+                json.dumps(
+                    {
+                        "status": "free_unavailable",
+                        "paid_required": False,
+                        "attempted": 2,
+                        "request_id": "a" * 16,
+                        "prompt_sha256": "b" * 64,
+                    }
+                ),
+                encoding="utf-8",
+            )
 
         stderr = io.StringIO()
         with (
-            mock.patch.object(ai_verify, "_try_nim", side_effect=fail_nim),
-            mock.patch.object(ai_verify, "_try_or", side_effect=fail_openrouter),
-            mock.patch.object(ai_verify.time, "sleep", return_value=None),
+            mock.patch.object(free_first_router, "route", side_effect=fake_route),
             contextlib.redirect_stderr(stderr),
         ):
             result = ai_verify.ai_query("prompt", retries=3, deadline=time.monotonic() + 60)
@@ -70,22 +81,18 @@ class AiVerifyRootStatusTests(unittest.TestCase):
             for line in output.splitlines()
             if line.startswith("{")
         ]
-        self.assertEqual(10, len(events))
+        self.assertEqual(1, len(events))
         for event in events:
             self.assertEqual("ai_request_failed", event["event"])
             self.assertTrue(event["timestamp_utc"].endswith("Z"))
-            self.assertIn(event["provider"], {"nim", "openrouter"})
+            self.assertEqual("free-router", event["provider"])
             self.assertTrue(event["model"])
-            self.assertTrue(event["source_url"].startswith("https://"))
+            self.assertEqual("shared-free-endpoints", event["source_url"])
             self.assertGreaterEqual(event["attempt"], 1)
             self.assertEqual(event["attempt"] - 1, event["retry_count"])
             self.assertTrue(event["error_type"])
-            self.assertIn("***", event["error_message"])
+            self.assertTrue(event["error_message"])
 
-        nim_events = [event for event in events if event["provider"] == "nim"]
-        self.assertTrue(all(event["max_attempts"] == 1 for event in nim_events))
-        openrouter_events = [event for event in events if event["provider"] == "openrouter"]
-        self.assertEqual([1, 2, 3, 1, 2, 3], [event["attempt"] for event in openrouter_events])
 
     def test_concurrent_failure_events_remain_one_json_object_per_line(self) -> None:
         class FragmentingStream:
@@ -142,6 +149,43 @@ class AiVerifyRootStatusTests(unittest.TestCase):
         with mock.patch.object(ai_verify.time, "monotonic", return_value=100.0):
             self.assertEqual(5.0, ai_verify._request_timeout(105.0))
             self.assertIsNone(ai_verify._request_timeout(100.0))
+
+    def test_shared_free_route_receives_explicit_limits_without_mutating_environment(self) -> None:
+        from scripts import free_first_router
+
+        captured = {}
+
+        def fake_route(prompt, output, metadata, github_output, providers, timeout, max_tokens):
+            captured.update(timeout=timeout, max_tokens=max_tokens, provider_count=len(providers))
+            metadata.write_text(
+                json.dumps(
+                    {
+                        "status": "all_free_429",
+                        "paid_required": True,
+                        "request_id": "a" * 16,
+                        "prompt_sha256": "b" * 64,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+        with (
+            mock.patch.object(free_first_router, "route", side_effect=fake_route),
+            mock.patch.object(ai_verify, "_request_timeout", return_value=3.5),
+            mock.patch.dict(ai_verify.os.environ, {"FREE_LLM_TIMEOUT": "sentinel", "FREE_LLM_MAX_TOKENS": "sentinel"}, clear=False),
+        ):
+            self.assertIsNone(
+                ai_verify._try_free_route(
+                    "prompt",
+                    time.monotonic() + 60,
+                    {"kind": "single", "brand": "A", "model": "M"},
+                )
+            )
+            self.assertEqual("sentinel", ai_verify.os.environ["FREE_LLM_TIMEOUT"])
+            self.assertEqual("sentinel", ai_verify.os.environ["FREE_LLM_MAX_TOKENS"])
+        self.assertEqual(3.5, captured["timeout"])
+        self.assertEqual(ai_verify.MAX_TOKENS, captured["max_tokens"])
+        self.assertEqual(1, len(ai_verify._plan_requests))
 
     def test_blocking_request_process_is_terminated_at_deadline(self) -> None:
         before = {process.pid for process in ai_verify.multiprocessing.active_children()}

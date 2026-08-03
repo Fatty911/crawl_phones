@@ -8,7 +8,7 @@ AI 联网验证手机 root/越狱状态，智能增量 + 品牌SOC漏洞匹配�
 3. 无匹配漏洞的机型单独查询
 4. 累积结果到 root_status.json 缓存，下次增量跳过
 
-API：优先 NIM free (nvidia/nvidia-glm-5.1)，备用 OpenRouter free
+API：优先 NIM/OpenRouter free，再尝试已配置的其它免费兼容端点
 
 字段命名：
   安卓：不可root / 可临时root（重启失效）/ 可永久root（方法）
@@ -16,6 +16,7 @@ API：优先 NIM free (nvidia/nvidia-glm-5.1)，备用 OpenRouter free
 """
 
 import json
+import hashlib
 import os
 import sys
 import re
@@ -23,9 +24,11 @@ import time
 import concurrent.futures
 import multiprocessing
 import queue
+import tempfile
 import threading
 from datetime import datetime, timezone
 from collections import defaultdict
+from pathlib import Path
 from urllib.request import Request, urlopen
 
 
@@ -49,6 +52,9 @@ MIN_REQUEST_INTERVAL = 0.5  # 秒
 _last_request_time = 0.0
 _request_lock = threading.Lock()
 _stderr_lock = threading.Lock()
+_route_status_lock = threading.Lock()
+_route_statuses = []
+_plan_requests = []
 
 # ── API ──────────────────────────────────────────────
 NIM_KEY = os.environ.get("NVIDIA_NIM_API_KEY", "")
@@ -182,9 +188,72 @@ def _request_timeout(deadline):
     return API_TIMEOUT if remaining is None else min(API_TIMEOUT, remaining)
 
 
+def _record_route_status(status):
+    with _route_status_lock:
+        _route_statuses.append(str(status or "unknown"))
+
+
+def _record_plan_request(metadata, prompt, context):
+    request = dict(context or {})
+    request.update(
+        request_id=str(metadata.get("request_id") or ""),
+        prompt_sha256=str(metadata.get("prompt_sha256") or ""),
+        prompt=prompt,
+    )
+    with _route_status_lock:
+        if request.get("request_id") and all(item.get("request_id") != request["request_id"] for item in _plan_requests):
+            _plan_requests.append(request)
+
+
+def _try_free_route(prompt, deadline, context=None):
+    """Route one query through every configured free endpoint with explicit limits."""
+    from scripts import free_first_router
+
+    timeout = _request_timeout(deadline)
+    if timeout is None:
+        return None
+
+    with tempfile.TemporaryDirectory(prefix="phone-free-route-") as directory:
+        root = Path(directory)
+        output = root / "response.txt"
+        metadata_path = root / "route.json"
+        try:
+            free_first_router.route(
+                prompt,
+                output,
+                metadata_path,
+                None,
+                providers=free_first_router.FREE_PROVIDERS,
+                timeout=max(1.0, timeout),
+                max_tokens=MAX_TOKENS,
+            )
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            _record_route_status(metadata.get("status"))
+            if metadata.get("status") == "success" and output.is_file():
+                return output.read_text(encoding="utf-8")
+            if metadata.get("status") == "all_free_429":
+                _record_plan_request(metadata, prompt, context or {})
+            _log_ai_failure(
+                "free-router",
+                str(metadata.get("status") or "unknown"),
+                "shared-free-endpoints",
+                1,
+                1,
+                RemoteAIError(str(metadata.get("status") or "unknown"), "no free response"),
+            )
+        except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            _log_ai_failure("free-router", "shared", "shared-free-endpoints", 1, 1, exc)
+    return None
+
+
 def _safe_error_message(exc):
     message = str(exc)
-    for secret in (NIM_KEY, OR_KEY):
+    secrets = [NIM_KEY, OR_KEY]
+    secrets.extend(
+        value for name, value in os.environ.items()
+        if name.endswith("_API_KEY") and value and len(value) >= 8
+    )
+    for secret in secrets:
         if secret:
             message = message.replace(secret, "***")
     return message[:500]
@@ -212,8 +281,8 @@ def _log_ai_failure(provider, model, source_url, attempt, max_attempts, exc):
     _write_stderr_line(json.dumps(event, ensure_ascii=False, sort_keys=True))
 
 
-def ai_query(prompt, model=None, retries=MAX_RETRIES, deadline=None):
-    """调用 AI 查询，自动 fallback NIM models → OpenRouter free models"""
+def ai_query(prompt, model=None, retries=MAX_RETRIES, deadline=None, request_context=None):
+    """调用 AI 查询，严格使用共享免费路由；429 请求留给独立 Plan Agent。"""
     # Rate limiting: 请求发起前等待
     global _last_request_time
     with _request_lock:
@@ -226,39 +295,7 @@ def ai_query(prompt, model=None, retries=MAX_RETRIES, deadline=None):
             time.sleep(wait)
         _last_request_time = time.monotonic()
 
-    # 1) NIM 模型轮询（免费，优先）
-    if NIM_KEY:
-        models_to_try = [model] if model else NIM_MODELS
-        for m in models_to_try:
-            timeout = _request_timeout(deadline)
-            if timeout is None:
-                return None
-            try:
-                _write_stderr_line(f"  尝试 NIM: {m}")
-                return _try_nim(prompt, m, timeout=timeout)
-            except Exception as e:
-                _log_ai_failure("nim", m, NIM_ENDPOINT, 1, 1, e)
-
-    # 2) OpenRouter 免费模型轮询
-    if OR_KEY:
-        for m in OR_FREE_MODELS:
-            for attempt in range(retries):
-                timeout = _request_timeout(deadline)
-                if timeout is None:
-                    return None
-                try:
-                    _write_stderr_line(f"  尝试 OpenRouter: {m} (attempt {attempt+1})")
-                    return _try_or(prompt, m, timeout=timeout)
-                except Exception as e:
-                    _log_ai_failure("openrouter", m, OPENROUTER_ENDPOINT, attempt + 1, retries, e)
-                    if attempt + 1 < retries:
-                        backoff = 2 ** attempt
-                        remaining = _remaining_seconds(deadline)
-                        if remaining is not None and backoff >= remaining:
-                            return None
-                        time.sleep(backoff)
-
-    return None
+    return _try_free_route(prompt, deadline, request_context)
 
 
 def parse_ai_response(text, brand, soc, model_name):
@@ -292,13 +329,13 @@ def parse_ai_response(text, brand, soc, model_name):
 # ── 缓存 ──────────────────────────────────────────────
 def load_cache():
     if os.path.exists(CACHE_FILE):
-        with open(CACHE_FILE) as f:
+        with open(CACHE_FILE, encoding="utf-8") as f:
             return json.load(f)
     return {}
 
 
 def save_cache(cache):
-    with open(CACHE_FILE, "w") as f:
+    with open(CACHE_FILE, "w", encoding="utf-8") as f:
         json.dump(cache, f, ensure_ascii=False, indent=2)
     print(f"缓存已保存: {len(cache)} 条")
 
@@ -349,7 +386,16 @@ SOC/处理器：{soc}
 说明：[简短说明]"""
 
     print(f"  AI 查询: {brand} {soc} ({len(models)} 机型)...")
-    resp = ai_query(prompt, deadline=deadline)
+    resp = ai_query(
+        prompt,
+        deadline=deadline,
+        request_context={
+            "kind": "group",
+            "brand": brand,
+            "soc": soc,
+            "models": list(models),
+        },
+    )
     if not resp:
         return None
 
@@ -387,20 +433,170 @@ def verify_single_model(row, deadline=None):
 说明：[简短说明]"""
 
     print(f"  AI 查询单机型: {brand} {model[:40]}...")
-    resp = ai_query(prompt, deadline=deadline)
+    resp = ai_query(
+        prompt,
+        deadline=deadline,
+        request_context={
+            "kind": "single",
+            "brand": brand,
+            "soc": soc,
+            "model": model,
+        },
+    )
     if not resp:
         return None
     return resp
 
 
+def _route_snapshot():
+    with _route_status_lock:
+        return list(_route_statuses), [dict(item) for item in _plan_requests]
+
+
+def _write_plan_artifacts(plan_prompt_output=None, route_metadata_output=None, github_output=None):
+    statuses, requests = _route_snapshot()
+    requests = requests[:100]
+    request_json = json.dumps(requests, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    aggregate_id = hashlib.sha256(request_json.encode("utf-8")).hexdigest()[:16]
+    prompt = (
+        "你是手机 root/越狱数据库专家。只处理下面明确列出的请求，不调用工具，不修改文件。\n"
+        "请返回一个 JSON 对象：{\"request_id\":\"...\",\"prompt_sha256\":\"...\",\"responses\":["
+        "{\"request_id\":\"...\",\"response\":\"完整中文结论\"}]}。"
+        "每个 request_id 只能出现一次，必须覆盖全部请求；response 使用原查询要求的结论/方法/说明格式。\n\n"
+        "<REQUESTS>\n" + json.dumps(requests, ensure_ascii=False, indent=2) + "\n</REQUESTS>\n"
+    )
+    prompt_sha256 = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+    manifest = {
+        "version": "phone-plan-fallback-v1",
+        "request_id": aggregate_id,
+        "prompt_sha256": prompt_sha256,
+        "request_ids": [str(item.get("request_id")) for item in requests],
+        "requests": requests,
+    }
+    if plan_prompt_output:
+        path = Path(plan_prompt_output)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(prompt, encoding="utf-8")
+    metadata_status = "all_free_429" if requests else (statuses[-1] if statuses else "no_requests")
+    metadata = {
+        "version": 1,
+        "request_id": aggregate_id,
+        "prompt_sha256": prompt_sha256,
+        "status": metadata_status,
+        "paid_required": bool(requests),
+        "plan_request_count": len(requests),
+        "route_statuses": statuses,
+        "request_ids": manifest["request_ids"],
+    }
+    if route_metadata_output:
+        path = Path(route_metadata_output)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        path.with_name(path.stem + ".manifest.json").write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+    if github_output:
+        path = Path(github_output)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(f"free_status={metadata_status}\n")
+            handle.write(f"paid_required={'true' if requests else 'false'}\n")
+            handle.write(f"plan_request_count={len(requests)}\n")
+            handle.write(f"plan_request_id={aggregate_id}\n")
+    return manifest
+
+
+def _plan_status_from_group(text):
+    conclusion = ""
+    method = ""
+    for line in str(text).splitlines():
+        if line.startswith("结论：") or line.startswith("结论:"):
+            conclusion = line.split("：", 1)[-1].split(":", 1)[-1].strip()
+        elif line.startswith("方法：") or line.startswith("方法:"):
+            method = line.split("：", 1)[-1].split(":", 1)[-1].strip()
+    if not conclusion:
+        return "未知"
+    status = conclusion
+    if method and conclusion not in ("不可root", "不可越狱", "未知"):
+        status += f"（{method}）"
+    return status
+
+
+def apply_plan_response(data_file, response_file, manifest_file):
+    manifest = json.loads(Path(manifest_file).read_text(encoding="utf-8"))
+    envelope = json.loads(Path(response_file).read_text(encoding="utf-8"))
+    if envelope.get("request_id") != manifest.get("request_id"):
+        raise ValueError("Plan response request_id does not match the manifest")
+    if envelope.get("prompt_sha256") != manifest.get("prompt_sha256"):
+        raise ValueError("Plan response prompt_sha256 does not match the manifest")
+    responses = envelope.get("responses")
+    if not isinstance(responses, list):
+        raise ValueError("Plan response responses must be a list")
+    expected = set(manifest.get("request_ids") or [])
+    actual = [str(item.get("request_id") or "") for item in responses if isinstance(item, dict)]
+    if set(actual) != expected or len(actual) != len(set(actual)):
+        raise ValueError("Plan response does not cover exactly the pending requests")
+    by_id = {str(item["request_id"]): item for item in responses}
+    requests = {str(item["request_id"]): item for item in manifest.get("requests", [])}
+    rows = json.loads(Path(data_file).read_text(encoding="utf-8"))
+    cache = load_cache()
+    for request_id, request in requests.items():
+        response = by_id[request_id].get("response")
+        if not isinstance(response, str) or not response.strip():
+            raise ValueError(f"Plan response is empty for {request_id}")
+        context = request
+        if context.get("kind") == "group":
+            status = _plan_status_from_group(response)
+            model_names = set(context.get("models") or [])
+            for row in rows:
+                name = (row.get("型号", "") or row.get("name", "")).strip()
+                if (
+                    name in model_names
+                    and row.get("品牌", "") == context.get("brand")
+                    and extract_soc(row) == context.get("soc")
+                ):
+                    row["root或越狱"] = status
+                    cache[name] = status
+        elif context.get("kind") == "single":
+            name = str(context.get("model") or "").strip()
+            status = parse_ai_response(response, context.get("brand"), context.get("soc"), name)
+            for row in rows:
+                row_name = (row.get("型号", "") or row.get("name", "")).strip()
+                if row_name == name and row.get("品牌", "") == context.get("brand"):
+                    row["root或越狱"] = status
+                    cache[name] = status
+    Path(data_file).write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
+    save_cache(cache)
+    print(f"Plan Agent fallback applied: {len(responses)} requests")
+
+
 # ── 主流程 ──────────────────────────────────────────────
-def main():
+def main(
+    data_file=None,
+    route_metadata_output=None,
+    plan_prompt_output=None,
+    github_output=None,
+    agent_response_input=None,
+    plan_manifest_input=None,
+):
+    global DATA_FILE, OUTPUT_FILE
+    if data_file:
+        DATA_FILE = str(data_file)
+        OUTPUT_FILE = str(data_file)
+    if agent_response_input:
+        if not plan_manifest_input:
+            raise ValueError("Plan response requires a manifest")
+        apply_plan_response(DATA_FILE, agent_response_input, plan_manifest_input)
+        return
+    with _route_status_lock:
+        _route_statuses.clear()
+        _plan_requests.clear()
     print("=== AI root/越狱 验证 ===")
     print(f"时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"数据: {DATA_FILE}")
 
     # 加载数据
-    with open(DATA_FILE) as f:
+    with open(DATA_FILE, encoding="utf-8") as f:
         rows = json.load(f)
     print(f"总机型: {len(rows)}")
 
@@ -569,8 +765,10 @@ def main():
         row.pop("root方案", None)
         row.pop("风险等级", None)
 
+    _write_plan_artifacts(plan_prompt_output, route_metadata_output, github_output)
+
     # 保存
-    with open(OUTPUT_FILE, "w") as f:
+    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         json.dump(rows, f, ensure_ascii=False, indent=2)
     print(f"\n✅ 数据已保存: {OUTPUT_FILE}")
 
@@ -580,4 +778,21 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="AI phone root/jailbreak verification")
+    parser.add_argument("data_file", nargs="?", default=DATA_FILE)
+    parser.add_argument("--route-metadata-output")
+    parser.add_argument("--plan-prompt-output")
+    parser.add_argument("--github-output")
+    parser.add_argument("--agent-response-input")
+    parser.add_argument("--plan-manifest-input")
+    cli_args = parser.parse_args()
+    main(
+        data_file=cli_args.data_file,
+        route_metadata_output=cli_args.route_metadata_output,
+        plan_prompt_output=cli_args.plan_prompt_output,
+        github_output=cli_args.github_output,
+        agent_response_input=cli_args.agent_response_input,
+        plan_manifest_input=cli_args.plan_manifest_input,
+    )
