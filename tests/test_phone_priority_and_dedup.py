@@ -429,7 +429,7 @@ class PhonePriorityAndDedupTests(unittest.TestCase):
                 test_progress["current_brand"],
                 test_progress["current_page"],
             ),
-            (0, "oppo", 1),
+            (1, "", 1),
         )
         self.assertIn("good-id", test_progress["crawled_phones"])
         self.assertNotIn("retry-id", test_progress["skipped_phones"])
@@ -653,10 +653,9 @@ class PhonePriorityAndDedupTests(unittest.TestCase):
                                                             "get_session",
                                                             return_value=object(),
                                                         ):
-                                                            with self.assertRaisesRegex(
-                                                                SystemExit, "10"
-                                                            ):
-                                                                pconline.step1_crawl_list_and_detail()
+                                                            # 扫描完成(scan_truncated=False)且0成功：不再 exit(10)，
+                                                            # 正常完成以产出既有缓存数据
+                                                            pconline.step1_crawl_list_and_detail()
 
             self.assertFalse((raw_dir / "123.json").exists())
 
@@ -796,6 +795,72 @@ class PhonePriorityAndDedupTests(unittest.TestCase):
                                             pconline,
                                             "_scan_all_models",
                                             return_value=(candidates, False, 1, 1),
+                                        ):
+                                            with mock.patch.object(
+                                                pconline,
+                                                "_get_existing_phone_ids",
+                                                return_value=set(),
+                                            ):
+                                                with mock.patch.object(
+                                                    pconline,
+                                                    "crawl_detail_page",
+                                                    return_value=None,
+                                                ):
+                                                    with mock.patch.object(
+                                                        pconline,
+                                                        "crawl_param_page",
+                                                        return_value=None,
+                                                    ):
+                                                        with mock.patch.object(
+                                                            pconline,
+                                                            "get_session",
+                                                            return_value=object(),
+                                                        ):
+                                                            # 扫描完成(scan_truncated=False)且0成功：不再 exit(10)，
+                                                            # 正常完成以产出既有缓存数据
+                                                            pconline.step1_crawl_list_and_detail()
+
+
+    def test_pconline_zero_success_scan_truncated_still_exits_10(self):
+        """扫描未完成(scan_truncated=True)且本次 0 成功时仍 exit(10) 保留游标，
+        与扫描完成+0成功正常产出的语义形成对比。"""
+        candidates = [
+            {
+                "id": "retry-id",
+                "name": "待重试手机",
+                "brand": "oppo",
+                "url": "https://example.invalid/retry-id",
+                "source": "太平洋电脑网",
+            },
+        ]
+        test_progress = {
+            "crawled_phones": [],
+            "processed_phones": [],
+            "skipped_phones": {},
+            "total_phones": 0,
+            "current_brand_index": 0,
+            "current_brand": "oppo",
+            "current_page": 1,
+            "retry_counts": {},
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            raw_dir = Path(tmp) / "json"
+            raw_dir.mkdir()
+            progress_path = Path(tmp) / "progress.json"
+            with mock.patch.object(pconline, "progress", test_progress):
+                with mock.patch.object(pconline, "progress_file", str(progress_path)):
+                    with mock.patch.object(pconline, "pconline_json_dir", str(raw_dir)):
+                        with mock.patch.object(pconline, "INCREMENTAL_MODE", True):
+                            with mock.patch.object(pconline, "AUTO_MODE", True):
+                                with mock.patch.object(pconline, "MAX_TIME_PER_STEP", 0):
+                                    with mock.patch.object(
+                                        pconline, "MAX_PHONES_PER_RUN", 0
+                                    ):
+                                        with mock.patch.object(
+                                            pconline,
+                                            "_scan_all_models",
+                                            return_value=(candidates, True, 1, 1),
                                         ):
                                             with mock.patch.object(
                                                 pconline,

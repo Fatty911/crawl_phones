@@ -836,12 +836,15 @@ def step1_crawl_list_and_detail():
 
         logger.info(f"全量扫描完成：共 {len(all_phones)} 个型号，新增 {len(new_phones)} 个，已有 {len(all_phones) - len(new_phones)} 个")
 
+        # 无论是否有新增，立即保存扫描游标：避免详情爬取失败 exit(10) 后
+        # 下次运行从旧位置重扫（否则永远扫不完所有品牌）。
+        set_progress_cursor(next_brand_index, next_page)
+        progress['scan_complete'] = not scan_truncated
+        progress['total_phones'] = len(_get_cached_phone_ids())
+        save_progress()
+
         if not new_phones:
-            set_progress_cursor(next_brand_index, next_page)
-            progress['scan_complete'] = not scan_truncated
             logger.info("增量模式：未发现新增型号，无需爬取详情")
-            progress['total_phones'] = len(_get_cached_phone_ids())
-            save_progress()
             if scan_truncated and AUTO_MODE:
                 logger.info('增量扫描未完成，等待下次继续扫描')
                 sys.exit(10)
@@ -983,26 +986,26 @@ def step1_crawl_list_and_detail():
 
         progress['total_phones'] = len(_get_cached_phone_ids())
         if retryable_failure:
-            # 有待重试型号：只要本次有成功新增，就正常完成并产出数据（不阻塞合并），
-            # 仅当本次 0 成功时才 exit(10) 保留游标等待下次继续重试。
-            if phones_crawled > 0:
-                progress['scan_complete'] = False
-                save_progress()
-                logger.info(
-                    f"存在待重试详情（{retryable_failure}），但本次成功新增 {phones_crawled} 个，"
-                    "正常完成本轮并产出数据；待重试型号将在后续运行继续尝试"
-                )
-                return
+            # 有待重试型号：只要本次有成功新增或扫描已完成，就正常完成并产出数据（不阻塞合并）。
+            # 仅当本次 0 成功且扫描未完成（还有品牌没扫）时才 exit(10) 保留游标等待下次继续。
             progress['scan_complete'] = False
             save_progress()
-            logger.info("存在待重试详情且本次无新增，保留原扫描游标并等待下次继续")
-            if AUTO_MODE:
-                sys.exit(10)
+            if phones_crawled == 0 and scan_truncated:
+                logger.info("存在待重试详情且本次无新增、扫描未完成，保留原扫描游标并等待下次继续")
+                if AUTO_MODE:
+                    sys.exit(10)
+                return
+            if phones_crawled > 0:
+                progress_reason = "本次成功新增 " + str(phones_crawled) + " 个"
+            else:
+                progress_reason = "扫描已完成"
+            logger.info(
+                "存在待重试详情，但" + progress_reason + "，"
+                "正常完成本轮并产出数据；待重试型号将在后续运行继续尝试"
+            )
             return
-        set_progress_cursor(next_brand_index, next_page)
-        progress['scan_complete'] = not scan_truncated
-        save_progress()
         if scan_truncated:
+            # 无待重试但扫描未完成：本次未扫完所有品牌，保留游标下次继续
             logger.info("增量扫描未完成，本次已处理当前扫描片段，等待下次继续")
             if AUTO_MODE:
                 sys.exit(10)
