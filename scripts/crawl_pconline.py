@@ -983,9 +983,19 @@ def step1_crawl_list_and_detail():
 
         progress['total_phones'] = len(_get_cached_phone_ids())
         if retryable_failure:
+            # 有待重试型号：只要本次有成功新增，就正常完成并产出数据（不阻塞合并），
+            # 仅当本次 0 成功时才 exit(10) 保留游标等待下次继续重试。
+            if phones_crawled > 0:
+                progress['scan_complete'] = False
+                save_progress()
+                logger.info(
+                    f"存在待重试详情（{retryable_failure}），但本次成功新增 {phones_crawled} 个，"
+                    "正常完成本轮并产出数据；待重试型号将在后续运行继续尝试"
+                )
+                return
             progress['scan_complete'] = False
             save_progress()
-            logger.info("存在待重试详情，保留原扫描游标并等待下次继续")
+            logger.info("存在待重试详情且本次无新增，保留原扫描游标并等待下次继续")
             if AUTO_MODE:
                 sys.exit(10)
             return

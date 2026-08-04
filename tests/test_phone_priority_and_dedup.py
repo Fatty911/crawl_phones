@@ -416,12 +416,12 @@ class PhonePriorityAndDedupTests(unittest.TestCase):
                                                         "get_session",
                                                         return_value=object(),
                                                     ):
-                                                        with self.assertRaisesRegex(
-                                                            SystemExit, "10"
-                                                        ):
-                                                            pconline.step1_crawl_list_and_detail()
+                                                        # 新语义：待重试存在但本次成功>0 时正常完成，
+                                                        # 不再 SystemExit(10)，scan_complete 保持 False
+                                                        pconline.step1_crawl_list_and_detail()
 
             self.assertTrue((raw_dir / "good-id.json").is_file())
+            self.assertFalse(test_progress["scan_complete"])
 
         self.assertEqual(
             (
@@ -756,6 +756,71 @@ class PhonePriorityAndDedupTests(unittest.TestCase):
         self.assertEqual(merged, [candidate])
         self.assertEqual(restored, [])
         preserve.verify_superset([unique], merged)
+
+    def test_pconline_retryable_failure_zero_success_still_exits_10(self):
+        """待重试存在且本次 0 成功时仍 exit(10) 保留游标。"""
+        candidates = [
+            {
+                "id": "retry-id",
+                "name": "待重试手机",
+                "brand": "oppo",
+                "url": "https://example.invalid/retry-id",
+                "source": "太平洋电脑网",
+            },
+        ]
+        test_progress = {
+            "crawled_phones": [],
+            "processed_phones": [],
+            "skipped_phones": {},
+            "total_phones": 0,
+            "current_brand_index": 0,
+            "current_brand": "oppo",
+            "current_page": 1,
+            "retry_counts": {},
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            raw_dir = Path(tmp) / "json"
+            raw_dir.mkdir()
+            progress_path = Path(tmp) / "progress.json"
+            with mock.patch.object(pconline, "progress", test_progress):
+                with mock.patch.object(pconline, "progress_file", str(progress_path)):
+                    with mock.patch.object(pconline, "pconline_json_dir", str(raw_dir)):
+                        with mock.patch.object(pconline, "INCREMENTAL_MODE", True):
+                            with mock.patch.object(pconline, "AUTO_MODE", True):
+                                with mock.patch.object(pconline, "MAX_TIME_PER_STEP", 0):
+                                    with mock.patch.object(
+                                        pconline, "MAX_PHONES_PER_RUN", 0
+                                    ):
+                                        with mock.patch.object(
+                                            pconline,
+                                            "_scan_all_models",
+                                            return_value=(candidates, False, 1, 1),
+                                        ):
+                                            with mock.patch.object(
+                                                pconline,
+                                                "_get_existing_phone_ids",
+                                                return_value=set(),
+                                            ):
+                                                with mock.patch.object(
+                                                    pconline,
+                                                    "crawl_detail_page",
+                                                    return_value=None,
+                                                ):
+                                                    with mock.patch.object(
+                                                        pconline,
+                                                        "crawl_param_page",
+                                                        return_value=None,
+                                                    ):
+                                                        with mock.patch.object(
+                                                            pconline,
+                                                            "get_session",
+                                                            return_value=object(),
+                                                        ):
+                                                            with self.assertRaisesRegex(
+                                                                SystemExit, "10"
+                                                            ):
+                                                                pconline.step1_crawl_list_and_detail()
 
 
 if __name__ == "__main__":

@@ -277,8 +277,13 @@ jobs:
       - name: Mark crawl complete and commit
         if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true' && steps.step1.outputs.complete == 'true' && github.event.inputs.debug_mode != 'true'
         run: |
-          touch "$PCONLINE_DONE_MARKER"
-          echo "爬取完成（扫描所有品牌），标记半月周期"
+          # 仅当扫描完成（scan_complete=true）才标记半月周期；有待重试时数据照常产出但不打 .done
+          if python3 -c "import json,sys; p=json.load(open('crawl_state/pconline/progress.json')); sys.exit(0 if p.get('scan_complete') else 1)"; then
+            touch "$PCONLINE_DONE_MARKER"
+            echo "爬取完成（扫描所有品牌），标记半月周期"
+          else
+            echo "仍有待重试型号，数据已产出但不标记半月周期（后续运行继续消化）"
+          fi
           git config user.name "Fatty911"
           git config user.email "xuerui911@gmail.com"
           git add crawl_state/
