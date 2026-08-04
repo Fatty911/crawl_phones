@@ -356,6 +356,54 @@ Pages URL：{pages_url}
 """
 
 
+def _call_llm_free_first(prompt: str) -> tuple[str, str, str]:
+    """Route the prompt through free endpoints first; fall back to NIM.
+
+    Returns (content, provider, model).  Raises RepairInputError when every
+    configured endpoint failed (free chain and NIM direct).
+    """
+    try:
+        from free_first_router import route
+    except Exception as exc:  # pragma: no cover - import guard
+        print(f"free_first_router unavailable ({type(exc).__name__}), fall back to NIM direct")
+        return _call_nim(prompt), "nvidia-nim-direct", os.environ.get("NVIDIA_NIM_MODEL", "deepseek-ai/deepseek-v4-flash")
+
+    import tempfile
+    tmp_dir = tempfile.mkdtemp(prefix="single-source-llm-")
+    try:
+        out_path = os.path.join(tmp_dir, "response.txt")
+        meta_path = os.path.join(tmp_dir, "metadata.json")
+        exit_code = route(
+            prompt,
+            output=Path(out_path),
+            metadata_output=Path(meta_path),
+            github_output=None,
+            timeout=240.0,
+            max_tokens=8000,
+        )
+        if exit_code == 0 and os.path.isfile(out_path):
+            with open(out_path, "r", encoding="utf-8") as handle:
+                content = handle.read().strip()
+            provider = ""
+            model = ""
+            if os.path.isfile(meta_path):
+                try:
+                    with open(meta_path, "r", encoding="utf-8") as handle:
+                        meta = json.load(handle)
+                    provider = str(meta.get("provider") or "")
+                    model = str(meta.get("model") or "")
+                except (OSError, ValueError, json.JSONDecodeError):
+                    pass
+            if content:
+                return content, provider, model
+            print("free_first_router returned empty content; fall back to NIM direct")
+        else:
+            print(f"free_first_router failed (exit={exit_code}); fall back to NIM direct")
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+    return _call_nim(prompt), "nvidia-nim-direct", os.environ.get("NVIDIA_NIM_MODEL", "deepseek-ai/deepseek-v4-flash")
+
+
 def _call_nim(prompt: str) -> str:
     key = os.environ.get("NVIDIA_NIM_API_KEY", "").strip()
     if not key:
@@ -647,7 +695,9 @@ def propose(args: argparse.Namespace) -> int:
             return 0
 
         prompt = _build_prompt(report, args.repo_kind, args.base_sha, args.pages_url)
-        response = _json_response(_call_nim(prompt))
+        raw_response, llm_provider, llm_model = _call_llm_free_first(prompt)
+        response = _json_response(raw_response)
+        result["model"] = f"{llm_provider}/{llm_model}" if llm_provider else (llm_model or result.get("model", ""))
         required_fields = {"should_fix", "confidence", "root_cause", "evidence", "analysis", "patch"}
         if not required_fields.issubset(response):
             raise RepairInputError("model response is missing required fields")

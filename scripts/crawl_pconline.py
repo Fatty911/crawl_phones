@@ -119,12 +119,42 @@ BRAND_PATTERNS = [
     ('诺基亚', ['nokia', '诺基亚']),
     ('Nothing', ['nothing']),
     ('传音', ['tecno', 'itel', 'infinix']),
+    ('TCL', ['tcl', 'TCL']),
+    ('多亲', ['qin', '多亲']),
+    ('遨游', ['aoro', '遨游']),
+    ('酷派', ['coolpad', '酷派']),
+    ('金立', ['gionee', '金立']),
+    ('飞利浦', ['philips', '飞利浦']),
+    ('天语', ['k_touch', '天语']),
+    ('乐视', ['letv', '乐视']),
+    ('纽曼', ['newman', '纽曼']),
+    ('守护宝', ['shouhubao', '守护宝']),
+    ('极星', ['polestar', '极星']),
+    ('水月雨', ['shuiyueyu', '水月雨']),
+    ('VRKISS', ['vrkiss', 'VRKISS']),
+    ('AGM', ['agm', 'AGM']),
+    ('HUGO', ['hugo', 'HUGO']),
+    ('OUKITEL', ['oukitel', 'OUKITEL']),
+    ('WIKO', ['wiko', 'WIKO']),
+    ('华硕', ['asus', '华硕']),
+    ('蔚来', ['nio', '蔚来']),
+    ('中国电信', ['zhongguodianxin', '麦芒']),
+    ('中国联通', ['联通']),
+    ('中邮Hi nova', ['hinova', '中邮Hi nova']),
 ]
 
 PCONLINE_BRAND_MAP = {
     'apple': '苹果', 'bubugao': '步步高', 'oppo': 'OPPO', 'honor': '荣耀',
     'miui': '小米', 'redmi': '红米', 'oneplus': '一加', 'realme': '真我',
     'iqoo': 'iQOO', 'samsung': '三星', 'motorola': '摩托罗拉', 'nubia': '努比亚',
+    'huawei': '华为', 'zte': '中兴', 'lenovo': '联想', 'meizu': '魅族',
+    'nokia': '诺基亚', 'sony': '索尼', 'google': '谷歌', 'asus': '华硕',
+    'coolpad': '酷派', 'philips': '飞利浦', 'oukitel': 'OUKITEL',
+    'gionee': '金立', 'tcl': 'TCL', 'k_touch': '天语', 'letv': '乐视',
+    'newman': '纽曼', 'nio': '蔚来', 'lt': '中国联通', 'aoro': '遨游',
+    'hugo': 'HUGO', 'agm': 'AGM', 'shouhubao': '守护宝', 'qin': '多亲',
+    'zhongguodianxin': '中国电信', 'polestar': '极星', 'shuiyueyu': '水月雨',
+    'vrkiss': 'VRKISS', 'wiko': 'WIKO', 'hinova': '中邮Hi nova',
 }
 
 def derive_brand_from_name(name):
@@ -203,6 +233,8 @@ if os.path.exists(progress_file) and not args.restart:
         progress['processed_phones'] = list(progress.get('crawled_phones', []))
     if 'skipped_phones' not in progress:
         progress['skipped_phones'] = {}
+    if 'retry_counts' not in progress:
+        progress['retry_counts'] = {}
     logger.info('从上次进度继续（使用 --restart 可重新开始）')
 else:
     progress = {
@@ -218,12 +250,23 @@ else:
         'previous_list_brand': '',
         'previous_list_page': 0,
         'previous_list_ids': [],
-        'list_page_fingerprints': {}
+        'list_page_fingerprints': {},
+        'retry_counts': {}
     }
     logger.info('初始化新进度')
 
 CURRENT_YEAR = 2026
 MIN_YEAR = 2021
+# 同一型号详情/参数页连续失败的最大重试次数，超过后永久跳过，避免死循环
+MAX_DETAIL_RETRIES = 3
+
+
+def _bump_retry_count(phone_id: str) -> int:
+    counts = progress.setdefault('retry_counts', {})
+    counts[phone_id] = int(counts.get(phone_id, 0)) + 1
+    # 立即持久化：任何 retryable_failure 分支即使提前退出也不丢计数
+    save_progress()
+    return counts[phone_id]
 CRAWL_MIN_DELAY_SECONDS = float(os.getenv("CRAWL_MIN_DELAY_SECONDS", "8"))
 CRAWL_MAX_DELAY_SECONDS = float(os.getenv("CRAWL_MAX_DELAY_SECONDS", "20"))
 REQUEST_TIMEOUT = 15
@@ -646,11 +689,20 @@ def _remember_list_page(brand: str, page: int, phones: List[Dict]) -> None:
 
 
 def _get_existing_phone_ids() -> set:
-    """Return IDs backed by raw JSON or a verified pre-MIN_YEAR result."""
+    """Return IDs backed by raw JSON or a verified skipped result.
+
+    Only skip reasons that are *final* count as existing: verified old-year
+    records, confirmed no-release-date pages, and retry-exhausted phones.
+    Transient failures (e.g. no_release_year from a network error) are NOT
+    treated as existing so the next run retries them.
+    """
     existing = _get_cached_phone_ids()
     for phone_id, reason in progress.get('skipped_phones', {}).items():
-        match = re.fullmatch(r'year:(\d{4})', str(reason))
+        reason_text = str(reason)
+        match = re.fullmatch(r'year:(\d{4})', reason_text)
         if match and int(match.group(1)) < MIN_YEAR:
+            existing.add(str(phone_id))
+        elif reason_text in ('nodate', 'retry-exhausted'):
             existing.add(str(phone_id))
     return existing
 
@@ -821,73 +873,113 @@ def step1_crawl_list_and_detail():
                 return
 
             phone_id = phone['id']
+            # 详情页被反爬(302/503)时降级参数页：参数页 200 且字段完整
             detail = crawl_detail_page(session, phone_id, phone.get('brand', ''))
+            params_loaded = False
             if detail:
                 phone.update(detail)
-                params_loaded = False
+            else:
+                logger.warning(f"✗ 详情页不可用，降级参数页: {phone.get('name', phone.get('型号', '未知'))}")
 
-                release_year = extract_release_year(phone)
-                if not release_year:
+            release_year = extract_release_year(phone)
+            param_fetch_failed = False
+            if not release_year:
+                params = crawl_param_page(session, phone_id, phone.get('brand', ''))
+                params_loaded = True
+                if params:
+                    phone.update(params)
+                    release_year = extract_release_year(phone)
+                else:
+                    param_fetch_failed = True
+
+            if release_year and release_year >= MIN_YEAR:
+                if '处理器' not in phone:
                     params = crawl_param_page(session, phone_id, phone.get('brand', ''))
                     params_loaded = True
                     if params:
                         phone.update(params)
-                        release_year = extract_release_year(phone)
 
-                if release_year and release_year >= MIN_YEAR:
-                    if '处理器' not in phone:
-                        params = crawl_param_page(session, phone_id, phone.get('brand', ''))
-                        params_loaded = True
-                        if params:
-                            phone.update(params)
+                # 字段标准化：将原始字段名映射为统一标准名
+                phone = normalize_phone_fields(phone)
 
-                    # 字段标准化：将原始字段名映射为统一标准名
-                    phone = normalize_phone_fields(phone)
-
-                    # 从型号名推导品牌（优先使用URL brand的中文翻译）
-                    if not phone.get('品牌'):
-                        url_brand = phone.get('brand', '')
-                        if url_brand and url_brand in PCONLINE_BRAND_MAP:
-                            phone['品牌'] = PCONLINE_BRAND_MAP[url_brand]
-                        else:
-                            phone['品牌'] = derive_brand_from_name(phone.get('型号', phone.get('name', '')))
-
-                    if (
-                        not is_semantically_valid_record(phone, phone_id)
-                        and not params_loaded
-                    ):
-                        params = crawl_param_page(
-                            session, phone_id, phone.get('brand', '')
+                # 品牌：优先 URL brand 中文翻译（已补全 41 品牌），其次型号名推导
+                if not phone.get('品牌'):
+                    url_brand = phone.get('brand', '')
+                    if url_brand and url_brand in PCONLINE_BRAND_MAP:
+                        phone['品牌'] = PCONLINE_BRAND_MAP[url_brand]
+                    else:
+                        phone['品牌'] = derive_brand_from_name(
+                            phone.get('型号', phone.get('name', ''))
                         )
-                        if params:
-                            phone.update(params)
-                            phone = normalize_phone_fields(phone)
-                    if not is_semantically_valid_record(phone, phone_id):
+
+                if (
+                    not is_semantically_valid_record(phone, phone_id)
+                    and not params_loaded
+                ):
+                    params = crawl_param_page(
+                        session, phone_id, phone.get('brand', '')
+                    )
+                    if params:
+                        phone.update(params)
+                        phone = normalize_phone_fields(phone)
+                        if not phone.get('品牌'):
+                            url_brand = phone.get('brand', '')
+                            if url_brand and url_brand in PCONLINE_BRAND_MAP:
+                                phone['品牌'] = PCONLINE_BRAND_MAP[url_brand]
+                            else:
+                                phone['品牌'] = derive_brand_from_name(
+                                    phone.get('型号', phone.get('name', ''))
+                                )
+                if not is_semantically_valid_record(phone, phone_id):
+                    if _bump_retry_count(phone_id) >= MAX_DETAIL_RETRIES:
+                        mark_processed(phone_id, 'retry-exhausted')
+                        progress.get('retry_counts', {}).pop(phone_id, None)
+                        save_progress()
+                        logger.info(
+                            f"跳过(重试{MAX_DETAIL_RETRIES}次仍无效): {phone.get('型号', phone.get('name', '未知'))} "
+                            "- 详情字段不足以形成有效原始缓存"
+                        )
+                    else:
                         retryable_failure = True
                         logger.info(
                             f"待重试: {phone.get('型号', phone.get('name', '未知'))} "
                             "- 详情字段不足以形成有效原始缓存"
                         )
-                        continue
-                    _write_phone_cache(phone_id, phone)
+                    continue
+                _write_phone_cache(phone_id, phone)
 
-                    phones_crawled += 1
-                    crawled = progress.setdefault('crawled_phones', [])
-                    if phone_id not in crawled:
-                        crawled.append(phone_id)
-                    mark_processed(phone_id)
-                    # 实时持久化：每成功爬取一个立即保存进度
-                    save_progress()
-                    logger.info(f"✓ 保存: {phone.get('name', phone.get('型号', '未知'))} ({release_year}年) - 共{phones_crawled}个")
-                elif release_year:
-                    mark_processed(phone_id, f"year:{release_year}")
-                    logger.info(f"跳过: {phone.get('name', phone.get('型号', '未知'))} ({release_year}年) - 不在近五年范围内")
-                else:
-                    retryable_failure = True
-                    logger.info(f"待重试: {phone.get('name', phone.get('型号', '未知'))} - 无法获取发布年份")
+                phones_crawled += 1
+                crawled = progress.setdefault('crawled_phones', [])
+                if phone_id not in crawled:
+                    crawled.append(phone_id)
+                mark_processed(phone_id)
+                progress.get('retry_counts', {}).pop(phone_id, None)
+                # 实时持久化：每成功爬取一个立即保存进度
+                save_progress()
+                logger.info(f"✓ 保存: {phone.get('name', phone.get('型号', '未知'))} ({release_year}年) - 共{phones_crawled}个")
+            elif release_year:
+                mark_processed(phone_id, f"year:{release_year}")
+                logger.info(f"跳过: {phone.get('name', phone.get('型号', '未知'))} ({release_year}年) - 不在近五年范围内")
             else:
-                retryable_failure = True
-                logger.warning(f"✗ 详情页爬取失败: {phone.get('name', phone.get('型号', '未知'))}")
+                if param_fetch_failed:
+                    # 参数页请求也失败（网络/反爬）→ 有限重试，达到上限后永久跳过
+                    if _bump_retry_count(phone_id) >= MAX_DETAIL_RETRIES:
+                        mark_processed(phone_id, 'retry-exhausted')
+                        progress.get('retry_counts', {}).pop(phone_id, None)
+                        save_progress()
+                        logger.info(
+                            f"跳过(重试{MAX_DETAIL_RETRIES}次仍失败): {phone.get('name', phone.get('型号', '未知'))} "
+                            "- 无法获取发布年份"
+                        )
+                    else:
+                        retryable_failure = True
+                        logger.info(f"待重试: {phone.get('name', phone.get('型号', '未知'))} - 无法获取发布年份")
+                else:
+                    # 参数页成功但确实无发布年份：永久跳过（避免每次运行重复爬取同一批无年份型号）
+                    mark_processed(phone_id, 'nodate')
+                    progress.get('retry_counts', {}).pop(phone_id, None)
+                    save_progress()
+                    logger.info(f"跳过: {phone.get('name', phone.get('型号', '未知'))} - 参数页无发布年份（永久跳过）")
 
         progress['total_phones'] = len(_get_cached_phone_ids())
         if retryable_failure:
@@ -1030,76 +1122,113 @@ def step1_crawl_list_and_detail():
                     continue
 
                 detail = crawl_detail_page(session, phone_id, phone.get('brand', ''))
+                params_loaded = False
                 if detail:
                     phone.update(detail)
-                    params_loaded = False
-                    release_year = extract_release_year(phone)
-                    if not release_year:
+                else:
+                    logger.warning(f"✗ 详情页不可用，降级参数页: {phone.get('name', phone.get('型号', '未知'))}")
+                release_year = extract_release_year(phone)
+                param_fetch_failed = False
+                if not release_year:
+                    params = crawl_param_page(
+                        session, phone_id, phone.get('brand', '')
+                    )
+                    params_loaded = True
+                    if params:
+                        phone.update(params)
+                        release_year = extract_release_year(phone)
+                    else:
+                        param_fetch_failed = True
+
+                if release_year and release_year >= MIN_YEAR:
+                    if '处理器' not in phone:
                         params = crawl_param_page(
                             session, phone_id, phone.get('brand', '')
                         )
                         params_loaded = True
                         if params:
                             phone.update(params)
-                            release_year = extract_release_year(phone)
-
-                    if release_year and release_year >= MIN_YEAR:
-                        if '处理器' not in phone:
-                            params = crawl_param_page(
-                                session, phone_id, phone.get('brand', '')
+                    phone = normalize_phone_fields(phone)
+                    if not phone.get('品牌'):
+                        url_brand = phone.get('brand', '')
+                        if url_brand and url_brand in PCONLINE_BRAND_MAP:
+                            phone['品牌'] = PCONLINE_BRAND_MAP[url_brand]
+                        else:
+                            phone['品牌'] = derive_brand_from_name(
+                                phone.get('型号', phone.get('name', ''))
                             )
-                            params_loaded = True
-                            if params:
-                                phone.update(params)
-                        phone = normalize_phone_fields(phone)
-                        if not phone.get('品牌'):
-                            url_brand = phone.get('brand', '')
-                            if url_brand and url_brand in PCONLINE_BRAND_MAP:
-                                phone['品牌'] = PCONLINE_BRAND_MAP[url_brand]
-                            else:
-                                phone['品牌'] = derive_brand_from_name(
-                                    phone.get('型号', phone.get('name', ''))
-                                )
-                        if (
-                            not is_semantically_valid_record(phone, phone_id)
-                            and not params_loaded
-                        ):
-                            params = crawl_param_page(
-                                session, phone_id, phone.get('brand', '')
+                    if (
+                        not is_semantically_valid_record(phone, phone_id)
+                        and not params_loaded
+                    ):
+                        params = crawl_param_page(
+                            session, phone_id, phone.get('brand', '')
+                        )
+                        if params:
+                            phone.update(params)
+                            phone = normalize_phone_fields(phone)
+                            if not phone.get('品牌'):
+                                url_brand = phone.get('brand', '')
+                                if url_brand and url_brand in PCONLINE_BRAND_MAP:
+                                    phone['品牌'] = PCONLINE_BRAND_MAP[url_brand]
+                                else:
+                                    phone['品牌'] = derive_brand_from_name(
+                                        phone.get('型号', phone.get('name', ''))
+                                    )
+                    if not is_semantically_valid_record(phone, phone_id):
+                        if _bump_retry_count(phone_id) >= MAX_DETAIL_RETRIES:
+                            mark_processed(phone_id, 'retry-exhausted')
+                            progress.get('retry_counts', {}).pop(phone_id, None)
+                            save_progress()
+                            existing_ids.add(phone_id)
+                            logger.info(
+                                f"跳过(重试{MAX_DETAIL_RETRIES}次仍无效): {phone.get('型号', phone.get('name', '未知'))} "
+                                "- 详情字段不足以形成有效原始缓存"
                             )
-                            if params:
-                                phone.update(params)
-                                phone = normalize_phone_fields(phone)
-                        if not is_semantically_valid_record(phone, phone_id):
+                        else:
                             retry_cursor = retry_cursor or (bi, page)
                             set_progress_cursor(*retry_cursor)
                             logger.info(
                                 f"待重试: {phone.get('型号', phone.get('name', '未知'))} "
                                 "- 详情字段不足以形成有效原始缓存"
                             )
-                            continue
-                        _write_phone_cache(phone_id, phone)
-                        phones_crawled += 1
-                        crawled = progress.setdefault('crawled_phones', [])
-                        if phone_id not in crawled:
-                            crawled.append(phone_id)
-                        mark_processed(phone_id)
-                        existing_ids.add(phone_id)
-                        save_checkpoint(bi, page)
-                        logger.info(f"✓ 保存: {phone.get('name', phone.get('型号', '未知'))} ({release_year}年) - 共{phones_crawled}个")
-                    elif release_year:
-                        mark_processed(phone_id, f"year:{release_year}")
-                        existing_ids.add(phone_id)
-                        save_checkpoint(bi, page)
-                        logger.info(f"跳过: {phone.get('name', phone.get('型号', '未知'))} ({release_year}年) - 不在近五年范围内")
-                    else:
-                        retry_cursor = retry_cursor or (bi, page)
-                        set_progress_cursor(*retry_cursor)
-                        logger.info(f"待重试: {phone.get('name', phone.get('型号', '未知'))} - 无法获取发布年份")
+                        continue
+                    _write_phone_cache(phone_id, phone)
+                    phones_crawled += 1
+                    crawled = progress.setdefault('crawled_phones', [])
+                    if phone_id not in crawled:
+                        crawled.append(phone_id)
+                    mark_processed(phone_id)
+                    progress.get('retry_counts', {}).pop(phone_id, None)
+                    existing_ids.add(phone_id)
+                    save_checkpoint(bi, page)
+                    logger.info(f"✓ 保存: {phone.get('name', phone.get('型号', '未知'))} ({release_year}年) - 共{phones_crawled}个")
+                elif release_year:
+                    mark_processed(phone_id, f"year:{release_year}")
+                    existing_ids.add(phone_id)
+                    save_checkpoint(bi, page)
+                    logger.info(f"跳过: {phone.get('name', phone.get('型号', '未知'))} ({release_year}年) - 不在近五年范围内")
                 else:
-                    retry_cursor = retry_cursor or (bi, page)
-                    set_progress_cursor(*retry_cursor)
-                    logger.warning(f"✗ 详情页爬取失败: {phone.get('name', phone.get('型号', '未知'))}")
+                    if param_fetch_failed:
+                        if _bump_retry_count(phone_id) >= MAX_DETAIL_RETRIES:
+                            mark_processed(phone_id, 'retry-exhausted')
+                            progress.get('retry_counts', {}).pop(phone_id, None)
+                            existing_ids.add(phone_id)
+                            save_checkpoint(bi, page)
+                            logger.info(
+                                f"跳过(重试{MAX_DETAIL_RETRIES}次仍失败): {phone.get('name', phone.get('型号', '未知'))} "
+                                "- 无法获取发布年份"
+                            )
+                        else:
+                            retry_cursor = retry_cursor or (bi, page)
+                            set_progress_cursor(*retry_cursor)
+                            logger.info(f"待重试: {phone.get('name', phone.get('型号', '未知'))} - 无法获取发布年份")
+                    else:
+                        mark_processed(phone_id, 'nodate')
+                        progress.get('retry_counts', {}).pop(phone_id, None)
+                        existing_ids.add(phone_id)
+                        save_checkpoint(bi, page)
+                        logger.info(f"跳过: {phone.get('name', phone.get('型号', '未知'))} - 参数页无发布年份（永久跳过）")
 
             progress['total_phones'] = len(_get_cached_phone_ids())
             if retry_cursor is None:
