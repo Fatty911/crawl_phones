@@ -101,15 +101,7 @@ FREE_PROVIDERS = (
         "CLOUDFLARE_BASE_URL",
         "https://api.cloudflare.com/client/v4/accounts/b3becce2da2399953658ed2a053e7c08/ai/v1",
         "CLOUDFLARE_MODEL_LIST",
-        ("@cf/zai-org/glm-5.2", "@cf/moonshotai/kimi-k2.6"),
-    ),
-    Provider(
-        "modal-free",
-        ("MODAL_API_KEY",),
-        "MODAL_BASE_URL",
-        "https://api.us-west-2.modal.direct/v1",
-        "MODAL_MODEL_LIST",
-        ("zai-org/GLM-5.1-FP8",),
+        ("@cf/zai-org/glm-5.2",),
     ),
     Provider(
         "modelscope-free",
