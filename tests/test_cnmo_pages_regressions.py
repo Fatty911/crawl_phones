@@ -1045,16 +1045,34 @@ class MergeCnmoCoverageTests(unittest.TestCase):
         self.assertEqual(0, matched)
         self.assertEqual(1, len(appended))
 
-    def test_capacity_signature_must_not_match_a_capacity_unknown_base_row(self) -> None:
+    def test_capacity_unknown_base_row_merges_unique_capacity_extra(self) -> None:
+        """型号级 base（无容量签名）应接受唯一带容量 extra 归并：
+        CNMO 容量变体（Hi nova 10(8+128GB)）与 ZOL/PConline 型号级
+        （Hi nova 10）同属一个型号，不应降为单源。"""
         base = [{"型号": "测试 Pro", "数据来源": "中关村在线", "验证状态": "单源"}]
         extra = [{"型号": "测试 Pro(12+1T)", "数据来源": "CNMO", "验证状态": "单源"}]
         appended, matched = self.merge.append_unique_single_source(base, extra, "CNMO")
 
         self.assertEqual((), self.merge.model_storage_signature(base[0]))
         self.assertEqual((12, 1024), self.merge.model_storage_signature(extra[0]))
+        self.assertEqual([], appended)
+        self.assertEqual(1, matched)
+        self.assertEqual("中关村在线+CNMO", base[0]["数据来源"])
+        self.assertEqual("多源未校验", base[0]["验证状态"])
+
+    def test_capacity_unknown_ambiguous_base_rows_stay_unmatched(self) -> None:
+        """无容量候选多于一个时仍不归并（歧义保护）。"""
+        base = [
+            {"型号": "测试 Pro", "数据来源": "中关村在线", "验证状态": "单源"},
+            {"型号": "测试 Pro", "数据来源": "太平洋电脑网", "验证状态": "单源"},
+        ]
+        extra = [{"型号": "测试 Pro(12+1T)", "数据来源": "CNMO", "验证状态": "单源"}]
+        appended, matched = self.merge.append_unique_single_source(base, extra, "CNMO")
+
         self.assertEqual(0, matched)
         self.assertEqual(1, len(appended))
         self.assertEqual("中关村在线", base[0]["数据来源"])
+        self.assertEqual("太平洋电脑网", base[1]["数据来源"])
 
     def test_capacity_and_model_annotations_do_not_cross_match(self) -> None:
         cases = [
@@ -1456,6 +1474,60 @@ process.stdout.write(JSON.stringify(cases));
         cases = self._run_extract()
         self.assertLess(cases["compareAsc"], 0)
 
+
+
+
+class ValidationSemanticEquivalenceTests(unittest.TestCase):
+    """validation_value_equal 语义等价回退：格式不同但含义相同不算差异，
+    真实量值差异（同单位不同数值）必须判为差异。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.merge = load_script_module("merge_phones_semantic", ROOT / "scripts" / "merge_phones.py")
+
+    def test_capacity_detail_vs_plain_capacity_is_equal(self) -> None:
+        # ZOL 存储带技术规格 vs CNMO 纯容量：交集非空视为一致
+        self.assertTrue(self.merge.validation_value_equal(
+            "存储", "256GB|UFS 3.1|不支持容量扩展", "256GB"))
+        self.assertTrue(self.merge.validation_value_equal(
+            "存储", "256GB|UFS 4.0", "256GB"))
+
+    def test_battery_marketing_copy_vs_spec_is_equal(self) -> None:
+        self.assertTrue(self.merge.validation_value_equal(
+            "电池", "5000mAh大电池|不可拆卸式电池", "锂聚合物电池,5000mAh|不支持"))
+
+    def test_memory_multi_config_intersection_is_equal(self) -> None:
+        # PConline 多配置 vs CNMO 单配置：交集非空视为一致
+        self.assertTrue(self.merge.validation_value_equal(
+            "内存", "12GB|16GB", "16GB|LPDDR5x"))
+
+    def test_processor_verbose_vs_short_is_equal(self) -> None:
+        self.assertTrue(self.merge.validation_value_equal(
+            "处理器", "骁龙 8 Elite Gen5|2×Prime 4.6GHz+6×Performance 3.62GHz|八核",
+            "高通骁龙8 Elite Gen5|3nm|Cortex-X4,Cortex-A720"))
+
+    def test_screen_verbose_vs_short_is_equal(self) -> None:
+        self.assertTrue(self.merge.validation_value_equal(
+            "屏幕", "6.8英寸|OLED|120Hz", "6.8英寸OLED"))
+
+    def test_capacity_conflict_is_real_difference(self) -> None:
+        self.assertFalse(self.merge.validation_value_equal("存储", "512GB", "256GB"))
+        self.assertFalse(self.merge.validation_value_equal(
+            "存储", "512GB|UFS 4.1|不支持容量扩展", "256GB"))
+
+    def test_battery_capacity_conflict_is_real_difference(self) -> None:
+        # 同单位数值不同且无交集：必须判为差异（关键词重叠会误判为 1.0）
+        self.assertFalse(self.merge.validation_value_equal("电池", "5000mAh", "4500mAh"))
+        self.assertFalse(self.merge.validation_value_equal("电池", "5000mAh大电池", "4500mAh"))
+
+    def test_screen_size_conflict_is_real_difference(self) -> None:
+        self.assertFalse(self.merge.validation_value_equal("屏幕", "6.8英寸", "6.5英寸"))
+
+    def test_memory_conflict_is_real_difference(self) -> None:
+        self.assertFalse(self.merge.validation_value_equal("内存", "8GB", "12GB"))
+
+    def test_processor_conflict_is_real_difference(self) -> None:
+        self.assertFalse(self.merge.validation_value_equal("处理器", "骁龙 8 Gen3", "天玑9400"))
 
 if __name__ == "__main__":
     unittest.main()

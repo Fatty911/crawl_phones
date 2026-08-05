@@ -640,7 +640,61 @@ def normalize_validation_value(field, value):
 
 
 def validation_value_equal(field, left, right):
-    return normalize_validation_value(field, left) == normalize_validation_value(field, right)
+    if normalize_validation_value(field, left) == normalize_validation_value(field, right):
+        return True
+    return _semantic_fallback_equal(field, left, right)
+
+
+def _semantic_fallback_equal(field, left, right):
+    """字段定向的保守语义回退：仅处理实测误报的格式差异模式，不做通用文本相似判断。
+
+    实测误报样例：
+      存储: ZOL="256GB|UFS 3.1|不支持容量扩展" vs CNMO="256GB"
+      电池: ZOL="5000mAh大电池|不可拆卸式电池" vs CNMO="锂聚合物电池,5000mAh|不支持"
+      内存: PCL="12GB|16GB" vs CNMO="16GB|LPDDR5x"
+      处理器: ZOL="骁龙 8 Elite Gen5|2×Prime..." vs CNMO="高通骁龙8 Elite Gen5|3nm..."
+      屏幕: ZOL="6.8英寸|OLED|120Hz" vs CNMO="6.8英寸OLED"
+    规则：同单位数值集合存在交集视为一致（256GB vs 256GB|512GB），
+    无交集（5000mAh vs 4500mAh、6.8英寸 vs 6.5英寸、8GB vs 12GB）视为真实差异。
+    """
+    if left is None or right is None:
+        return False
+    a_str = str(left)
+    b_str = str(right)
+
+    # 存储/内存：容量集合交集
+    cap_a = set(re.findall(r'\d+\s*[GT]B', a_str, re.IGNORECASE))
+    cap_b = set(re.findall(r'\d+\s*[GT]B', b_str, re.IGNORECASE))
+    if cap_a and cap_b and cap_a & cap_b:
+        return True
+
+    # 电池：容量交集
+    bat_a = set(re.findall(r'\d+\s*mAh', a_str, re.IGNORECASE))
+    bat_b = set(re.findall(r'\d+\s*mAh', b_str, re.IGNORECASE))
+    if bat_a and bat_b and bat_a & bat_b:
+        return True
+
+    # 屏幕：尺寸交集
+    size_a = set(re.findall(r'\d+(?:\.\d+)?\s*英寸', a_str))
+    size_b = set(re.findall(r'\d+(?:\.\d+)?\s*英寸', b_str))
+    if size_a and size_b and size_a & size_b:
+        return True
+
+    # 处理器：品牌核心型号包含
+    if field == '处理器':
+        proc_patterns = [
+            r'(骁龙\s*8\s*(?:Elite|Gen\d+)|骁龙|天玑\s*\d+\w*|麒麟\s*\d+\w*|Exynos\s*\d+|Tensor|Apple\s*A\d+|Helio\s*\w+)',
+        ]
+        for pat in proc_patterns:
+            m_a = re.search(pat, a_str, re.IGNORECASE)
+            m_b = re.search(pat, b_str, re.IGNORECASE)
+            if m_a and m_b:
+                core_a = re.sub(r'\s+', '', m_a.group(1)).lower()
+                core_b = re.sub(r'\s+', '', m_b.group(1)).lower()
+                if core_a in core_b or core_b in core_a or core_a == core_b:
+                    return True
+
+    return False
 
 
 def classify_source_agreement(source_rows):
@@ -1173,7 +1227,12 @@ def append_unique_single_source(base_rows, extra_rows, source):
             ]
             if len(compatible) == 1:
                 matched_index = compatible[0]
-        if matched_index is None and not signature_options:
+        if matched_index is None:
+            # 型号级 base（无容量签名）也接受带容量 extra 的归并：
+            # CNMO 以"型号×配置"粒度收录（如 Hi nova 10(8+128GB)），
+            # 而 ZOL/PConline 多为型号级（Hi nova 10），二者本属同一型号，
+            # 不应因容量签名差异把 CNMO 变体全部降为单源。
+            # 仅当无容量候选唯一时才归并，避免歧义。
             no_capacity = [index for index in candidates if not model_storage_signatures(base_rows[index])]
             if len(no_capacity) == 1:
                 matched_index = no_capacity[0]
