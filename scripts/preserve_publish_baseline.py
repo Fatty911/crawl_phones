@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from merge_phones import clean_spec_value, normalize_audited_published_headers
-from verify_publish_superset import identity_key, identity_keys, load_rows, verify_superset
+from verify_publish_superset import identity_key, identity_keys, is_below_min_publish_year, load_rows, verify_superset
 
 
 def preserve_baseline(
@@ -21,6 +21,9 @@ def preserve_baseline(
 
     def source_count(row: dict[str, Any]) -> int:
         return len([part for part in str(row.get("数据来源", "")).split("+") if part.strip()])
+
+    # 五年内准入：旧年份行（<2022）不再向后保留（与 merge 的 MIN_PUBLISH_YEAR 对齐）
+    baseline = [row for row in baseline if not is_below_min_publish_year(row)]
 
     ranked_baseline = sorted(
         enumerate(baseline),

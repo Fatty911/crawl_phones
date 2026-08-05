@@ -1567,5 +1567,49 @@ class PublishYearFilterTests(unittest.TestCase):
         self.assertEqual(self.merge.MIN_PUBLISH_YEAR, 2022)
         self.assertIn("year >= 2022", app)
 
+
+
+class BaselineYearFilterTests(unittest.TestCase):
+    """preserve_baseline / verify_superset 不再向后保留五年外（<2022）旧型号。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.preserve = load_script_module("preserve_publish_baseline", ROOT / "scripts" / "preserve_publish_baseline.py")
+        cls.verify = load_script_module("verify_publish_superset", ROOT / "scripts" / "verify_publish_superset.py")
+
+    def test_old_baseline_rows_are_not_carried_forward(self) -> None:
+        baseline = [
+            {"型号": "老款A", "上市时间": "2019年10月", "数据来源": "CNMO", "品牌": "测试", "手机ID": "1"},
+            {"型号": "老款B", "上市时间": "2021年06月", "数据来源": "CNMO", "品牌": "测试", "手机ID": "2"},
+            {"型号": "新款C", "上市时间": "2023年03月", "数据来源": "CNMO", "品牌": "测试", "手机ID": "3"},
+        ]
+        candidate = [
+            {"型号": "新款C", "上市时间": "2023年03月", "数据来源": "CNMO", "品牌": "测试", "手机ID": "3"},
+        ]
+        merged, missing = self.preserve.preserve_baseline(baseline, candidate)
+        self.assertEqual([r["型号"] for r in merged], ["新款C"])
+        self.assertEqual(missing, [])
+        self.assertTrue(all(not self.verify.is_below_min_publish_year(r) for r in merged))
+
+    def test_boundary_2022_row_is_kept(self) -> None:
+        baseline = [
+            {"型号": "临界", "上市时间": "2022年01月", "数据来源": "CNMO", "品牌": "测试", "手机ID": "1"},
+        ]
+        candidate = []
+        merged, missing = self.preserve.preserve_baseline(baseline, candidate)
+        self.assertEqual([r["型号"] for r in merged], ["临界"])
+        self.assertEqual(len(missing), 1)
+
+    def test_verify_superset_ignores_old_baseline_rows(self) -> None:
+        # candidate 不含旧行时，verify_superset 不应报缺失（旧行已被过滤）
+        baseline = [
+            {"型号": "老款", "上市时间": "2018年10月", "数据来源": "CNMO", "品牌": "测试", "手机ID": "1"},
+        ]
+        candidate = []
+        try:
+            self.verify.verify_superset(baseline, candidate)
+        except ValueError as exc:
+            self.fail(f"verify_superset 不应因旧行缺失失败: {exc}")
+
 if __name__ == "__main__":
     unittest.main()

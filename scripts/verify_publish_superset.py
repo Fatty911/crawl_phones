@@ -77,6 +77,21 @@ def derive_brand(value: Any) -> str:
     return ""
 
 
+def release_year(row: dict[str, Any]) -> int | None:
+    for key in ("上市时间", "国内发布时间", "发布时间", "发布日期", "上市日期"):
+        match = re.search(r"(?:19|20)\d{2}", str(row.get(key, "") or ""))
+        if match:
+            return int(match.group(0))
+    return None
+
+
+def is_below_min_publish_year(row: dict[str, Any]) -> bool:
+    # 五年内发布准入（与 merge_phones.MIN_PUBLISH_YEAR=2022 对齐）：
+    # 无年份行不在此过滤，保持与前端一致。
+    year = release_year(row)
+    return year is not None and year < 2022
+
+
 def is_out_of_scope_cnmo_single_source(row: dict[str, Any]) -> bool:
     source = str(row.get("数据来源") or row.get("source") or "").strip()
     if source != "CNMO":
@@ -134,7 +149,11 @@ def load_rows(path: Path) -> list[dict[str, Any]]:
 def verify_superset(
     baseline: list[dict[str, Any]], candidate: list[dict[str, Any]]
 ) -> None:
-    scoped_baseline = [row for row in baseline if not is_out_of_scope_cnmo_single_source(row)]
+    scoped_baseline = [
+        row for row in baseline
+        if not is_out_of_scope_cnmo_single_source(row)
+        and not is_below_min_publish_year(row)
+    ]
     baseline_ids = set()
     for row in scoped_baseline:
         keys = identity_keys(row)
