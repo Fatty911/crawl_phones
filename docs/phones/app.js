@@ -219,6 +219,17 @@
     return String(row["数据来源"] || "").indexOf(source) !== -1;
   }
 
+  var SOURCE_COUNT_FIELD = "数据来源数";
+
+  function sourceCount(row) {
+    // 缺失/空"数据来源"视为 0 源（单源），排在所有多源之后
+    return atomicSources(row["数据来源"]).length;
+  }
+
+  function isSingleSource(row) {
+    return sourceCount(row) <= 1;
+  }
+
   function baseModelName(model) {
     return String(model || "").replace(/[（(][^）)]*[）)]/g, "").trim();
   }
@@ -459,6 +470,11 @@
   }
 
   function compareRowsByLevel(a, b, level) {
+    if (level.field === SOURCE_COUNT_FIELD) {
+      var scA = sourceCount(a);
+      var scB = sourceCount(b);
+      return level.dir === "desc" ? scB - scA : scA - scB;
+    }
     var av = a[level.field];
     var bv = b[level.field];
     var order = parseCustomOrder(level.customOrder);
@@ -486,10 +502,24 @@
 
   function sortRows(rows) {
     var levels = activeSortLevels();
-    if (!levels.length) {
-      return rows;
-    }
+    var explicitSourceLevel = false;
+    (levels || []).forEach(function (level) {
+      if (level.field === SOURCE_COUNT_FIELD) {
+        explicitSourceLevel = true;
+      }
+    });
     return rows.map(function (row, index) { return { row: row, index: index }; }).sort(function (a, b) {
+      if (!explicitSourceLevel) {
+        // 默认（含任意用户排序生效前）：单源数据始终排在所有多源数据之后
+        var scA = sourceCount(a.row);
+        var scB = sourceCount(b.row);
+        if (scA !== scB) {
+          return scB - scA;
+        }
+        if (!levels.length) {
+          return a.index - b.index;
+        }
+      }
       for (var i = 0; i < levels.length; i += 1) {
         var result = compareRowsByLevel(a.row, b.row, levels[i]);
         if (result !== 0) {
@@ -1036,6 +1066,10 @@
       var select = row.querySelectorAll ? row.querySelectorAll('select[data-role="field"]')[0] : null;
       if (select) {
         state.columns.forEach(function (column) { var option = document.createElement("option"); option.value = column; option.textContent = column; select.appendChild(option); });
+        var sourceOption = document.createElement("option");
+        sourceOption.value = SOURCE_COUNT_FIELD;
+        sourceOption.textContent = SOURCE_COUNT_FIELD + "（多源优先）";
+        select.appendChild(sourceOption);
         select.value = level.field || "";
       }
       var dir = row.querySelectorAll ? row.querySelectorAll('select[data-role="dir"]')[0] : null;

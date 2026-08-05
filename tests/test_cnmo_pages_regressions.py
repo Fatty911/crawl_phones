@@ -1357,5 +1357,105 @@ class CnmoWorkflowTests(unittest.TestCase):
         self.assertNotIn("跳过超集校验", text)
 
 
+
+
+class MultiSourceSortingTests(unittest.TestCase):
+    """docs/phones/app.js 多源优先排序行为（默认单源在后 + 数据来源数排序选项）。"""
+
+    EXTRACT_NODE = r"""
+const fs = require("fs");
+const vm = require("vm");
+const code = fs.readFileSync("docs/phones/app.js", "utf8");
+function extractFunction(source, name) {
+  const marker = "function " + name + "(";
+  const start = source.indexOf(marker);
+  if (start === -1) throw new Error("function not found: " + name);
+  const braceIdx = source.indexOf("{", start);
+  let depth = 0, i = braceIdx;
+  for (; i < source.length; i++) {
+    if (source[i] === "{") depth++;
+    else if (source[i] === "}") { depth--; if (depth === 0) break; }
+  }
+  return source.slice(start, i + 1);
+}
+const helpers = ["normalizeText", "atomicSources", "sourceCount", "isSingleSource",
+  "releaseYear", "rowMatchesDefaultRowType", "parseCustomOrder", "customOrderIndex",
+  "firstNumber", "compareRowsByLevel", "activeSortLevels", "sortRows"];
+let harness = "";
+helpers.forEach(function (h) { harness += extractFunction(code, h) + "\n"; });
+const scfStart = code.indexOf("var SOURCE_COUNT_FIELD");
+harness += code.slice(scfStart, code.indexOf(";", scfStart) + 1) + "\n";
+harness += "globalThis.__t = { atomicSources, sourceCount, compareRowsByLevel, sortRows, SOURCE_COUNT_FIELD };";
+const sandbox = { globalThis: {}, console, JSON, Math, Set, Array, Object, String, Number, RegExp, parseInt, parseFloat, isNaN, isFinite };
+sandbox.globalThis = sandbox;
+sandbox.state = { sortLevels: [], sortField: "" };
+sandbox.activeSortLevels = function () {
+  const lv = (sandbox.state.sortLevels || []).filter(function (l) { return l && l.field; });
+  if (!lv.length && sandbox.state.sortField) lv.push({ field: sandbox.state.sortField, dir: "asc", customOrder: "" });
+  return lv;
+};
+vm.createContext(sandbox);
+vm.runInContext(harness, sandbox);
+const t = sandbox.globalThis.__t;
+const rows = [
+  { id: 1, "数据来源": "中关村在线" },
+  { id: 2, "数据来源": "中关村在线+CNMO" },
+  { id: 3, "数据来源": "太平洋电脑网" },
+  { id: 4, "数据来源": "中关村在线+太平洋电脑网+CNMO" },
+  { id: 5, "数据来源": "CNMO" },
+];
+const cases = {};
+cases.defaultOrder = t.sortRows(rows).map(r => r.id);
+sandbox.state.sortLevels = [{ field: t.SOURCE_COUNT_FIELD, dir: "asc", customOrder: "" }];
+cases.explicitAsc = t.sortRows(rows).map(r => r.id);
+sandbox.state.sortLevels = [{ field: t.SOURCE_COUNT_FIELD, dir: "desc", customOrder: "" }];
+cases.explicitDesc = t.sortRows(rows).map(r => r.id);
+sandbox.state.sortLevels = [{ field: "价格", dir: "asc", customOrder: "" }];
+const rowsP = [
+  { id: "a", "数据来源": "CNMO", "价格": "5000" },
+  { id: "b", "数据来源": "中关村在线", "价格": "1000" },
+  { id: "c", "数据来源": "中关村在线+CNMO", "价格": "3000" },
+  { id: "d", "数据来源": "太平洋电脑网+CNMO", "价格": "9000" },
+];
+cases.priceSort = t.sortRows(rowsP).map(r => r.id);
+cases.compareAsc = t.compareRowsByLevel(
+  { "数据来源": "中关村在线" }, { "数据来源": "CNMO+太平洋电脑网" },
+  { field: t.SOURCE_COUNT_FIELD, dir: "asc", customOrder: "" });
+process.stdout.write(JSON.stringify(cases));
+"""
+
+    def _run_extract(self) -> dict:
+        result = subprocess.run(
+            ["node", "-e", self.EXTRACT_NODE],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        return json.loads(result.stdout)
+
+    def test_default_sort_places_single_source_after_all_multi_source(self) -> None:
+        cases = self._run_extract()
+        # 默认（无排序）：多源在前（按源数降序），单源在后且保持相对顺序
+        self.assertEqual(cases["defaultOrder"], [4, 2, 1, 3, 5])
+
+    def test_explicit_source_count_field_controls_direction(self) -> None:
+        cases = self._run_extract()
+        # 显式"数据来源数"升序 = 单源优先
+        self.assertEqual(cases["explicitAsc"], [1, 3, 5, 2, 4])
+        # 显式降序 = 多源优先（三源在最前）
+        self.assertEqual(cases["explicitDesc"], [4, 2, 1, 3, 5])
+
+    def test_user_price_sort_keeps_multi_source_first(self) -> None:
+        cases = self._run_extract()
+        # 用户按价格排序时，多源仍隐式排在最前（c、d 为多源）
+        self.assertEqual(cases["priceSort"], ["c", "d", "b", "a"])
+
+    def test_compare_rows_by_level_source_count(self) -> None:
+        cases = self._run_extract()
+        self.assertLess(cases["compareAsc"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()
