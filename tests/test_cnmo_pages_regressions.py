@@ -1529,5 +1529,43 @@ class ValidationSemanticEquivalenceTests(unittest.TestCase):
     def test_processor_conflict_is_real_difference(self) -> None:
         self.assertFalse(self.merge.validation_value_equal("处理器", "骁龙 8 Gen3", "天玑9400"))
 
+
+
+class PublishYearFilterTests(unittest.TestCase):
+    """guard_publish_rows 五年内发布准入（MIN_PUBLISH_YEAR=2022，与前端对齐）。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.merge = load_script_module("merge_phones_pubyear", ROOT / "scripts" / "merge_phones.py")
+
+    def test_old_models_are_dropped_from_publish_rows(self) -> None:
+        rows = [
+            {"型号": "老款", "上市时间": "2019年10月", "品牌": "测试"},
+            {"型号": "临界", "上市时间": "2021年12月", "品牌": "测试"},
+            {"型号": "新款", "上市时间": "2022年01月", "品牌": "测试"},
+            {"型号": "最新", "上市时间": "2026年08月", "品牌": "测试"},
+        ]
+        guarded = self.merge.guard_publish_rows(rows)
+        self.assertEqual([r["型号"] for r in guarded], ["新款", "最新"])
+
+    def test_missing_year_is_kept(self) -> None:
+        # 无年份信息不因过滤被丢弃（前端同样只过滤可解析年份的行）
+        rows = [
+            {"型号": "无年份", "上市时间": "", "品牌": "测试"},
+            {"型号": "无日期字段", "品牌": "测试"},
+        ]
+        guarded = self.merge.guard_publish_rows(rows)
+        self.assertEqual(len(guarded), 2)
+
+    def test_future_release_still_dropped(self) -> None:
+        rows = [{"型号": "未来", "上市时间": "2099年01月", "品牌": "测试"}]
+        guarded = self.merge.guard_publish_rows(rows)
+        self.assertEqual(guarded, [])
+
+    def test_min_publish_year_constant_matches_frontend(self) -> None:
+        app = (ROOT / "docs/phones/app.js").read_text(encoding="utf-8")
+        self.assertEqual(self.merge.MIN_PUBLISH_YEAR, 2022)
+        self.assertIn("year >= 2022", app)
+
 if __name__ == "__main__":
     unittest.main()

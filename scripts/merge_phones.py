@@ -160,6 +160,19 @@ def is_future_release(row, today=None):
     return False
 
 
+# 发布准入最小年份：与 Pages 前端 rowMatchesDefaultRowType 的 year >= 2022 对齐，
+# 数据/CSV/下载层同样只发布五年内（2022 及以后）的型号，避免旧型号进入发布数据。
+MIN_PUBLISH_YEAR = 2022
+
+
+def _release_year(row):
+    for key in ['上市时间', '国内发布时间', '发布时间', '发布日期', '上市日期']:
+        match = _RELEASE_DATE_PATTERN.search(str(row.get(key, '') or ''))
+        if match:
+            return int(match.group(1))
+    return None
+
+
 def guard_publish_rows(rows, source=None, today=None):
     guarded = []
     skip_ids = load_skip_phone_ids()
@@ -168,6 +181,9 @@ def guard_publish_rows(rows, source=None, today=None):
         if phone_id and phone_id in skip_ids:
             continue
         if is_future_release(row, today):
+            continue
+        year = _release_year(row)
+        if year is not None and year < MIN_PUBLISH_YEAR:
             continue
         clean = dict(row)
         if source == 'CNMO':
