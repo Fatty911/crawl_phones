@@ -240,6 +240,49 @@ jobs:
           download_stable_artifacts "crawl-zol.yml" "zol" "中关村在线" "zol_phones_*.json" "zol_phones_*.csv"
           download_stable_artifacts "crawl-pconline.yml" "pconline" "太平洋电脑网" "pconline_phones_*.json" "pconline_phones_*.csv"
           download_stable_artifacts "crawl-cnmo.yml" "cnmo" "CNMO" "cnmo_phones_*.json" "cnmo_phones_*.csv"
+          # CNMO data fallback: CNMO crawler has been blocked by 503 anti-bot,
+          # so its stable artifact is missing, but the live baseline still holds
+          # historical CNMO single-source rows. When no CNMO data was downloaded,
+          # extract CNMO rows from the live baseline as merge input so the
+          # capacity-variant merge logic can apply to historical data.
+          if ! compgen -G "data/cnmo_phones_*.json" > /dev/null; then
+            echo "CNMO stable artifact missing, falling back to live baseline CNMO rows..."
+            CNMO_FALLBACK_JSON="data/cnmo_phones_fallback_$(date +%Y%m%d).json"
+            if curl --fail --show-error --silent --location --retry 3 --max-time 120 \
+              https://phones.jiucai.eu.org/data/latest.json -o /tmp/cnmo-baseline.json; then
+              python3 - "$CNMO_FALLBACK_JSON" <<'PY'
+          import json
+          import os
+          import sys
+
+          out_path = sys.argv[1]
+          try:
+              with open("/tmp/cnmo-baseline.json", encoding="utf-8") as f:
+                  rows = json.load(f)
+          except Exception as exc:
+              print("CNMO fallback: baseline parse failed (" + str(exc) + "), skip")
+              sys.exit(0)
+          if not isinstance(rows, list):
+              print("CNMO fallback: baseline is not a list, skip")
+              sys.exit(0)
+          cnmo_rows = [dict(r) for r in rows if str(r.get("数据来源", "")).strip() == "CNMO"]
+          for r in cnmo_rows:
+              r.pop("_source_validation_rows", None)
+              r.pop("验证状态", None)
+              r.pop("交叉验证差异", None)
+              r.pop("关联手机ID", None)
+              r.pop("source", None)
+          with open(out_path, "w", encoding="utf-8") as f:
+              json.dump(cnmo_rows, f, ensure_ascii=False, indent=1)
+          print("CNMO fallback input: " + str(len(cnmo_rows)) + " rows -> " + out_path)
+          if len(cnmo_rows) < 10:
+              os.remove(out_path)
+              print("CNMO fallback too few rows, removed")
+          PY
+            else
+              echo "live baseline fetch failed, skip CNMO fallback"
+            fi
+          fi
 
           if [ "$DEBUG_MODE" = "true" ]; then
             if ! [[ "$CRAWLER_RUN_ID" =~ ^[0-9]+$ ]] || ! [[ "$CRAWLER_RUN_ATTEMPT" =~ ^[0-9]+$ ]]; then
