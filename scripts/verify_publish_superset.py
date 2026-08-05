@@ -11,6 +11,8 @@ import unicodedata
 from pathlib import Path
 from typing import Any
 
+from merge_phones import MIN_PUBLISH_YEAR
+
 
 CNMO_SINGLE_SOURCE_ALLOWED_BRANDS = {
     "苹果", "三星", "华为", "荣耀", "OPPO", "vivo", "小米", "红米", "iQOO",
@@ -86,10 +88,10 @@ def release_year(row: dict[str, Any]) -> int | None:
 
 
 def is_below_min_publish_year(row: dict[str, Any]) -> bool:
-    # 五年内发布准入（与 merge_phones.MIN_PUBLISH_YEAR=2022 对齐）：
+    # 五年内发布准入（与 merge_phones.MIN_PUBLISH_YEAR 动态对齐）：
     # 无年份行不在此过滤，保持与前端一致。
     year = release_year(row)
-    return year is not None and year < 2022
+    return year is not None and year < MIN_PUBLISH_YEAR
 
 
 def is_out_of_scope_cnmo_single_source(row: dict[str, Any]) -> bool:

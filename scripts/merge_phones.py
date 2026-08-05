@@ -160,9 +160,11 @@ def is_future_release(row, today=None):
     return False
 
 
-# 发布准入最小年份：与 Pages 前端 rowMatchesDefaultRowType 的 year >= 2022 对齐，
-# 数据/CSV/下载层同样只发布五年内（2022 及以后）的型号，避免旧型号进入发布数据。
-MIN_PUBLISH_YEAR = 2022
+# 发布准入最小年份：动态五年窗口 = 当前年份往前数 5 个年份（含当前年），
+# 与 Pages 前端 rowMatchesDefaultRowType 的 year >= (getFullYear()-4) 对齐。
+# 例：2026 年 -> 收录 2022-2026；2027 年 -> 收录 2023-2027。
+# 数据/CSV/下载层同样只发布五年内型号，避免旧型号进入发布数据。
+MIN_PUBLISH_YEAR = date.today().year - 4
 
 
 def _release_year(row):

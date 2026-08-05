@@ -226,6 +226,14 @@ def _sources(row: dict[str, Any]) -> tuple[str, list[str]]:
     raise RepairInputError("one or more rows has no usable source token")
 
 
+def record_sources(records: list[dict[str, Any]], index: int) -> list[str]:
+    """返回某行记录的去重来源列表。"""
+    for record in records:
+        if record.get("index") == index:
+            return record.get("sources") or []
+    return []
+
+
 def analyze_payload(payload: Any, kind: str) -> dict[str, Any]:
     """Validate and summarize one of the three repository-specific payloads."""
     rows, shape = _extract_rows(payload)
@@ -277,6 +285,16 @@ def analyze_payload(payload: Any, kind: str) -> dict[str, Any]:
                     "cause": "cross_source_merge_gap",
                 })
 
+    # ---- 多源差异 / 多源未校验分析（朝"多源一致"努力） ----
+    discrepancy_records = []
+    unverified_records = []
+    for index, row in enumerate(rows):
+        status = str(row.get("验证状态", "") or "")
+        if "差异" in status:
+            discrepancy_records.append({"index": index, "identity": _identity(kind, row), "status": status})
+        elif status == "多源未校验" and len(record_sources(records, index)) >= 2:
+            unverified_records.append({"index": index, "identity": _identity(kind, row)})
+
     top_single.sort(key=lambda item: (-item["rows"], item["identity"]))
     total = len(records)
     return {
@@ -293,6 +311,10 @@ def analyze_payload(payload: Any, kind: str) -> dict[str, Any]:
             "identity_only_single": single_identity_only,
             "cross_source_merge_gap": cross_source_merge_gap,
         },
+        "discrepancy_count": len(discrepancy_records),
+        "unverified_multi_count": len(unverified_records),
+        "top_discrepancies": discrepancy_records[:30],
+        "top_unverified_multi": unverified_records[:30],
         "top_single": top_single[:30],
         "sample": records[:8],
     }
@@ -329,10 +351,16 @@ Pages URL：{pages_url}
 允许修改的现有文件：{", ".join(ALLOWED_FILES[kind])}
 
 只有同时满足以下条件才返回 should_fix=true：
-1. 单源报告显示存在跨来源可匹配或来源过滤/规范化的明确证据；
+1. 报告显示存在跨来源可匹配、来源过滤/规范化、或"多源差异/多源未校验"可折叠的明确证据；
 2. 根因属于 merge-match、source-fetch、source-filter、schema-normalization 之一；
 3. 修复只涉及允许列表中的现有业务 Python 文件；
 4. patch 是可以直接应用到基线的最小 unified diff，不改 workflow、依赖、文档、测试、配置、密钥、权限或本修复器自身。
+
+多源差异/未校验目标（朝"多源一致"努力）：
+- 对"多源差异"行，若字段差异是格式/表达差异（如 "256GB|UFS 3.1|不支持容量扩展" vs "256GB"、"
+5000mAh大电池" vs "锂聚合物电池,5000mAh"、处理器型号措辞不同），且可证明语义等价，应产出规范化/折叠修复（如 merge_phones._semantic_fallback_equal 的字段定向规则），使两源判定为一致；
+- 对"多源未校验"行，若差异字段缺失或字段名不一致导致无法比对，应修复字段对齐；
+- 真实冲突（如同型号存储 256GB vs 512GB、电池 5000 vs 4500mAh）不得折叠，应保留差异标注。
 
 如果证据只能说明某个系列/产品确实只有一个来源覆盖，返回 should_fix=false。不要为了提高多源率而编造来源、放宽唯一键、删除校验或伪造数据。
 

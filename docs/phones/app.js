@@ -451,7 +451,7 @@
 
   function rowMatchesDefaultRowType(row) {
     var year = releaseYear(row);
-    return year !== null && year >= 2022;
+    return year !== null && year >= (new Date().getFullYear() - 4);
   }
 
   function parseCustomOrder(text) {

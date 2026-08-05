@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import datetime
 from pathlib import Path
 from unittest import mock
 
@@ -27,7 +28,7 @@ def load_script_module(name: str, path: Path):
 
 
 class PagesFilteringTests(unittest.TestCase):
-    def test_pages_filters_2022_plus_and_computes_cards_from_filtered_rows(self) -> None:
+    def test_pages_filters_min_year_plus_and_computes_cards_from_filtered_rows(self) -> None:
         node = r"""
 const fs = require("fs");
 const vm = require("vm");
@@ -1539,11 +1540,13 @@ class PublishYearFilterTests(unittest.TestCase):
         cls.merge = load_script_module("merge_phones_pubyear", ROOT / "scripts" / "merge_phones.py")
 
     def test_old_models_are_dropped_from_publish_rows(self) -> None:
+        now = datetime.date.today().year
+        min_year = now - 4
         rows = [
-            {"型号": "老款", "上市时间": "2019年10月", "品牌": "测试"},
-            {"型号": "临界", "上市时间": "2021年12月", "品牌": "测试"},
-            {"型号": "新款", "上市时间": "2022年01月", "品牌": "测试"},
-            {"型号": "最新", "上市时间": "2026年08月", "品牌": "测试"},
+            {"型号": "老款", "上市时间": f"{min_year - 4}年10月", "品牌": "测试"},
+            {"型号": "临界", "上市时间": f"{min_year - 1}年12月", "品牌": "测试"},
+            {"型号": "新款", "上市时间": f"{min_year}年01月", "品牌": "测试"},
+            {"型号": "最新", "上市时间": f"{now}年08月", "品牌": "测试"},
         ]
         guarded = self.merge.guard_publish_rows(rows)
         self.assertEqual([r["型号"] for r in guarded], ["新款", "最新"])
@@ -1564,8 +1567,9 @@ class PublishYearFilterTests(unittest.TestCase):
 
     def test_min_publish_year_constant_matches_frontend(self) -> None:
         app = (ROOT / "docs/phones/app.js").read_text(encoding="utf-8")
-        self.assertEqual(self.merge.MIN_PUBLISH_YEAR, 2022)
-        self.assertIn("year >= 2022", app)
+        expected = datetime.date.today().year - 4
+        self.assertEqual(self.merge.MIN_PUBLISH_YEAR, expected)
+        self.assertIn("getFullYear() - 4", app)
 
 
 
@@ -1578,22 +1582,24 @@ class BaselineYearFilterTests(unittest.TestCase):
         cls.verify = load_script_module("verify_publish_superset", ROOT / "scripts" / "verify_publish_superset.py")
 
     def test_old_baseline_rows_are_not_carried_forward(self) -> None:
+        min_year = datetime.date.today().year - 4
         baseline = [
-            {"型号": "老款A", "上市时间": "2019年10月", "数据来源": "CNMO", "品牌": "测试", "手机ID": "1"},
-            {"型号": "老款B", "上市时间": "2021年06月", "数据来源": "CNMO", "品牌": "测试", "手机ID": "2"},
-            {"型号": "新款C", "上市时间": "2023年03月", "数据来源": "CNMO", "品牌": "测试", "手机ID": "3"},
+            {"型号": "老款A", "上市时间": f"{min_year - 3}年10月", "数据来源": "CNMO", "品牌": "测试", "手机ID": "1"},
+            {"型号": "老款B", "上市时间": f"{min_year - 1}年06月", "数据来源": "CNMO", "品牌": "测试", "手机ID": "2"},
+            {"型号": "新款C", "上市时间": f"{min_year + 1}年03月", "数据来源": "CNMO", "品牌": "测试", "手机ID": "3"},
         ]
         candidate = [
-            {"型号": "新款C", "上市时间": "2023年03月", "数据来源": "CNMO", "品牌": "测试", "手机ID": "3"},
+            {"型号": "新款C", "上市时间": f"{min_year + 1}年03月", "数据来源": "CNMO", "品牌": "测试", "手机ID": "3"},
         ]
         merged, missing = self.preserve.preserve_baseline(baseline, candidate)
         self.assertEqual([r["型号"] for r in merged], ["新款C"])
         self.assertEqual(missing, [])
         self.assertTrue(all(not self.verify.is_below_min_publish_year(r) for r in merged))
 
-    def test_boundary_2022_row_is_kept(self) -> None:
+    def test_boundary_min_year_row_is_kept(self) -> None:
+        min_year = datetime.date.today().year - 4
         baseline = [
-            {"型号": "临界", "上市时间": "2022年01月", "数据来源": "CNMO", "品牌": "测试", "手机ID": "1"},
+            {"型号": "临界", "上市时间": f"{min_year}年01月", "数据来源": "CNMO", "品牌": "测试", "手机ID": "1"},
         ]
         candidate = []
         merged, missing = self.preserve.preserve_baseline(baseline, candidate)
@@ -1602,14 +1608,57 @@ class BaselineYearFilterTests(unittest.TestCase):
 
     def test_verify_superset_ignores_old_baseline_rows(self) -> None:
         # candidate 不含旧行时，verify_superset 不应报缺失（旧行已被过滤）
+        min_year = datetime.date.today().year - 4
         baseline = [
-            {"型号": "老款", "上市时间": "2018年10月", "数据来源": "CNMO", "品牌": "测试", "手机ID": "1"},
+            {"型号": "老款", "上市时间": f"{min_year - 4}年10月", "数据来源": "CNMO", "品牌": "测试", "手机ID": "1"},
         ]
         candidate = []
         try:
             self.verify.verify_superset(baseline, candidate)
         except ValueError as exc:
             self.fail(f"verify_superset 不应因旧行缺失失败: {exc}")
+
+
+
+class MultiSourceRepairAnalysisTests(unittest.TestCase):
+    """single_source_repair.analyze_payload 多源差异/未校验统计（朝多源一致努力）。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.repair = load_script_module("single_source_repair_ms", ROOT / "scripts" / "single_source_repair.py")
+
+    def test_discrepancy_and_unverified_counts(self) -> None:
+        rows = [
+            {"型号": "A", "品牌": "测试", "数据来源": "CNMO", "验证状态": "单源"},
+            {"型号": "B", "品牌": "测试", "数据来源": "中关村在线+CNMO", "验证状态": "双源差异"},
+            {"型号": "C", "品牌": "测试", "数据来源": "太平洋电脑网+CNMO", "验证状态": "双源差异"},
+            {"型号": "D", "品牌": "测试", "数据来源": "中关村在线+太平洋电脑网+CNMO", "验证状态": "三源差异"},
+            {"型号": "E", "品牌": "测试", "数据来源": "中关村在线+CNMO", "验证状态": "多源未校验"},
+            {"型号": "F", "品牌": "测试", "数据来源": "中关村在线+CNMO", "验证状态": ""},
+        ]
+        report = self.repair.analyze_payload(rows, "phones")
+        self.assertEqual(report["discrepancy_count"], 3)
+        self.assertEqual(report["unverified_multi_count"], 1)
+        self.assertEqual(len(report["top_discrepancies"]), 3)
+        self.assertEqual(len(report["top_unverified_multi"]), 1)
+        statuses = {r["status"] for r in report["top_discrepancies"]}
+        self.assertEqual(statuses, {"双源差异", "三源差异"})
+
+    def test_no_discrepancy_when_all_single(self) -> None:
+        rows = [
+            {"型号": "A", "品牌": "测试", "数据来源": "CNMO", "验证状态": "单源"},
+            {"型号": "B", "品牌": "测试", "数据来源": "CNMO", "验证状态": "单源"},
+        ]
+        report = self.repair.analyze_payload(rows, "phones")
+        self.assertEqual(report["discrepancy_count"], 0)
+        self.assertEqual(report["unverified_multi_count"], 0)
+
+    def test_multi_unverified_requires_two_sources(self) -> None:
+        rows = [
+            {"型号": "A", "品牌": "测试", "数据来源": "CNMO", "验证状态": "多源未校验"},
+        ]
+        report = self.repair.analyze_payload(rows, "phones")
+        self.assertEqual(report["unverified_multi_count"], 0)
 
 if __name__ == "__main__":
     unittest.main()
