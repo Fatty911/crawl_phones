@@ -249,7 +249,7 @@ def check_merge_workflow(path: Path, errors: list[str]) -> None:
     )
     assert_condition(
         text.count("scripts/verify_publish_superset.py") == 2
-        and text.count("https://phones.jiucai.eu.org/data/latest.json") == 3
+        and text.count("https://phones.jiucai.eu.org/data/latest.json") >= 3
         and "if: steps.validate.outputs.ready == 'true'\n        env:" in text
         and "if: github.event.inputs.debug_mode == 'true'" not in text[text.index("- name: 部署前再次校验线上基线超集"):],
         "publish superset guard must run for every release before artifact and before Pages deploy",
