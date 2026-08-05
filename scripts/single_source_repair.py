@@ -752,8 +752,6 @@ def propose(args: argparse.Namespace) -> int:
         evidence = [item.strip() for item in raw_evidence if item.strip()]
         analysis = raw_analysis.strip()
         patch_value = raw_patch
-        if not evidence:
-            raise RepairInputError("model response must include non-empty evidence")
         result.update(
             confidence=confidence,
             root_cause=root_cause,
@@ -761,7 +759,10 @@ def propose(args: argparse.Namespace) -> int:
             analysis=analysis[:4000],
         )
         if not should_fix:
+            # 模型判定无需修复时允许空 evidence（保留其分析文本）
             result.update(status="analysis-only", reason="model did not find a code-supported repair")
+        elif not evidence:
+            raise RepairInputError("model response must include non-empty evidence")
         elif confidence < MIN_CONFIDENCE:
             result.update(status="analysis-only", reason=f"confidence below {MIN_CONFIDENCE}")
         elif root_cause not in ALLOWED_ROOT_CAUSES:
