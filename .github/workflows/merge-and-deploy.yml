@@ -252,9 +252,10 @@ jobs:
             # 都能对存量多源未校验行重新分类，而不是只拿到线上单源行（匹配为 0）。
             echo "CNMO stable artifact missing, trying git history recovery..."
             GIT_CNMO_JSON="data/cnmo_phones_git_$(date +%Y%m%d).json"
-            # checkout 默认 fetch-depth=1，先确保 8825199 在本地（浅克隆按 sha fetch）
-            git cat-file -e 8825199^{commit} 2>/dev/null || git fetch origin 8825199 2>/dev/null || true
-            if git show 8825199:data/cnmo_phones_20260721.json > "$GIT_CNMO_JSON" 2>/dev/null; then
+            # checkout 默认 fetch-depth=1 无法 git show 历史 commit，改用 raw.githubusercontent.com
+            if curl -fsSL --max-time 90 \
+              https://raw.githubusercontent.com/${{ github.repository }}/8825199/data/cnmo_phones_20260721.json \
+              -o "$GIT_CNMO_JSON"; then
               ROWS=$(python3 -c "import json,sys; print(len(json.load(open(sys.argv[1]))))" "$GIT_CNMO_JSON")
               echo "CNMO git history recovery: $ROWS rows -> $GIT_CNMO_JSON"
               if [ "$ROWS" -lt 100 ]; then rm -f "$GIT_CNMO_JSON"; fi
