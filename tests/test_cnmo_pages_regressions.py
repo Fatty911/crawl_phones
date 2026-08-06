@@ -1713,5 +1713,41 @@ class PerSourceStatsTests(unittest.TestCase):
         r = self.repair.analyze_payload(rows, "phones")
         self.assertEqual(r["per_source_stats"]["CNMO"], {"covered": 1, "single": 1, "single_rate": 100.0})
 
+
+
+class ResidueStripTests(unittest.TestCase):
+    """normalize_validation_value 剥离源站页面解析残留（名词解释气泡/链接尾巴）。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.merge = load_script_module("merge_phones_residue", ROOT / "scripts" / "merge_phones.py")
+
+    def test_pconline_explainer_bubble_stripped(self) -> None:
+        # PConline 名词解释气泡：•XX是什么•查看所有XX品牌
+        raw = "打孔屏,多点触摸•多点触摸是什么•查看所有多点触摸iQOO,电容屏|19.8:9|144Hz"
+        cleaned = self.merge._strip_residue(raw)
+        self.assertNotIn("是什么", cleaned)
+        self.assertNotIn("查看所有", cleaned)
+        # 气泡连前面的逗号一并被删（正则跨逗号匹配 •XX是什么•查看所有XX 段）
+        self.assertEqual(cleaned, "打孔屏,多点触摸|19.8:9|144Hz")
+
+    def test_zol_link_tail_stripped(self) -> None:
+        raw = "更多骁龙 8 Elite Gen5手机>，手机性能排行>|2×Prime 4.6GHz+6×Performance 3.62GHz|八核"
+        cleaned = self.merge._strip_residue(raw)
+        self.assertNotIn("手机>", cleaned)
+        self.assertNotIn("排行", cleaned)
+        self.assertNotIn("更多", cleaned)
+        self.assertIn("2×Prime 4.6GHz", cleaned)
+
+    def test_normalize_integrates_residue_strip(self) -> None:
+        a = self.merge.normalize_validation_value("处理器", "骁龙 8 Elite Gen5更多骁龙 8 Elite Gen5手机>，手机性能排行>|2×Prime 4.6GHz|八核")
+        b = self.merge.normalize_validation_value("处理器", "高通骁龙8 Elite Gen5|3nm|Cortex-X4")
+        # 清理后处理器核心型号语义等价
+        self.assertTrue(self.merge.validation_value_equal("处理器", a, b))
+
+    def test_clean_value_unchanged(self) -> None:
+        clean = "6.85英寸|AMOLED|144Hz|支持HDR10+"
+        self.assertEqual(self.merge._strip_residue(clean), clean)
+
 if __name__ == "__main__":
     unittest.main()

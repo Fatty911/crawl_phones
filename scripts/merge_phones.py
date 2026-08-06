@@ -647,8 +647,31 @@ def is_validation_missing(value):
     return str(value).strip().casefold() in VALIDATION_MISSING_VALUES
 
 
+_RESIDUE_PATTERNS = (
+    # PConline 名词解释气泡残留：•多点触摸是什么•查看所有多点触摸iQOO
+    (re.compile(r'•[^•|]{1,24}是什么•查看所有[^•|]*'), ''),
+    # ZOL 链接残留：更多骁龙 8 Elite Gen5手机>，手机性能排行>| / 手机>
+    (re.compile(r'更多[^>|]{1,30}手机>'), ''),
+    (re.compile(r'手机性能排行>'), ''),
+    (re.compile(r'(?:，|,)?[^>|]{0,12}排行>'), ''),
+    (re.compile(r'手机>'), ''),
+    # 残留的 >| 分隔符清理
+    (re.compile(r'>\s*[|｜]'), '|'),
+    # 逗号+管道粘连（更多XX手机> 清理后留下）
+    (re.compile(r'[，,、]\s*[|｜]'), '|'),
+)
+
+
+def _strip_residue(text: str) -> str:
+    """清理源站页面解析残留（名词解释气泡/链接尾巴），使比对值更干净。"""
+    for pattern, repl in _RESIDUE_PATTERNS:
+        text = pattern.sub(repl, text)
+    return text
+
+
 def normalize_validation_value(field, value):
     text = unicodedata.normalize('NFKC', str(value)).strip().casefold()
+    text = _strip_residue(text)
     text = text.replace('纠错', '')
     if field == '上市时间':
         match = re.search(r'((?:19|20)\d{2})\D*(\d{1,2})?\D*(\d{1,2})?', text)
