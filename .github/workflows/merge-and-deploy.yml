@@ -246,7 +246,24 @@ jobs:
           # extract CNMO rows from the live baseline as merge input so the
           # capacity-variant merge logic can apply to historical data.
           if ! compgen -G "data/cnmo_phones_*.json" > /dev/null; then
-            echo "CNMO stable artifact missing, falling back to live baseline CNMO rows..."
+            # 优先从 git 历史恢复最近一次完整 CNMO 原始数据（8825199 移除 Git 前的
+            # data/cnmo_phones_20260721.json，2351 行，是线上 CNMO 行的来源）。
+            # 这样全量重合并时 CNMO 容量变体归并 + 字段级缺失跳过（field-skip）
+            # 都能对存量多源未校验行重新分类，而不是只拿到线上单源行（匹配为 0）。
+            echo "CNMO stable artifact missing, trying git history recovery..."
+            GIT_CNMO_JSON="data/cnmo_phones_git_$(date +%Y%m%d).json"
+            # checkout 默认 fetch-depth=1，先确保 8825199 在本地（浅克隆按 sha fetch）
+            git cat-file -e 8825199^{commit} 2>/dev/null || git fetch origin 8825199 2>/dev/null || true
+            if git show 8825199:data/cnmo_phones_20260721.json > "$GIT_CNMO_JSON" 2>/dev/null; then
+              ROWS=$(python3 -c "import json,sys; print(len(json.load(open(sys.argv[1]))))" "$GIT_CNMO_JSON")
+              echo "CNMO git history recovery: $ROWS rows -> $GIT_CNMO_JSON"
+              if [ "$ROWS" -lt 100 ]; then rm -f "$GIT_CNMO_JSON"; fi
+            else
+              rm -f "$GIT_CNMO_JSON"
+              echo "git history recovery failed, falling back to live baseline"
+            fi
+            if ! compgen -G "data/cnmo_phones_*.json" > /dev/null; then
+            echo "CNMO fallback to live baseline CNMO rows..."
             CNMO_FALLBACK_JSON="data/cnmo_phones_fallback_$(date +%Y%m%d).json"
             if curl --fail --show-error --silent --location --retry 3 --max-time 120 \
               https://phones.jiucai.eu.org/data/latest.json -o /tmp/cnmo-baseline.json; then
@@ -282,6 +299,7 @@ jobs:
             else
               echo "live baseline fetch failed, skip CNMO fallback"
             fi
+          fi
           fi
 
           if [ "$DEBUG_MODE" = "true" ]; then
