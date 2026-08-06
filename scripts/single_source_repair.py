@@ -297,6 +297,17 @@ def analyze_payload(payload: Any, kind: str) -> dict[str, Any]:
 
     top_single.sort(key=lambda item: (-item["rows"], item["identity"]))
     total = len(records)
+
+    # 各来源独立覆盖与单源占比诊断（自发现：输入不足/覆盖不均的根因线索）
+    per_source = {}
+    for source in sorted({src for record in records for src in record["sources"]}):
+        src_records = [record for record in records if source in record["sources"]]
+        src_single = [record for record in src_records if len(record["sources"]) == 1]
+        per_source[source] = {
+            "covered": len(src_records),
+            "single": len(src_single),
+            "single_rate": round(len(src_single) * 100 / len(src_records), 2) if src_records else 0.0,
+        }
     return {
         "schema": f"{kind}:{shape}",
         "source_fields": dict(source_fields),
@@ -311,6 +322,7 @@ def analyze_payload(payload: Any, kind: str) -> dict[str, Any]:
             "identity_only_single": single_identity_only,
             "cross_source_merge_gap": cross_source_merge_gap,
         },
+        "per_source_stats": per_source,
         "discrepancy_count": len(discrepancy_records),
         "unverified_multi_count": len(unverified_records),
         "top_discrepancies": discrepancy_records[:30],
@@ -355,6 +367,12 @@ Pages URL：{pages_url}
 2. 根因属于 merge-match、source-fetch、source-filter、schema-normalization 之一；
 3. 修复只涉及允许列表中的现有业务 Python 文件；
 4. patch 是可以直接应用到基线的最小 unified diff，不改 workflow、依赖、文档、测试、配置、密钥、权限或本修复器自身。
+
+per_source_stats 自发现指引：报告中 per_source_stats 给出各来源的 covered（参与行数）与
+single_rate（单源占比）。若某源 single_rate 显著高于其他源（如 CNMO 57% vs ZOL 31%），
+说明该源覆盖广但匹配不足——优先检查该源与其他源的型号命名/粒度差异（如 CNMO 容量变体
+"型号(8+128GB)" vs 型号级），或该源输入是否完整（输入行数远小于基线覆盖=数据源产出不足，
+应报告 source-fetch 根因而非 merge 问题）。
 
 多源差异/未校验目标（朝"多源一致"努力）：
 - 对"多源差异"行，若字段差异是格式/表达差异（如 "256GB|UFS 3.1|不支持容量扩展" vs "256GB"、"

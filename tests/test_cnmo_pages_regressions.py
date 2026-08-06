@@ -1681,5 +1681,37 @@ class MultiSourceRepairAnalysisTests(unittest.TestCase):
         report = self.repair.analyze_payload(rows, "phones")
         self.assertEqual(report["unverified_multi_count"], 0)
 
+
+
+class PerSourceStatsTests(unittest.TestCase):
+    """analyze_payload 的 per_source_stats 自发现诊断。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.repair = load_script_module("single_source_repair_ps", ROOT / "scripts" / "single_source_repair.py")
+
+    def test_per_source_single_rate(self) -> None:
+        rows = [
+            {"型号": "A", "品牌": "测试", "数据来源": "CNMO", "验证状态": "单源"},
+            {"型号": "B", "品牌": "测试", "数据来源": "CNMO", "验证状态": "单源"},
+            {"型号": "C", "品牌": "测试", "数据来源": "中关村在线+CNMO", "验证状态": "双源一致"},
+            {"型号": "D", "品牌": "测试", "数据来源": "中关村在线", "验证状态": "单源"},
+        ]
+        r = self.repair.analyze_payload(rows, "phones")
+        stats = r["per_source_stats"]
+        self.assertEqual(stats["CNMO"]["covered"], 3)
+        self.assertEqual(stats["CNMO"]["single"], 2)
+        self.assertEqual(stats["CNMO"]["single_rate"], round(2 * 100 / 3, 2))
+        self.assertEqual(stats["中关村在线"]["covered"], 2)
+        self.assertEqual(stats["中关村在线"]["single"], 1)
+        self.assertEqual(stats["中关村在线"]["single_rate"], 50.0)
+
+    def test_per_source_single_row(self) -> None:
+        rows = [
+            {"型号": "A", "品牌": "测试", "数据来源": "CNMO", "验证状态": "单源"},
+        ]
+        r = self.repair.analyze_payload(rows, "phones")
+        self.assertEqual(r["per_source_stats"]["CNMO"], {"covered": 1, "single": 1, "single_rate": 100.0})
+
 if __name__ == "__main__":
     unittest.main()
