@@ -723,18 +723,31 @@ def classify_source_agreement(source_rows):
     if len(names) > 3:
         return '多源未校验', '来源数量超过三源判定范围'
 
+    # 字段级缺失处理（朝"多源一致"努力）：
+    # 任一源缺失的验证字段不参与一致性比对（该源无信息可比对），但不再整体阻断——
+    # 只要存在至少一个"所有源都有值"的字段就继续判定一致/差异；
+    # 只有全部验证字段都缺失时才判多源未校验。
     missing = []
-    for name, row in source_rows.items():
-        for field in VALIDATION_FIELDS:
-            if is_validation_missing(row.get(field)):
-                missing.append(f'{name}缺失{field}')
-    if missing:
-        return '多源未校验', '；'.join(missing)
+    comparable_fields = []
+    for field in VALIDATION_FIELDS:
+        present_names = [
+            name for name, row in source_rows.items()
+            if not is_validation_missing(row.get(field))
+        ]
+        if len(present_names) == len(names):
+            comparable_fields.append(field)
+        else:
+            for name in names:
+                if is_validation_missing(source_rows[name].get(field)):
+                    missing.append(f'{name}缺失{field}')
+    if not comparable_fields:
+        detail = '；'.join(missing) if missing else '所有验证字段均缺失'
+        return '多源未校验', detail
 
     def rows_equal(left, right):
         return all(
             validation_value_equal(field, left.get(field), right.get(field))
-            for field in VALIDATION_FIELDS
+            for field in comparable_fields
         )
 
     equal_pairs = []
@@ -744,17 +757,21 @@ def classify_source_agreement(source_rows):
                 equal_pairs.append((left_name, right_name))
 
     differences = []
-    for field in VALIDATION_FIELDS:
+    for field in comparable_fields:
         values = [source_rows[name].get(field) for name in names]
         if not all(validation_value_equal(field, values[0], value) for value in values[1:]):
             detail = '; '.join(f'{name}={source_rows[name].get(field)}' for name in names)
             differences.append(f'{field}: {detail}')
     difference_text = '；'.join(differences) if differences else '-'
+    # 缺失字段作为提示附加（不阻断判定）
+    if missing:
+        missing_text = '；'.join(missing)
+        difference_text = missing_text if difference_text == '-' else missing_text + '；' + difference_text
 
     if len(names) == 2:
         return ('双源一致', '-') if equal_pairs else ('双源差异', difference_text)
     if len(equal_pairs) == 3:
-        return '三源一致', '-'
+        return '三源一致', difference_text
     if equal_pairs:
         return '双源一致', difference_text
     return '三源差异', difference_text

@@ -812,7 +812,9 @@ class ThreeSourceValidationStatusTests(unittest.TestCase):
         self.assertEqual("三源差异", status)
         self.assertIn("处理器", differences)
 
-    def test_missing_key_field_never_counts_as_source_consistency(self) -> None:
+    def test_missing_key_field_skips_field_but_keeps_consistency_judgement(self) -> None:
+        # 新语义（朝多源一致努力）：任一源缺失的字段不参与比对（该源无信息），
+        # 只要存在双方都有值的字段就继续判定；缺失字段作为提示保留在差异文本。
         rows = {
             "中关村在线": self.source_row("1"),
             "太平洋电脑网": self.source_row("1", 电池="暂无"),
@@ -821,8 +823,27 @@ class ThreeSourceValidationStatusTests(unittest.TestCase):
 
         status, differences = self.merge.classify_source_agreement(rows)
 
-        self.assertEqual("多源未校验", status)
+        self.assertEqual("三源一致", status)
         self.assertIn("太平洋电脑网缺失电池", differences)
+
+    def test_all_validation_fields_missing_stays_unverified(self) -> None:
+        # 全部验证字段都缺失才判多源未校验
+        rows = {
+            "中关村在线": self.source_row("1", 处理器="", 内存="", 存储="", 屏幕="", 电池="", 摄像头参数="", 上市时间=""),
+            "太平洋电脑网": self.source_row("1", 处理器="", 内存="", 存储="", 屏幕="", 电池="", 摄像头参数="", 上市时间=""),
+        }
+        status, differences = self.merge.classify_source_agreement(rows)
+        self.assertEqual("多源未校验", status)
+
+    def test_single_source_missing_field_still_detects_real_conflict(self) -> None:
+        # 缺字段不掩盖真实冲突：可比对字段有冲突仍判差异
+        rows = {
+            "中关村在线": self.source_row("1", 内存="12GB", 处理器=""),
+            "CNMO": self.source_row("1", 内存="16GB", 处理器=""),
+        }
+        status, differences = self.merge.classify_source_agreement(rows)
+        self.assertEqual("双源差异", status)
+        self.assertIn("内存", differences)
 
 
     def test_cnmo_match_reclassifies_from_actual_three_source_values(self) -> None:
