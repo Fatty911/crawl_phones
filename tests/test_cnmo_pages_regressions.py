@@ -1082,6 +1082,44 @@ class MergeCnmoCoverageTests(unittest.TestCase):
         self.assertEqual("中关村在线+CNMO", base[0]["数据来源"])
         self.assertEqual("多源未校验", base[0]["验证状态"])
 
+    def test_model_level_base_with_field_capacity_options_merges_variant_extras(self) -> None:
+        """型号级 base 的 内存/存储 字段携带规格列表（256GB|512GB|1TB）时，
+        仍应接受同型号带容量 extra 归并：字段容量列表常只列出部分配置，
+        用它排除型号级 base 会把本可归并的 CNMO 变体误判为单源（线上 gap 主因）。"""
+        base = [
+            {
+                "型号": "iQOO 13", "品牌": "iQOO", "数据来源": "太平洋电脑网", "验证状态": "单源",
+                "内存": "LPDDR5X Ultra", "存储": "256GB|512GB|1TB|UFS 4.0|不支持容量扩展",
+            },
+        ]
+        extra = [{"型号": "iQOO 13(12+512GB)", "数据来源": "CNMO", "验证状态": "单源",
+                  "内存": "12GB|LPDDR5x", "存储": "512GB"}]
+        self.assertEqual((), self.merge.model_storage_signature(base[0]))
+        self.assertEqual((12, 512), self.merge.model_storage_signature(extra[0]))
+        appended, matched = self.merge.append_unique_single_source(base, extra, "CNMO")
+
+        self.assertEqual([], appended)
+        self.assertEqual(1, matched)
+        self.assertEqual("太平洋电脑网+CNMO", base[0]["数据来源"])
+        # 归并不折叠冲突：型号级 base 的内存值（LPDDR5X Ultra）与变体（12GB）仍判差异
+        self.assertIn("差异", base[0]["验证状态"])
+
+    def test_different_capacity_variants_do_not_cross_match_into_model_level_base(self) -> None:
+        """不同容量变体之间不得相互归并：型号级 base 只吸收其容量落在
+        字段规格列表内的变体，容量与 base 字段规格互斥的变体保持独立。"""
+        base = [
+            {
+                "型号": "测试 Pro", "品牌": "测试", "数据来源": "太平洋电脑网", "验证状态": "单源",
+                "内存": "16GB", "存储": "512GB",
+            },
+        ]
+        extra = [{"型号": "测试 Pro(16GB+1TB)", "数据来源": "CNMO", "验证状态": "单源"}]
+        # base 字段规格为 16GB/512GB，extra 是 16GB+1TB：存储不落在规格内
+        self.assertEqual((16, 512), self.merge.model_storage_signature(base[0]))
+        appended, matched = self.merge.append_unique_single_source(base, extra, "CNMO")
+        self.assertEqual(0, matched)
+        self.assertEqual(1, len(appended))
+
     def test_capacity_unknown_ambiguous_base_rows_stay_unmatched(self) -> None:
         """无容量候选多于一个时仍不归并（歧义保护）。"""
         base = [
@@ -1551,6 +1589,27 @@ class ValidationSemanticEquivalenceTests(unittest.TestCase):
     def test_processor_conflict_is_real_difference(self) -> None:
         self.assertFalse(self.merge.validation_value_equal("处理器", "骁龙 8 Gen3", "天玑9400"))
 
+    def test_camera_pixel_intersection_is_equal(self) -> None:
+        # PConline 传感器描述 vs CNMO 像素列表：主摄像素集合有交集即视为格式差异
+        self.assertTrue(self.merge.validation_value_equal(
+            "摄像头参数",
+            "红外感应,陀螺仪|5000万像素,超广角摄像头，F2.05|5000万像素,潜望长焦摄像头，F2.65",
+            "5000+5000+5000万像素|3200万像素|支持20倍数字变焦",
+        ))
+
+    def test_camera_pixel_disjoint_is_real_difference(self) -> None:
+        # 像素无交集（200万 vs 5000+800万）是真冲突，不得折叠
+        self.assertFalse(self.merge.validation_value_equal(
+            "摄像头参数", "距离感应|200万像素,黑白摄像头，F2.4", "5000+800万像素|1600万像素",
+        ))
+
+    def test_camera_video_spec_vs_pixel_list_is_real_difference(self) -> None:
+        # 一侧只有视频规格文本、另一侧只有像素列表：无共同像素，不折叠
+        self.assertFalse(self.merge.validation_value_equal(
+            "摄像头参数", "视频: 后置最高支持8K视频拍摄，后置慢镜头最高支持1080P",
+            "5000+5000+5000万像素|3200万像素",
+        ))
+
 
 
 class PublishYearFilterTests(unittest.TestCase):
@@ -1869,6 +1928,20 @@ class DiscrepancyPatternTests(unittest.TestCase):
         dp = r["discrepancy_patterns"]
         for key in ("screen_missing_size", "battery_missing_capacity", "date_granularity"):
             self.assertIn(key, dp["samples"])
+
+    def test_camera_embedded_video_labels_are_not_field_discrepancies(self) -> None:
+        # 摄像头参数值内部的全角分号子标签（"视频:/前置视频:"，derive_camera_summary 输出）
+        # 不得被当作独立验证字段计数，摄像头块也不得因内部全角分号被截断。
+        rows = [
+            {
+                "型号": "A手机", "品牌": "测试", "数据来源": "中关村在线+CNMO", "验证状态": "双源差异",
+                "交叉验证差异": "摄像头参数: 中关村在线=视频: 后置最高支持8K视频拍摄；前置视频: 最高支持4K视频拍摄; CNMO=5000+5000+5000万像素|3200万像素",
+            },
+        ]
+        dp = self.repair.analyze_payload(rows, "phones")["discrepancy_patterns"]
+        self.assertIn("摄像头参数", dp["field_discrepancies"])
+        self.assertNotIn("视频", dp["field_discrepancies"])
+        self.assertNotIn("前置视频", dp["field_discrepancies"])
 
 
 

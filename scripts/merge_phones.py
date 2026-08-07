@@ -737,6 +737,16 @@ def _semantic_fallback_equal(field, left, right):
     if size_a and size_b and size_a & size_b:
         return True
 
+    # 摄像头参数：主摄像素集合交集非空即一致。
+    # 同型号两源对摄像头的描述粒度不同（PConline 传感器描述"5000万像素,超广角摄像头"
+    # vs CNMO 像素列表"5000+5000+5000万像素"），只要像素集合有交集即视为格式差异；
+    # 无交集（如 200万 vs 5000+800万）是真实冲突，不得折叠。
+    if field == '摄像头参数':
+        cam_a = set(re.findall(r'\d+\s*万像素', a_str))
+        cam_b = set(re.findall(r'\d+\s*万像素', b_str))
+        if cam_a and cam_b and cam_a & cam_b:
+            return True
+
     # 处理器：品牌核心型号包含
     if field == '处理器':
         proc_patterns = [
@@ -1305,14 +1315,20 @@ def append_unique_single_source(base_rows, extra_rows, source):
             if len(compatible) == 1:
                 matched_index = compatible[0]
         if matched_index is None:
-            # 型号级 base（无容量签名）也接受带容量 extra 的归并：
-            # CNMO 以"型号×配置"粒度收录（如 Hi nova 10(8+128GB)），
-            # 而 ZOL/PConline 多为型号级（Hi nova 10），二者本属同一型号，
+            # 型号级 base（型号名无容量变体）也接受带容量 extra 的归并：
+            # CNMO 以"型号×配置"粒度收录（如 iQOO 13(12+512GB)），
+            # 而 ZOL/PConline 多为型号级（iQOO 13），二者本属同一型号，
             # 不应因容量签名差异把 CNMO 变体全部降为单源。
-            # 仅当无容量候选唯一时才归并，避免歧义。
-            no_capacity = [index for index in candidates if not model_storage_signatures(base_rows[index])]
-            if len(no_capacity) == 1:
-                matched_index = no_capacity[0]
+            # 判断依据从"字段是否携带任何容量"（model_storage_signatures 非空）
+            # 改为"型号名是否为型号级"（model_storage_signature 为空）：
+            # 型号级 base 的 内存/存储 字段常只列出部分配置（如 256GB|512GB|1TB），
+            # 用字段容量排除型号级 base 会把本可归并的变体误判为单源（线上 gap 主因）。
+            # 仍保持唯一候选守卫：多于一个型号级 base 时归并视为歧义不执行。
+            # 归并后 classify_source_agreement 仍会对真实容量冲突（如 16GB vs 12GB）
+            # 标记"双源差异"并保留两源原值，只让差异在多源行中可见，不折叠冲突。
+            model_level = [index for index in candidates if not model_storage_signature(base_rows[index])]
+            if len(model_level) == 1:
+                matched_index = model_level[0]
 
         if matched_index is not None:
             row = base_rows[matched_index]

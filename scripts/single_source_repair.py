@@ -251,6 +251,29 @@ def record_sources(records: list[dict[str, Any]], index: int) -> list[str]:
     return []
 
 
+# 交叉验证差异的顶层字段块只限验证字段（与 merge_phones.VALIDATION_FIELDS 一致）。
+# 摄像头参数值内部会用 全角分号 连接"视频/前置视频"等子标签（derive_camera_summary
+# 的输出），直接按 全角分号 切分会把摄像头值截断并把 视频/前置视频 误计为独立字段。
+_VALIDATION_FIELDS = ("处理器", "内存", "存储", "屏幕", "电池", "摄像头参数", "上市时间")
+_DIFF_BLOCK_SPLIT = re.compile(r"；(?=(?:" + "|".join(_VALIDATION_FIELDS) + r"): )")
+
+
+def _top_level_diff_fields(diff_text: str) -> list[tuple[str, str]]:
+    """将 交叉验证差异 文本解析为顶层验证字段块列表 [(字段名, 值部分)]。
+
+    字段块之间以 全角分号 分隔（"内存: 中关村在线=16GB; CNMO=12GB；摄像头参数: ..."），
+    只在 "；"+验证字段名+": " 处切分，避免把摄像头值内部的全角分号子标签
+    （"；前置视频: "）当作字段边界，也避免 视频/前置视频 被误计为字段差异。
+    """
+    blocks: list[tuple[str, str]] = []
+    for block in _DIFF_BLOCK_SPLIT.split(diff_text):
+        match = re.match(r"(" + "|".join(_VALIDATION_FIELDS) + r"): (.*)$", block.strip())
+        if not match:
+            continue
+        blocks.append((match.group(1), match.group(2)))
+    return blocks
+
+
 def analyze_payload(payload: Any, kind: str) -> dict[str, Any]:
     """Validate and summarize one of the three repository-specific payloads."""
     rows, shape = _extract_rows(payload)
@@ -336,19 +359,12 @@ def analyze_payload(payload: Any, kind: str) -> dict[str, Any]:
         if "差异" not in status:
             continue
         diff_text = str(row.get("交叉验证差异", "") or "")
-        # 字段级计数：差异文本中的 "字段: 源A=值; 源B=值"
-        for m in _re.finditer(r'([\u4e00-\u9fa5A-Za-z]{2,12}): ', diff_text):
-            field = m.group(1)
-            if field in ("内存", "存储", "屏幕", "电池", "处理器", "摄像头参数", "上市时间", "视频", "前置视频"):
-                field_discrepancies[field] += 1
-        # 模式检测：差异文本格式 "字段: 源A=值; 源B=值；字段2: ..."（源值间半角分号、字段间全角分号）
         identity = _identity(kind, row)
-        low = diff_text.lower()
-        for block in diff_text.split("；"):
-            if ":" not in block:
-                continue
-            field_part, _, values_part = block.partition(":")
-            field_name = field_part.strip()
+        # 字段级计数：只计顶层验证字段块（摄像头值内部的"视频/前置视频"子标签不算独立字段）
+        for field_name, _values_part in _top_level_diff_fields(diff_text):
+            field_discrepancies[field_name] += 1
+        # 模式检测：差异文本格式 "字段: 源A=值; 源B=值；字段2: ..."（源值间半角分号、字段间全角分号）
+        for field_name, values_part in _top_level_diff_fields(diff_text):
             side_values = []
             for pair in values_part.split("; "):
                 if "=" in pair:
@@ -394,12 +410,8 @@ def analyze_payload(payload: Any, kind: str) -> dict[str, Any]:
             continue
         diff_text = str(row.get("交叉验证差异", "") or "")
         identity = _identity(kind, row)
-        for block in diff_text.split("；"):
-            if ":" not in block:
-                continue
-            field_name, _, values_part = block.partition(":")
-            field_name = field_name.strip()
-            if field_name not in ("摄像头参数", "处理器", "屏幕", "电池", "内存", "存储", "上市时间", "视频", "前置视频"):
+        for field_name, values_part in _top_level_diff_fields(diff_text):
+            if field_name not in ("摄像头参数", "处理器", "屏幕", "电池", "内存", "存储", "上市时间"):
                 continue
             sides = [s for s in values_part.split("; ") if "=" in s]
             if len(sides) < 2:
