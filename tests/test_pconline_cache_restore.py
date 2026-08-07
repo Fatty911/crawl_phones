@@ -344,6 +344,8 @@ class PconlineCacheRestoreTests(unittest.TestCase):
         self.assertEqual(mark_block.count('touch "$PCONLINE_DONE_MARKER"'), 1)
         self.assertNotIn("steps.validate_data.outputs.has_data", mark_block)
 
+        workflow = yaml.safe_load(text)
+        steps = workflow["jobs"]["pconline-crawl"]["steps"]
         for step_name in (
             "Parse and merge data",
             "Validate generated PConline data",
@@ -351,15 +353,17 @@ class PconlineCacheRestoreTests(unittest.TestCase):
             "Upload crawl data",
             "检测新增数据并触发合并分析",
         ):
-            workflow = yaml.safe_load(text)
-            steps = workflow["jobs"]["pconline-crawl"]["steps"]
             step = next(item for item in steps if item.get("name") == step_name)
             self.assertIn(
-                "steps.step1.outputs.complete == 'true'", str(step.get("if", ""))
+                "steps.step1.outputs.failed != 'true'", str(step.get("if", ""))
             )
 
         dispatch_block = text.split("- name: 触发合并分析工作流", 1)[1]
-        self.assertIn("steps.step1.outputs.complete == 'true'", dispatch_block)
+        self.assertIn("steps.step1.outputs.failed != 'true'", dispatch_block)
+
+        # 安全契约：.done marker 只在扫描完成（scan_complete）时打，exit 10 未完成不误标
+        mark_step = next(item for item in steps if item.get("name") == "Mark crawl complete and commit")
+        self.assertIn("scan_complete", str(mark_step.get("run", "")))
 
     def test_git_sync_recognizes_repository_progress_paths(self):
         text = (ROOT / "scripts/git_sync_progress.sh").read_text(encoding="utf-8")

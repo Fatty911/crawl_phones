@@ -317,7 +317,7 @@ jobs:
           fi
 
       - name: 触发合并分析工作流
-        if: steps.step1.outputs.complete == 'true' && steps.upload_data.outcome == 'success' && steps.validate_data.outputs.has_data == 'true'
+        if: steps.step1.outputs.failed != 'true' && steps.upload_data.outcome == 'success' && steps.validate_data.outputs.has_data == 'true'
         env:
           GH_TOKEN: ${{ secrets.ACTION_PAT }}
         run: |
