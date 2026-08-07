@@ -1782,5 +1782,53 @@ class DiffTextStripTests(unittest.TestCase):
         self.assertNotIn("是什么", merged[0]["交叉验证差异"])
         self.assertIn("打孔屏", merged[0]["交叉验证差异"])
 
+
+
+class PclMergeStrategyTests(unittest.TestCase):
+    """PConline 爬虫字段合并：规格值（尺寸/容量）优先，不因"保留较长"丢失。"""
+
+    def _load_crawler(self):
+        if str(ROOT / "scripts") not in sys.path:
+            sys.path.insert(0, str(ROOT / "scripts"))
+        spec = importlib.util.spec_from_file_location(
+            "crawl_pconline_merge_tests", ROOT / "scripts" / "crawl_pconline.py")
+        module = importlib.util.module_from_spec(spec)
+        # 模块顶层会执行 argparse，需要 mock sys.argv
+        with mock.patch.object(sys, "argv", ["crawl_pconline.py"]):
+            spec.loader.exec_module(module)
+        return module
+
+    def test_screen_size_kept_ahead_of_type(self) -> None:
+        module = self._load_crawler()
+        phone = {
+            "屏幕大小": "6.85英寸",
+            "屏幕类型": "打孔屏,多点触摸",
+            "屏幕比例": "19.8:9",
+            "屏幕刷新率": "144Hz",
+        }
+        r = module.normalize_phone_fields(phone)
+        self.assertIn("6.85英寸", r["屏幕"])
+        self.assertTrue(r["屏幕"].startswith("6.85英寸"), r["屏幕"])
+
+    def test_battery_capacity_kept(self) -> None:
+        module = self._load_crawler()
+        phone = {"电池类型": "不可拆卸式电池", "电池容量": "7400mAh"}
+        r = module.normalize_phone_fields(phone)
+        self.assertIn("7400mAh", r["电池"])
+        self.assertTrue(r["电池"].startswith("7400mAh"), r["电池"])
+
+    def test_single_value_unchanged(self) -> None:
+        module = self._load_crawler()
+        r = module.normalize_phone_fields({"屏幕类型": "打孔屏,多点触摸"})
+        self.assertEqual(r["屏幕"], "打孔屏,多点触摸")
+
+    def test_merged_screen_equals_cnmo_by_size(self) -> None:
+        # 端到端：拼接后屏幕与 CNMO 尺寸交集一致
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import merge_phones  # noqa: F401
+        merge = load_script_module("merge_phones_pcltest", ROOT / "scripts" / "merge_phones.py")
+        screen = "6.85英寸|打孔屏,多点触摸"
+        self.assertTrue(merge.validation_value_equal("屏幕", screen, "6.85英寸|AMOLED|144Hz|支持HDR10+"))
+
 if __name__ == "__main__":
     unittest.main()

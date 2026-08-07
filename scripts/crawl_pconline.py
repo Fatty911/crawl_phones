@@ -91,10 +91,30 @@ def normalize_phone_fields(phone: Dict) -> Dict:
         elif new_key not in normalized:
             normalized[new_key] = value
         elif value and normalized[new_key]:
-            # 两个都有值，保留较长的
-            if len(str(value)) > len(str(normalized[new_key])):
+            # 屏幕/电池等复合规格字段：拼接全部有效值，规格值（尺寸/容量）排前；
+            # 其他字段保持原策略（保留较长）
+            if new_key in ('屏幕', '电池'):
+                merged = []
+                parts = [str(normalized[new_key]), str(value)]
+                # 含规格单位的优先（英寸/mAh/GB），避免"保留较长"丢掉 6.85英寸/7400mAh
+                parts.sort(key=lambda v: (0 if _has_spec_unit(v) else 1))
+                for part in parts:
+                    if part and part not in merged:
+                        merged.append(part)
+                normalized[new_key] = '|'.join(merged)
+            elif len(str(value)) > len(str(normalized[new_key])):
                 normalized[new_key] = value
     return normalized
+
+
+def _has_spec_unit(text: str) -> bool:
+    """是否含规格单位（屏幕尺寸/电池容量/存储内存）。"""
+    lowered = text.lower()
+    return (
+        '英寸' in text
+        or 'mah' in lowered
+        or bool(re.search(r'\d+\s*[gt]b', lowered))
+    )
 
 # 手机品牌推导
 BRAND_PATTERNS = [

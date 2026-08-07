@@ -683,6 +683,13 @@ def normalize_validation_value(field, value):
 def validation_value_equal(field, left, right):
     if normalize_validation_value(field, left) == normalize_validation_value(field, right):
         return True
+    if field == '上市时间':
+        a = normalize_validation_value(field, left)
+        b = normalize_validation_value(field, right)
+        if isinstance(a, tuple) and isinstance(b, tuple) and len(a) == 3 and len(b) == 3:
+            # 一方只到年月（日=0）而另一方精确到日：年月一致即粒度差，非冲突
+            if a[0] == b[0] and a[1] == b[1] and (a[2] == 0 or b[2] == 0):
+                return True
     return _semantic_fallback_equal(field, left, right)
 
 
@@ -713,6 +720,15 @@ def _semantic_fallback_equal(field, left, right):
     bat_a = set(re.findall(r'\d+\s*mAh', a_str, re.IGNORECASE))
     bat_b = set(re.findall(r'\d+\s*mAh', b_str, re.IGNORECASE))
     if bat_a and bat_b and bat_a & bat_b:
+        return True
+    # 一方无容量信息（如仅"不可拆卸式电池"）另一方有：信息缺失非冲突；
+    # 但可拆卸性互斥（可拆卸 vs 不可拆卸）仍是真实差异
+    if bool(bat_a) != bool(bat_b):
+        def _removable(text: str) -> bool:
+            return '可拆卸' in text and '不可拆卸' not in text
+
+        if _removable(a_str) != _removable(b_str):
+            return False
         return True
 
     # 屏幕：尺寸交集
