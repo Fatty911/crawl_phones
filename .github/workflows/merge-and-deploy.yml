@@ -337,8 +337,18 @@ jobs:
             debug_count=$(gh api "repos/${{ github.repository }}/actions/runs/${CRAWLER_RUN_ID}/artifacts?name=${debug_artifact}&per_page=100" \
               --jq '[.artifacts[] | select(.expired == false and .name == "'"$debug_artifact"'")] | length')
             if [ "$debug_count" -ne 1 ]; then
-              echo "必须恰好找到一个未过期 debug artifact ${debug_artifact}，实际 ${debug_count}"
-              exit 1
+              # fallback: time-limited crawler (exit 10) only uploaded the early artifact
+              early_artifact="${source}-phone-data-early-${CRAWLER_RUN_ID}-${CRAWLER_RUN_ATTEMPT}"
+              early_count=$(gh api "repos/${{ github.repository }}/actions/runs/${CRAWLER_RUN_ID}/artifacts?name=${early_artifact}&per_page=100" \
+                --jq '[.artifacts[] | select(.expired == false and .name == "'"$early_artifact"'")] | length')
+              if [ "$early_count" -eq 1 ]; then
+                echo "debug artifact missing, fall back to early artifact ${early_artifact}"
+                debug_artifact="$early_artifact"
+                debug_count=1
+              else
+                echo "must find exactly one debug artifact ${debug_artifact} (early fallback ${early_artifact} absent), got ${debug_count}/${early_count}"
+                exit 1
+              fi
             fi
             debug_dir=$(mktemp -d)
             gh run download "$CRAWLER_RUN_ID" --repo "${{ github.repository }}" --name "$debug_artifact" --dir "$debug_dir"
