@@ -43,8 +43,8 @@ env:
   SOURCE_SHA: ${{ github.event_name == 'workflow_run' && github.sha || inputs.source_sha }}
   PAGES_ARTIFACT_NAME: github-pages
   NVIDIA_NIM_MODEL: deepseek-ai/deepseek-v4-flash
-  TRIGGER_MODE: ${{ inputs.trigger || 'pages' }}
-  CI_RUN_ID: ${{ inputs.ci_run_id || '' }}
+  TRIGGER_MODE: ${{ github.event_name == 'workflow_dispatch' && (inputs.trigger || 'pages') || 'pages' }}
+  CI_RUN_ID: ${{ github.event_name == 'workflow_dispatch' && (inputs.ci_run_id || '') || '' }}
 
 jobs:
   propose:
