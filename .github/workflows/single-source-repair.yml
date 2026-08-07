@@ -459,8 +459,11 @@ jobs:
             echo "Agent 无修改（CI 失败无法修复或无需修复）"
             python3 - <<'PY'
           import json
-          json.dump({"version": 1, "status": "no-op", "repo_kind": "$REPO_KIND", "base_sha": "$SOURCE_SHA",
-                     "pages_run_id": "$CI_RUN_ID", "pages_url": "$PAGES_URL", "chain_id": "ci-$CI_RUN_ID",
+          import os
+          json.dump({"version": 1, "status": "no-op", "repo_kind": os.environ.get("REPO_KIND", ""),
+                     "base_sha": os.environ.get("SOURCE_SHA", ""),
+                     "pages_run_id": os.environ.get("CI_RUN_ID", ""), "pages_url": os.environ.get("PAGES_URL", ""),
+                     "chain_id": "ci-" + os.environ.get("CI_RUN_ID", ""),
                      "round": 1, "analysis": "CI 失败但 Agent 未产生修改（见 opencode_agent.jsonl）"}, open("single_source_repair_result.json", "w", encoding="utf-8"), ensure_ascii=False)
           PY
             exit 0
@@ -468,9 +471,12 @@ jobs:
           python3 - <<'PY'
           import hashlib
           import json
+          import os
           patch = open("single_source_repair.patch", encoding="utf-8").read()
-          json.dump({"version": 1, "status": "approved", "repo_kind": "$REPO_KIND", "base_sha": "$SOURCE_SHA",
-                     "pages_run_id": "$CI_RUN_ID", "pages_url": "$PAGES_URL", "chain_id": "ci-$CI_RUN_ID",
+          json.dump({"version": 1, "status": "approved", "repo_kind": os.environ.get("REPO_KIND", ""),
+                     "base_sha": os.environ.get("SOURCE_SHA", ""),
+                     "pages_run_id": os.environ.get("CI_RUN_ID", ""), "pages_url": os.environ.get("PAGES_URL", ""),
+                     "chain_id": "ci-" + os.environ.get("CI_RUN_ID", ""),
                      "round": 1, "patch_sha256": hashlib.sha256(patch.encode("utf-8")).hexdigest(),
                      "analysis": "OpenCode Agent 修复 CI 失败（见 opencode_agent.jsonl）"}, open("single_source_repair_result.json", "w", encoding="utf-8"), ensure_ascii=False)
           PY
