@@ -1830,5 +1830,45 @@ class PclMergeStrategyTests(unittest.TestCase):
         screen = "6.85英寸|打孔屏,多点触摸"
         self.assertTrue(merge.validation_value_equal("屏幕", screen, "6.85英寸|AMOLED|144Hz|支持HDR10+"))
 
+
+
+class DiscrepancyPatternTests(unittest.TestCase):
+    """analyze_payload 的字段级差异模式诊断（自发现根因线索）。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.repair = load_script_module("single_source_repair_patterns", ROOT / "scripts" / "single_source_repair.py")
+
+    def _rows(self):
+        return [
+            {
+                "型号": "A手机", "数据来源": "太平洋电脑网+CNMO", "验证状态": "双源差异",
+                "交叉验证差异": "屏幕: 太平洋电脑网=打孔屏,多点触摸|144Hz; CNMO=6.85英寸|AMOLED|144Hz；电池: 太平洋电脑网=不可拆卸式电池; CNMO=锂聚合物电池,7000mAh|不支持；上市时间: 太平洋电脑网=2025年,10月20日; CNMO=2025年10月",
+            },
+            {
+                "型号": "B手机", "数据来源": "太平洋电脑网+CNMO", "验证状态": "双源差异",
+                "交叉验证差异": "电池: 太平洋电脑网=不可拆卸式电池; CNMO=锂聚合物电池,5000mAh",
+            },
+            {
+                "型号": "C手机", "数据来源": "中关村在线+CNMO", "验证状态": "双源差异",
+                "交叉验证差异": "存储: 中关村在线=256GB|UFS 3.1; CNMO=512GB|UFS 4.0",
+            },
+        ]
+
+    def test_pattern_counts(self) -> None:
+        r = self.repair.analyze_payload(self._rows(), "phones")
+        dp = r["discrepancy_patterns"]
+        self.assertGreaterEqual(dp["patterns"].get("screen_missing_size", 0), 1)
+        self.assertGreaterEqual(dp["patterns"].get("battery_missing_capacity", 0), 1)
+        self.assertGreaterEqual(dp["patterns"].get("date_granularity", 0), 1)
+        for field in ("电池", "屏幕", "上市时间"):
+            self.assertIn(field, dp["field_discrepancies"])
+
+    def test_pattern_samples_present(self) -> None:
+        r = self.repair.analyze_payload(self._rows(), "phones")
+        dp = r["discrepancy_patterns"]
+        for key in ("screen_missing_size", "battery_missing_capacity", "date_granularity"):
+            self.assertIn(key, dp["samples"])
+
 if __name__ == "__main__":
     unittest.main()

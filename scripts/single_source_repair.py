@@ -308,6 +308,61 @@ def analyze_payload(payload: Any, kind: str) -> dict[str, Any]:
             "single": len(src_single),
             "single_rate": round(len(src_single) * 100 / len(src_records), 2) if src_records else 0.0,
         }
+
+    # 字段级差异模式诊断（自发现：差异的字段分布与典型模式，指导 LLM 归因）
+    import re as _re
+    field_discrepancies: Counter[str] = Counter()
+    pattern_counts: Counter[str] = Counter()
+    pattern_samples: dict[str, str] = {}
+    for index, row in enumerate(rows):
+        status = str(row.get("验证状态", "") or "")
+        if "差异" not in status:
+            continue
+        diff_text = str(row.get("交叉验证差异", "") or "")
+        # 字段级计数：差异文本中的 "字段: 源A=值; 源B=值"
+        for m in _re.finditer(r'([\u4e00-\u9fa5A-Za-z]{2,12}): ', diff_text):
+            field = m.group(1)
+            if field in ("内存", "存储", "屏幕", "电池", "处理器", "摄像头参数", "上市时间", "视频", "前置视频"):
+                field_discrepancies[field] += 1
+        # 模式检测：差异文本格式 "字段: 源A=值; 源B=值；字段2: ..."（源值间半角分号、字段间全角分号）
+        identity = _identity(kind, row)
+        low = diff_text.lower()
+        for block in diff_text.split("；"):
+            if ":" not in block:
+                continue
+            field_part, _, values_part = block.partition(":")
+            field_name = field_part.strip()
+            side_values = []
+            for pair in values_part.split("; "):
+                if "=" in pair:
+                    _name, _, _val = pair.partition("=")
+                    side_values.append(_val.strip())
+            if not side_values:
+                continue
+            if field_name == "屏幕" and len(side_values) >= 2:
+                has_size = [_re.search(r'\d+(?:\.\d+)?\s*英寸', v) for v in side_values]
+                if any(has_size) and not all(has_size):
+                    pattern_counts["screen_missing_size"] += 1
+                    pattern_samples.setdefault("screen_missing_size", identity + " | " + diff_text[:150])
+            elif field_name == "电池" and len(side_values) >= 2:
+                has_mah = [bool(_re.search(r'\d+\s*mah', v, _re.I)) for v in side_values]
+                if any(has_mah) and not all(has_mah):
+                    pattern_counts["battery_missing_capacity"] += 1
+                    pattern_samples.setdefault("battery_missing_capacity", identity + " | " + diff_text[:150])
+            elif field_name == "上市时间" and len(side_values) >= 2:
+                yms = []
+                for v in side_values:
+                    mm = _re.search(r'(\d{4})年(\d{1,2})月', v.replace(",", "").replace("，", ""))
+                    yms.append(mm.group(0) if mm else "")
+                if yms[0] and yms[1] and yms[0] == yms[1] and side_values[0] != side_values[1]:
+                    pattern_counts["date_granularity"] += 1
+                    pattern_samples.setdefault("date_granularity", identity + " | " + diff_text[:150])
+
+    discrepancy_patterns = {
+        "field_discrepancies": dict(field_discrepancies.most_common(12)),
+        "patterns": dict(pattern_counts.most_common(8)),
+        "samples": pattern_samples,
+    }
     return {
         "schema": f"{kind}:{shape}",
         "source_fields": dict(source_fields),
@@ -318,6 +373,7 @@ def analyze_payload(payload: Any, kind: str) -> dict[str, Any]:
         "multi_rate": round(len(multi_rows) * 100 / total, 2),
         "available_sources": sorted({source for record in records for source in record["sources"]}),
         "source_distribution": dict(source_distribution.most_common(30)),
+        "discrepancy_patterns": discrepancy_patterns,
         "causes": {
             "identity_only_single": single_identity_only,
             "cross_source_merge_gap": cross_source_merge_gap,
@@ -379,6 +435,16 @@ single_rate（单源占比）。若某源 single_rate 显著高于其他源（�
 5000mAh大电池" vs "锂聚合物电池,5000mAh"、处理器型号措辞不同），且可证明语义等价，应产出规范化/折叠修复（如 merge_phones._semantic_fallback_equal 的字段定向规则），使两源判定为一致；
 - 对"多源未校验"行，若差异字段缺失或字段名不一致导致无法比对，应修复字段对齐；
 - 真实冲突（如同型号存储 256GB vs 512GB、电池 5000 vs 4500mAh）不得折叠，应保留差异标注。
+
+discrepancy_patterns 提供字段级差异分布与三类可修复模式的计数和样例，按模式归因：
+- screen_missing_size：某源屏幕值缺"N英寸"（如太平洋电脑网参数页有屏幕大小但爬虫合并时被长文本覆盖）——
+  修复方向在爬虫侧（参数页解析/字段合并保留规格值），若已在 crawl_pconline.py 修复则验证重爬数据是否带上尺寸；
+- battery_missing_capacity：某源电池值无 mAh 容量（如仅"不可拆卸式电池"）而另一源有——信息缺失非冲突，
+  比对层应跳过该字段（可拆卸 vs 不可拆卸互斥除外，参考 merge_phones.validation_value_equal 电池分支）；
+- date_granularity：两源上市时间年月一致但一方精确到日（2025年10月 vs 2025年10月20日）——粒度差非冲突，
+  比对层日=0 时年月相等即一致（参考 merge_phones.validation_value_equal 上市时间分支）。
+若模式计数高但对应修复已在代码中（如上述分支已存在），应验证线上数据是否重算过（重爬/重合并），
+而不是重复产出相同 patch；确实已修复则返回 should_fix=false 并说明等待数据重算。
 
 如果证据只能说明某个系列/产品确实只有一个来源覆盖，返回 should_fix=false。不要为了提高多源率而编造来源、放宽唯一键、删除校验或伪造数据。
 
