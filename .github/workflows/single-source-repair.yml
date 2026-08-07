@@ -664,10 +664,9 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -- \
-            scripts/merge_phones.py \
-            scripts/crawl_zol.py \
-            scripts/crawl_pconline.py \
-            scripts/crawl_cnmo.py
+            scripts/ \
+            tests/ \
+            .github/workflows/
           git diff --cached --check
           git commit \
             -m "fix: improve multi-source coverage [single-source-repair]" \
