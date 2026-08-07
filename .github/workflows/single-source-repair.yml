@@ -297,7 +297,7 @@ jobs:
           printf '%s\n' 'ready=true' >> "$GITHUB_OUTPUT"
 
       - name: Write deterministic no-op result when the input is not bound
-        if: steps.context.outputs.ready != 'true'
+        if: steps.context.outputs.ready != 'true' && steps.ci_context.outputs.ready != 'true'
         env:
           CONTEXT_REASON: ${{ steps.context.outputs.reason }}
           CONTEXT_CHAIN: ${{ steps.context.outputs.chain_id }}
@@ -339,7 +339,7 @@ jobs:
           PY
 
       - name: Ask free-first LLM for a bounded repair proposal
-        if: steps.context.outputs.ready == 'true' && steps.ci_context.outputs.ci_mode != 'true'
+        if: (steps.context.outputs.ready == 'true' || steps.ci_context.outputs.ready == 'true') && steps.ci_context.outputs.ci_mode != 'true'
         env:
           NVIDIA_NIM_API_KEY: ${{ secrets.NVIDIA_NIM_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
@@ -363,7 +363,7 @@ jobs:
             --round "${{ steps.context.outputs.round }}"
 
       - name: OpenCode Agent 自主修复（Agent 工具执行）
-        if: steps.context.outputs.ready == 'true'
+        if: steps.context.outputs.ready == 'true' || steps.ci_context.outputs.ready == 'true'
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
@@ -442,7 +442,7 @@ jobs:
           # 清理日志中的敏感信息由 GH Actions 自动脱敏处理
 
       - name: Generate CI-mode proposal result
-        if: steps.ci_context.outputs.ci_mode == 'true' && steps.context.outputs.ready == 'true'
+        if: steps.ci_context.outputs.ci_mode == 'true' && (steps.context.outputs.ready == 'true' || steps.ci_context.outputs.ready == 'true')
         env:
           GH_TOKEN: ${{ secrets.ACTION_PAT || secrets.GITHUB_TOKEN }}
         shell: bash
