@@ -27,7 +27,7 @@ DIRECT_PLAN_MARKERS = (
     "api.kimi.com/coding",
 )
 EXPECTED_AGENT_STEPS = {}
-AGENT_VERSION = "opencode-ai@1.18.11"
+AGENT_VERSION = "opencode-ai@latest"
 READ_ONLY_PERMISSIONS = {
     "*": "deny",
     "read": "allow",
@@ -247,7 +247,7 @@ def _check_workflow(path: Path, errors: list[str], root: Path = ROOT) -> None:
         elif expected["model"] not in matching[0][1]:
             errors.append(f"{path.name}: Plan key is not bound to the expected provider/model {expected['model']}")
     if plan_step_count and AGENT_VERSION not in text:
-        errors.append(f"{path.name}: Plan Agent workflow must pin {AGENT_VERSION}")
+        errors.append(f"{path.name}: Plan Agent workflow must install {AGENT_VERSION} (auto-upgrade, never a pinned version)")
 
 
 def validate_repository(root: Path = ROOT) -> list[str]:

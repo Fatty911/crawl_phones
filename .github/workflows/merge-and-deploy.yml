@@ -511,6 +511,18 @@ jobs:
             --diff "data/diff_phones_${DATE}.csv" \
             --output "data/merge_evidence_report_${DATE}.json"
 
+      - name: Set up Node.js for Agent tools
+        if: steps.validate.outputs.ready == 'true'
+        continue-on-error: true
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install OpenCode CLI (latest, auto-upgrades)
+        if: steps.validate.outputs.ready == 'true'
+        continue-on-error: true
+        run: npm install --global opencode-ai@latest
+
       - name: "Run configured free endpoints first: 免费端点优先的 AI root/越狱验证"
         id: free_route
         if: steps.validate.outputs.ready == 'true'
@@ -542,18 +554,6 @@ jobs:
           else
             echo "跳过 root/越狱验证（无合并文件）"
           fi
-
-      - name: Set up Node.js for phone Plan fallback
-        if: steps.free_route.outputs.paid_required == 'true'
-        continue-on-error: true
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-
-      - name: Install fixed OpenCode CLI for phone Plan fallback
-        if: steps.free_route.outputs.paid_required == 'true'
-        continue-on-error: true
-        run: npm install --global opencode-ai@1.18.11
 
       - name: Prepare isolated phone Plan Agent directory
         if: steps.free_route.outputs.paid_required == 'true'

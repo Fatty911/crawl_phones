@@ -4,6 +4,12 @@
 This module deliberately has no paid-provider or subscription credential
 knowledge.  A caller may decide to start a separate paid Agent only when the
 metadata says that every attempted free endpoint returned HTTP 429.
+
+Every model call is executed through the OpenCode CLI (Agent tool), never by
+direct HTTP requests to model APIs.  The OpenCode binary must be installed on
+the runner (npm install --global opencode-ai) and its provider configuration
+is generated here from the same environment variables the previous direct
+calls used.
 """
 from __future__ import annotations
 
@@ -12,7 +18,9 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -162,6 +170,47 @@ def _response_text(payload: Any) -> str:
     return _content(message.get("content"))
 
 
+def _opencode_base_url(endpoint: str) -> str:
+    """OpenCode providers take the API root, not the /chat/completions path."""
+    value = endpoint.strip()
+    if value.endswith("/chat/completions"):
+        return value[: -len("/chat/completions")]
+    return value.rstrip("/")
+
+
+def _build_opencode_config(provider: Provider, model: str, max_tokens: int) -> dict[str, Any]:
+    """Build the OPENCODE_CONFIG_CONTENT document for one free provider/model."""
+    key_env = next((name for name in provider.key_envs if os.environ.get(name, "").strip()), provider.key_envs[0])
+    base_url = _opencode_base_url(provider.endpoint())
+    model_limit = {"context": 131072, "output": max(1024, int(max_tokens or 8000))}
+    read_only = {
+        "*": "deny",
+        "read": "allow",
+        "edit": "deny",
+        "bash": "deny",
+        "webfetch": "deny",
+        "task": "deny",
+        "question": "deny",
+        "external_directory": "deny",
+    }
+    config: dict[str, Any] = {
+        "provider": {
+            provider.label: {
+                "npm": "@ai-sdk/openai-compatible",
+                "name": provider.label,
+                "options": {
+                    "baseURL": base_url,
+                    "apiKey": f"{{env:{key_env}}}",
+                },
+                "models": {model: {"limit": model_limit}},
+            }
+        },
+        "agent": {"plan": {"permission": read_only}},
+        "permission": read_only,
+    }
+    return config
+
+
 def _request(
     provider: Provider,
     model: str,
@@ -169,37 +218,61 @@ def _request(
     timeout: float | None = None,
     max_tokens: int | None = None,
 ) -> tuple[str, int | None, float]:
-    try:
-        request_payload: dict[str, Any] = {
-            "model": model,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": float(os.environ.get("FREE_LLM_TEMPERATURE", "0.1")),
-            "max_tokens": max_tokens if max_tokens is not None else int(os.environ.get("FREE_LLM_MAX_TOKENS", "8000")),
-        }
-        if os.environ.get("FREE_LLM_JSON_MODE", "").strip().lower() in {"1", "true", "yes"}:
-            request_payload["response_format"] = {"type": "json_object"}
-        payload = json.dumps(
-            request_payload,
-            ensure_ascii=False,
-        ).encode("utf-8")
-        headers = {"Authorization": f"Bearer {provider.key()}", "Content-Type": "application/json"}
-        headers.update(dict(provider.extra_headers))
-        request = urllib.request.Request(provider.endpoint(), data=payload, headers=headers, method="POST")
-        request_timeout = timeout if timeout is not None else float(os.environ.get("FREE_LLM_TIMEOUT", "120"))
-        with urllib.request.urlopen(request, timeout=request_timeout) as response:
-            raw = response.read(MAX_RESPONSE_BYTES + 1)
-            if len(raw) > MAX_RESPONSE_BYTES:
-                raise ValueError("response exceeds size limit")
-            value = _response_text(json.loads(raw.decode("utf-8")))
-            if not value:
-                raise ValueError("response has no visible message content")
-            return value, response.status, 0.0
-    except urllib.error.HTTPError as exc:
-        return "", exc.code, _retry_after(exc.headers)
-    except (urllib.error.URLError, TimeoutError, OSError) as exc:
-        raise FreeRouteError("availability_error", type(exc).__name__) from exc
-    except (ValueError, json.JSONDecodeError) as exc:
-        raise FreeRouteError("protocol_error", type(exc).__name__) from exc
+    """Run one free-provider call through the OpenCode CLI (Agent tool).
+
+    The CLI is invoked with an isolated config so the model key is consumed
+    only by the Agent tool process, never by this script.  A nonzero exit or
+    an empty response is treated as a failed attempt, mirroring the previous
+    direct-HTTP state machine.
+    """
+    if not provider.key():
+        return "", None, 0.0
+    effective_tokens = max_tokens if max_tokens is not None else int(os.environ.get("FREE_LLM_MAX_TOKENS", "8000"))
+    request_timeout = timeout if timeout is not None else float(os.environ.get("FREE_LLM_TIMEOUT", "180"))
+    opencode_bin = os.environ.get("OPENCODE_BIN", "opencode")
+    config = _build_opencode_config(provider, model, effective_tokens)
+    instruction = (
+        "Answer the attached prompt directly. Do not call any tools and do not "
+        "modify any files. Return only the requested analysis."
+    )
+    env = dict(os.environ)
+    env["OPENCODE_CONFIG_CONTENT"] = json.dumps(config, ensure_ascii=False)
+    env["OPENCODE_DISABLE_AUTOUPDATE"] = "1"
+    env["OPENCODE_DISABLE_TELEMETRY"] = "1"
+    with tempfile.TemporaryDirectory(prefix="free-router-") as tmpdir:
+        prompt_path = Path(tmpdir) / "prompt.md"
+        prompt_path.write_text(prompt, encoding="utf-8")
+        cmd = [
+            opencode_bin, "run", "--pure", "--agent", "plan",
+            "--model", f"{provider.label}/{model}",
+            "--format", "default",
+            "--dir", tmpdir,
+            "--file", "prompt.md",
+            instruction,
+        ]
+        try:
+            completed = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=max(240.0, request_timeout + 60.0),
+                env=env,
+            )
+        except FileNotFoundError:
+            raise FreeRouteError("availability_error", "opencode CLI is not installed") from None
+        except subprocess.TimeoutExpired:
+            raise FreeRouteError("availability_error", "opencode call timed out") from None
+        if completed.returncode != 0:
+            combined = (completed.stderr or "") + (completed.stdout or "")
+            if re.search(r"\b429\b|rate.?limit|quota", combined, re.I):
+                return "", 429, 0.0
+            if re.search(r"\b401\b|\b403\b|unauthorized|invalid api key|auth", combined, re.I):
+                return "", 401, 0.0
+            return "", None, 0.0
+        text = (completed.stdout or "").strip()
+        if not text:
+            raise FreeRouteError("protocol_error", "opencode returned no visible message content")
+        return text, 200, 0.0
 
 
 def _safe(value: str) -> str:

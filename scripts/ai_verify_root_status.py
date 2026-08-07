@@ -18,6 +18,7 @@ API：优先 NIM/OpenRouter free，再尝试已配置的其它免费兼容端点
 import json
 import hashlib
 import os
+import subprocess
 import sys
 import re
 import time
@@ -117,24 +118,67 @@ def _run_in_subprocess(target, args, timeout):
         result_queue.join_thread()
 
 
-def _request_nim(prompt, model, timeout):
-    """尝试单个 NIM 模型"""
-    req = Request(
-        NIM_ENDPOINT,
-        data=json.dumps({
-            "model": model,
-            "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": MAX_TOKENS,
-            "temperature": 0.1,
-        }).encode(),
-        headers={
-            "Authorization": f"Bearer {NIM_KEY}",
-            "Content-Type": "application/json",
+def _opencode_request(prompt, model, timeout, provider_label, base_url, key_env):
+    """通过 OpenCode CLI（Agent 工具）调用模型，禁止直连模型 API。
+
+    The provider key is consumed only by the OpenCode process; this function
+    never issues HTTP requests to a model endpoint.
+    """
+    read_only = {
+        "*": "deny",
+        "read": "allow",
+        "edit": "deny",
+        "bash": "deny",
+        "webfetch": "deny",
+        "task": "deny",
+        "question": "deny",
+        "external_directory": "deny",
+    }
+    config = {
+        "provider": {
+            provider_label: {
+                "npm": "@ai-sdk/openai-compatible",
+                "name": provider_label,
+                "options": {"baseURL": base_url, "apiKey": f"{{env:{key_env}}}"},
+                "models": {model: {"limit": {"context": 131072, "output": MAX_TOKENS}}},
+            }
         },
-    )
-    resp = urlopen(req, timeout=timeout)
-    body = json.loads(resp.read())
-    return body["choices"][0]["message"]["content"].strip()
+        "agent": {"plan": {"permission": read_only}},
+        "permission": read_only,
+    }
+    env = dict(os.environ)
+    env["OPENCODE_CONFIG_CONTENT"] = json.dumps(config, ensure_ascii=False)
+    env["OPENCODE_DISABLE_AUTOUPDATE"] = "1"
+    env["OPENCODE_DISABLE_TELEMETRY"] = "1"
+    opencode_bin = os.environ.get("OPENCODE_BIN", "opencode")
+    with tempfile.TemporaryDirectory(prefix="root-status-") as tmpdir:
+        prompt_path = os.path.join(tmpdir, "prompt.md")
+        with open(prompt_path, "w", encoding="utf-8") as handle:
+            handle.write(prompt)
+        cmd = [
+            opencode_bin, "run", "--pure", "--agent", "plan",
+            "--model", f"{provider_label}/{model}",
+            "--format", "default",
+            "--dir", tmpdir,
+            "--file", "prompt.md",
+            "Answer the attached prompt directly. Do not call tools or modify files. Return only the requested JSON.",
+        ]
+        try:
+            completed = subprocess.run(cmd, capture_output=True, text=True, timeout=max(120.0, timeout + 60.0), env=env)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise RemoteAIError(provider_label, f"opencode call failed: {type(exc).__name__}") from exc
+        if completed.returncode != 0:
+            tail = ((completed.stderr or "") + (completed.stdout or ""))[:300]
+            raise RemoteAIError(provider_label, f"opencode exit {completed.returncode}: {tail}")
+        content = (completed.stdout or "").strip()
+        if not content:
+            raise RemoteAIError(provider_label, "opencode returned empty content")
+        return content
+
+
+def _request_nim(prompt, model, timeout):
+    """尝试单个 NIM 模型（通过 OpenCode CLI Agent 工具）"""
+    return _opencode_request(prompt, model, timeout, "nvidia-nim", "https://integrate.api.nvidia.com/v1", "NVIDIA_NIM_API_KEY")
 
 
 def _try_nim(prompt, model, timeout: float = API_TIMEOUT):
@@ -142,25 +186,8 @@ def _try_nim(prompt, model, timeout: float = API_TIMEOUT):
 
 
 def _request_or(prompt, model, timeout):
-    """尝试单个 OpenRouter 模型"""
-    req = Request(
-        OPENROUTER_ENDPOINT,
-        data=json.dumps({
-            "model": model,
-            "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": MAX_TOKENS,
-            "temperature": 0.1,
-        }).encode(),
-        headers={
-            "Authorization": f"Bearer {OR_KEY}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://phones.jiucai.eu.org",
-            "X-Title": "Phone Root Status Verifier",
-        },
-    )
-    resp = urlopen(req, timeout=timeout)
-    body = json.loads(resp.read())
-    return body["choices"][0]["message"]["content"].strip()
+    """尝试单个 OpenRouter 模型（通过 OpenCode CLI Agent 工具）"""
+    return _opencode_request(prompt, model, timeout, "openrouter-free", "https://openrouter.ai/api/v1", "OPENROUTER_API_KEY")
 
 
 def _try_or(prompt, model, timeout: float = API_TIMEOUT):

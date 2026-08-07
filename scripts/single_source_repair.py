@@ -18,6 +18,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import unicodedata
 import urllib.error
 import urllib.request
@@ -517,38 +518,69 @@ def _call_llm_free_first(prompt: str) -> tuple[str, str, str]:
 
 
 def _call_nim(prompt: str) -> str:
+    """通过 OpenCode CLI（Agent 工具）调用 NIM；禁止直连模型 API。
+
+    The provider key is consumed only by the OpenCode process; this function
+    never issues HTTP requests to a model endpoint.
+    """
     key = os.environ.get("NVIDIA_NIM_API_KEY", "").strip()
     if not key:
         raise RepairInputError("NVIDIA_NIM_API_KEY is unavailable")
     model = os.environ.get("NVIDIA_NIM_MODEL", "deepseek-ai/deepseek-v4-flash")
-    body = json.dumps({
-        "model": model,
-        "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0.1,
-        "max_tokens": 4000,
-        "response_format": {"type": "json_object"},
-    }).encode("utf-8")
-    request = urllib.request.Request(
-        "https://integrate.api.nvidia.com/v1/chat/completions",
-        data=body,
-        headers={
-            "Authorization": f"Bearer {key}",
-            "Content-Type": "application/json",
+    read_only = {
+        "*": "deny",
+        "read": "allow",
+        "edit": "deny",
+        "bash": "deny",
+        "webfetch": "deny",
+        "task": "deny",
+        "question": "deny",
+        "external_directory": "deny",
+    }
+    config = {
+        "provider": {
+            "nvidia-nim": {
+                "npm": "@ai-sdk/openai-compatible",
+                "name": "nvidia-nim",
+                "options": {
+                    "baseURL": "https://integrate.api.nvidia.com/v1",
+                    "apiKey": "{env:NVIDIA_NIM_API_KEY}",
+                },
+                "models": {model: {"limit": {"context": 131072, "output": 8192},
+                                   "options": {"reasoningEffort": "high"}}},
+            }
         },
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=180) as response:
-            result = json.loads(response.read().decode("utf-8"))
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
-        raise RepairInputError(f"NVIDIA NIM request failed: {type(exc).__name__}") from exc
-    try:
-        content = result["choices"][0]["message"]["content"]
-    except (KeyError, IndexError, TypeError) as exc:
-        raise RepairInputError("NVIDIA NIM response has no message content") from exc
-    if not isinstance(content, str) or not content.strip():
-        raise RepairInputError("NVIDIA NIM returned empty content")
-    return content
+        "agent": {"plan": {"permission": read_only}},
+        "permission": read_only,
+    }
+    env = dict(os.environ)
+    env["OPENCODE_CONFIG_CONTENT"] = json.dumps(config, ensure_ascii=False)
+    env["OPENCODE_DISABLE_AUTOUPDATE"] = "1"
+    env["OPENCODE_DISABLE_TELEMETRY"] = "1"
+    opencode_bin = os.environ.get("OPENCODE_BIN", "opencode")
+    with tempfile.TemporaryDirectory(prefix="single-source-nim-") as tmpdir:
+        prompt_path = os.path.join(tmpdir, "prompt.md")
+        with open(prompt_path, "w", encoding="utf-8") as handle:
+            handle.write(prompt)
+        cmd = [
+            opencode_bin, "run", "--pure", "--agent", "plan",
+            "--model", f"nvidia-nim/{model}",
+            "--format", "default",
+            "--dir", tmpdir,
+            "--file", "prompt.md",
+            "Answer the attached prompt directly. Do not call tools or modify files. Return only the requested JSON.",
+        ]
+        try:
+            completed = subprocess.run(cmd, capture_output=True, text=True, timeout=300, env=env)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise RepairInputError(f"NVIDIA NIM opencode call failed: {type(exc).__name__}") from exc
+        if completed.returncode != 0:
+            tail = ((completed.stderr or "") + (completed.stdout or ""))[:300]
+            raise RepairInputError(f"NVIDIA NIM opencode exit {completed.returncode}: {tail}")
+        content = (completed.stdout or "").strip()
+        if not content:
+            raise RepairInputError("NVIDIA NIM returned empty content")
+        return content
 
 
 def _strict_json_load(text: str, label: str) -> Any:
