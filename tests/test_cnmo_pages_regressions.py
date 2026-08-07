@@ -1913,5 +1913,38 @@ class MergeableScanTests(unittest.TestCase):
             self.assertIn("detail", cand)
         self.assertTrue(ms["conflict_candidates"])
 
+
+
+class MergeGapScanTests(unittest.TestCase):
+    """merge_gap_scan：单源行的跨源可匹配检测（提升多源率）。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.repair = load_script_module("single_source_repair_gap", ROOT / "scripts" / "single_source_repair.py")
+
+    def _rows(self):
+        return [
+            # 同型号：CNMO 容量变体 + ZOL 型号级 —— CNMO 行应被检出为 gap
+            {"型号": "iQOO 15(12GB+512GB)", "品牌": "iQOO", "内存": "12GB", "存储": "512GB", "数据来源": "CNMO"},
+            {"型号": "iQOO 15", "品牌": "iQOO", "内存": "16GB", "存储": "512GB", "数据来源": "中关村在线"},
+            # 真单源：其他源没有
+            {"型号": "AGM G1S", "品牌": "AGM", "内存": "8GB", "存储": "128GB", "数据来源": "太平洋电脑网"},
+        ]
+
+    def test_gap_count(self) -> None:
+        r = self.repair.analyze_payload(self._rows(), "phones")
+        mg = r["merge_gap_scan"]
+        self.assertGreaterEqual(mg["merge_gap_count"], 1)
+        self.assertEqual(mg["single_count"], 3)
+
+    def test_candidates_detail(self) -> None:
+        r = self.repair.analyze_payload(self._rows(), "phones")
+        mg = r["merge_gap_scan"]
+        self.assertTrue(mg["candidates"])
+        cand = mg["candidates"][0]
+        self.assertEqual(cand["current_sources"], ["CNMO"])
+        self.assertIn("中关村在线", cand["other_sources"])
+        self.assertIn("base_identity", cand)
+
 if __name__ == "__main__":
     unittest.main()

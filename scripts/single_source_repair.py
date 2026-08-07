@@ -210,6 +210,22 @@ def _identity(kind: str, row: dict[str, Any]) -> str | None:
     return "|".join(values) if values else None
 
 
+def _base_identity(row: dict[str, Any]) -> str | None:
+    """品牌|型号 级身份（剥离容量变体后缀与残留），用于跨源可匹配性检测。
+
+    与 _identity（品牌|型号|内存|存储）不同：_identity 区分同型号不同配置，
+    _base_identity 只到型号级，可发现"其他源有同型号但配置/粒度差异导致未匹配"的单源行。
+    """
+    brand = str(row.get("品牌", "") or "").strip().casefold()
+    model = str(row.get("型号", "") or row.get("name", "") or "").strip().casefold()
+    model = re.sub(r"•.*?查看所有[^|]*", "", model)
+    # 剥离容量变体后缀：(12GB+512GB) / (8+128GB) / （16GB+1TB）
+    model = re.sub(r"[（(]\s*\d+\s*[gG][bB][^）)]*[）)]", "", model).strip()
+    if not brand or not model:
+        return None
+    return brand + "|" + model
+
+
 def _sources(row: dict[str, Any]) -> tuple[str, list[str]]:
     candidates: list[tuple[str, list[str]]] = []
     for field in ("atomic_source_names", "source", "数据来源", "来源"):
@@ -425,6 +441,48 @@ def analyze_payload(payload: Any, kind: str) -> dict[str, Any]:
         "conflict_candidates": conflict_candidates,
         "note": "mergeable=字段级语义等价候选（同 identity 行内共同规格 token），可产出归并规则；conflict=容量/像素无交集等真冲突，不得归并。",
     }
+
+    # ---- 单源跨源可匹配扫描（提升多源率）：base_identity 级 gap ----
+    base_groups: dict[str, set[str]] = defaultdict(set)
+    base_rows: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        bid = _base_identity(row)
+        if not bid:
+            continue
+        _, tokens = _sources(row)
+        base_groups[bid].update(tokens)
+        base_rows[bid].append(row)
+
+    merge_gap_candidates: list[dict[str, Any]] = []
+    merge_gap_count = 0
+    for index, row in enumerate(rows):
+        if len(record_sources(records, index)) > 1:
+            continue
+        bid = _base_identity(row)
+        if not bid or len(base_groups.get(bid, set())) <= 1:
+            continue
+        merge_gap_count += 1
+        if len(merge_gap_candidates) < 25:
+            others = sorted(base_groups[bid] - set(record_sources(records, index)))
+            same_base = [r for r in base_rows[bid] if r is not row]
+            merge_gap_candidates.append({
+                "identity": _identity(kind, row) or "",
+                "base_identity": bid,
+                "model": str(row.get("型号", "") or "")[:60],
+                "current_sources": sorted(record_sources(records, index)),
+                "other_sources": others,
+                "other_models": sorted({str(r.get("型号", "") or "")[:50] for r in same_base})[:3],
+                "hint": "其他源有同型号（型号级或容量变体）但未匹配——检查 merge 匹配逻辑（容量变体归并/型号归一化）",
+            })
+
+    merge_gap_scan = {
+        "merge_gap_count": merge_gap_count,
+        "single_count": len(single_rows),
+        "gap_rate": round(merge_gap_count * 100 / len(single_rows), 2) if single_rows else 0.0,
+        "candidates": merge_gap_candidates,
+        "note": "单源行中 base_identity（品牌|型号，剥离容量变体后缀）在其他源也有收录但未合并为多源——"
+                "容量变体粒度/型号命名差异是主因，可产出匹配归一化修复以提升多源率。",
+    }
     return {
         "schema": f"{kind}:{shape}",
         "source_fields": dict(source_fields),
@@ -437,6 +495,7 @@ def analyze_payload(payload: Any, kind: str) -> dict[str, Any]:
         "source_distribution": dict(source_distribution.most_common(30)),
         "discrepancy_patterns": discrepancy_patterns,
         "mergeable_scan": mergeable_scan,
+        "merge_gap_scan": merge_gap_scan,
         "causes": {
             "identity_only_single": single_identity_only,
             "cross_source_merge_gap": cross_source_merge_gap,
@@ -518,6 +577,18 @@ mergeable_scan 提供交叉验证差异的**字段级可归并性扫描**（逐�
 - mergeable_candidates/conflict_candidates：每类样例（identity + 差异明细），据此设计规则并验证不误伤冲突样例。
 扫描路径：对每个"可归并信号"判断 (a) 是否已有归并规则（看 _semantic_fallback_equal 对应字段分支）；
 (b) 没有则产出保守规则 + 单测（含冲突样例不得误归并的断言）；(c) 有则验证线上是否重算。
+
+merge_gap_scan 提供**单源行的跨源可匹配扫描**（提升多源率的核心抓手）：
+- merge_gap_count/gap_rate：单源行中 base_identity（品牌|型号，剥离容量变体后缀如 (12GB+512GB)）在其他源也有收录
+  但未合并为多源的行数/占比（线上实测 444 行、22.86%）；
+- candidates（前 25 条）：base_identity + 型号 + 当前源 + 其他源 + 其他源型号样例；
+- 典型根因：容量变体粒度（CNMO "iQOO 15(12GB+512GB)" vs 其他源型号级 "iQOO 15"）、
+  型号命名差异（大小写/空格/后缀）、同型号跨源内存/存储格式不同导致 _identity 不同。
+扫描路径：对每个 gap 候选判断 (a) merge 的容量变体归并（append_unique_single_source 的 no_capacity 分支）
+是否已覆盖此模式——已覆盖则等重合并（数据重算）验证；(b) 未覆盖则产出匹配归一化修复
+（如 base_identity 级归并、型号归一化规则）+ 单测（含不同型号不得误合并的断言）；
+(c) 若该型号确实只在单源有完整数据（其他源仅有型号级无字段），评估是否可做型号级关联展示而非折叠。
+目标：让"其他源已收录同型号"的单源行变成多源一致/差异，而非 identity_only_single。
 
 如果证据只能说明某个系列/产品确实只有一个来源覆盖，返回 should_fix=false。不要为了提高多源率而编造来源、放宽唯一键、删除校验或伪造数据。
 
