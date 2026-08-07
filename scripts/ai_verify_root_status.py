@@ -60,6 +60,7 @@ _plan_requests = []
 # ── API ──────────────────────────────────────────────
 NIM_KEY = os.environ.get("NVIDIA_NIM_API_KEY", "")
 OR_KEY = os.environ.get("OPENROUTER_API_KEY", "")
+# 端点标签（仅用于失败日志记录，不发起请求；请求一律走 opencode CLI）
 NIM_ENDPOINT = "https://integrate.api.nvidia.com/v1/chat/completions"
 OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
 

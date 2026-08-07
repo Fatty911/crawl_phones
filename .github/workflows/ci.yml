@@ -64,6 +64,8 @@ jobs:
 
       - name: Validate Plan and Agent boundary
         run: python scripts/validate_plan_agent_boundary.py
+      - name: Scan for direct model API key usage
+        run: python scripts/scan_direct_llm_calls.py scripts .github
 
       - name: Run unit tests
         run: python -m unittest discover -s tests -p 'test_*.py'

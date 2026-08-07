@@ -320,8 +320,11 @@ jobs:
             exit 0
           fi
           # ---- 2. 探测端点并写 provider 配置（主模型规则：deepseek-v4-flash） ----
+          # 端点探测也通过 OpenCode CLI（Agent 工具）消费 key，禁止 curl 直连 API。
           mkdir -p "$RUNNER_TEMP/occonfig"
-          if curl -fsS --max-time 15 https://api.deepseek.com/models -H "Authorization: Bearer $DEEPSEEK_API_KEY" >/dev/null 2>&1; then
+          DS_PROBE='{"provider":{"deepseek":{"npm":"@ai-sdk/openai-compatible","name":"DeepSeek","options":{"baseURL":"https://api.deepseek.com","apiKey":"{env:DEEPSEEK_API_KEY}"},"models":{"deepseek-v4-flash":{"name":"DeepSeek V4 Flash","reasoning":{"effort":"max"}}}}},"model":"deepseek/deepseek-v4-flash","small_model":"deepseek/deepseek-v4-flash"}'
+          printf '%s' "$DS_PROBE" > "$RUNNER_TEMP/occonfig/deepseek.json"
+          if OPENCODE_CONFIG_CONTENT="$(cat "$RUNNER_TEMP/occonfig/deepseek.json")" timeout 90 opencode run --pure --agent plan --model deepseek/deepseek-v4-flash --format default --dir "$RUNNER_TEMP/occonfig" "Return exactly OK" >/dev/null 2>&1; then
             PROVIDER_JSON='{"provider":{"deepseek":{"npm":"@ai-sdk/openai-compatible","name":"DeepSeek","options":{"baseURL":"https://api.deepseek.com"},"models":{"deepseek-v4-flash":{"name":"DeepSeek V4 Flash","reasoning":{"effort":"max"}}}}},"model":"deepseek/deepseek-v4-flash","small_model":"deepseek/deepseek-v4-flash"}'
           else
             PROVIDER_JSON='{"provider":{"openrouter":{"npm":"@ai-sdk/openai-compatible","name":"OpenRouter","options":{"baseURL":"https://openrouter.ai/api/v1"},"models":{"deepseek-v4-flash":{"name":"DeepSeek V4 Flash","reasoning":{"effort":"max"}}}}},"model":"openrouter/deepseek/deepseek-v4-flash","small_model":"openrouter/deepseek/deepseek-v4-flash"}'
