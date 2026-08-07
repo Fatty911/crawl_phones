@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from merge_phones import clean_spec_value, normalize_audited_published_headers
+from merge_phones import clean_spec_value, normalize_audited_published_headers, _strip_residue
 from verify_publish_superset import identity_key, identity_keys, is_below_min_publish_year, load_rows, verify_superset
 
 
@@ -46,6 +46,9 @@ def preserve_baseline(
         for field in ("内存", "存储"):
             if field in row:
                 row[field] = clean_spec_value(field, row[field])
+        # 存量行差异文本也做源站残留清洗（差异文本曾用原始值输出，残留残留页面）
+        if "交叉验证差异" in row and row["交叉验证差异"] not in (None, "-"):
+            row["交叉验证差异"] = _strip_residue(str(row["交叉验证差异"]))
     return merged, [identity_key(row) for row in missing_rows]
 
 

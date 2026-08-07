@@ -783,7 +783,10 @@ def classify_source_agreement(source_rows):
     for field in comparable_fields:
         values = [source_rows[name].get(field) for name in names]
         if not all(validation_value_equal(field, values[0], value) for value in values[1:]):
-            detail = '; '.join(f'{name}={source_rows[name].get(field)}' for name in names)
+            detail = '; '.join(
+                f'{name}={_strip_residue(str(source_rows[name].get(field) or ""))}'
+                for name in names
+            )
             differences.append(f'{field}: {detail}')
     difference_text = '；'.join(differences) if differences else '-'
     # 缺失字段作为提示附加（不阻断判定）

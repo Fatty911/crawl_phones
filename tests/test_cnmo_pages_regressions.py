@@ -1749,5 +1749,38 @@ class ResidueStripTests(unittest.TestCase):
         clean = "6.85英寸|AMOLED|144Hz|支持HDR10+"
         self.assertEqual(self.merge._strip_residue(clean), clean)
 
+
+
+class DiffTextStripTests(unittest.TestCase):
+    """差异文本输出用清洗后的值；存量行差异文本也清洗。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.merge = load_script_module("merge_phones_residue2", ROOT / "scripts" / "merge_phones.py")
+        cls.preserve = load_script_module("preserve_publish_baseline2", ROOT / "scripts" / "preserve_publish_baseline.py")
+
+    def test_classify_diff_text_stripped(self) -> None:
+        # PCL 屏幕值带名词气泡、CNMO 干净——屏幕真差异（无尺寸），但文本输出应无残留
+        rows = {
+            "太平洋电脑网": {"处理器": "骁龙 8 Elite Gen5更多骁龙 8 Elite Gen5手机>|八核", "屏幕": "打孔屏,多点触摸•多点触摸是什么•查看所有多点触摸iQOO|144Hz", "存储": "512GB", "内存": "16GB", "电池": "5000mAh", "摄像头参数": "5000万", "上市时间": "2025年10月"},
+            "CNMO": {"处理器": "高通骁龙8 Elite Gen5|3nm|八核", "屏幕": "6.85英寸|AMOLED|144Hz", "存储": "512GB", "内存": "16GB", "电池": "5000mAh", "摄像头参数": "5000万", "上市时间": "2025年10月"},
+        }
+        status, text = self.merge.classify_source_agreement(rows)
+        self.assertEqual(status, "双源差异")
+        self.assertNotIn("是什么", text)
+        self.assertNotIn("手机>", text)
+        self.assertIn("打孔屏,多点触摸|144Hz", text)
+
+    def test_preserve_baseline_strips_carried_diff_text(self) -> None:
+        baseline = [{
+            "型号": "某手机", "数据来源": "太平洋电脑网+CNMO", "验证状态": "双源差异",
+            "交叉验证差异": "屏幕: 太平洋电脑网=打孔屏•打孔屏是什么•查看所有打孔屏X; CNMO=6.85英寸",
+        }]
+        candidate: list = []
+        merged, _ = self.preserve.preserve_baseline(baseline, candidate)
+        self.assertEqual(len(merged), 1)
+        self.assertNotIn("是什么", merged[0]["交叉验证差异"])
+        self.assertIn("打孔屏", merged[0]["交叉验证差异"])
+
 if __name__ == "__main__":
     unittest.main()
