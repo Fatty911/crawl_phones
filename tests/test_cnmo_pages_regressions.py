@@ -1870,5 +1870,48 @@ class DiscrepancyPatternTests(unittest.TestCase):
         for key in ("screen_missing_size", "battery_missing_capacity", "date_granularity"):
             self.assertIn(key, dp["samples"])
 
+
+
+class MergeableScanTests(unittest.TestCase):
+    """analyze_payload 的 mergeable_scan：差异明细字段级可归并性扫描。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.repair = load_script_module("single_source_repair_mergeable", ROOT / "scripts" / "single_source_repair.py")
+
+    def _rows(self):
+        return [
+            {
+                "型号": "A手机", "数据来源": "太平洋电脑网+CNMO", "验证状态": "双源差异",
+                "交叉验证差异": "摄像头参数: 太平洋电脑网=5000万像素,超广角摄像头，F2.05; CNMO=5000+5000+5000万像素|3200万像素",
+            },
+            {
+                "型号": "B手机", "数据来源": "中关村在线+CNMO", "验证状态": "双源差异",
+                "交叉验证差异": "内存: 中关村在线=16GB|LPDDR5X; CNMO=12GB|LPDDR5x",
+            },
+            {
+                "型号": "C手机", "数据来源": "中关村在线+太平洋电脑网+CNMO", "验证状态": "三源差异",
+                "交叉验证差异": "处理器: 中关村在线=骁龙 8 Elite Gen5|2×Prime; 太平洋电脑网=高通骁龙8 Elite Gen5|3nm",
+            },
+        ]
+
+    def test_mergeable_signals(self) -> None:
+        r = self.repair.analyze_payload(self._rows(), "phones")
+        ms = r["mergeable_scan"]
+        self.assertGreaterEqual(ms["mergeable_signals"].get("camera_pixel_intersect", 0), 1)
+        self.assertGreaterEqual(ms["mergeable_signals"].get("proc_intersect", 0), 1)
+        # B 手机 16GB vs 12GB 是真冲突
+        self.assertGreaterEqual(ms["conflict_signals"].get("内存_cap_disjoint", 0), 1)
+
+    def test_candidates_include_detail(self) -> None:
+        r = self.repair.analyze_payload(self._rows(), "phones")
+        ms = r["mergeable_scan"]
+        self.assertTrue(ms["mergeable_candidates"])
+        for cand in ms["mergeable_candidates"]:
+            self.assertIn("identity", cand)
+            self.assertIn("signal", cand)
+            self.assertIn("detail", cand)
+        self.assertTrue(ms["conflict_candidates"])
+
 if __name__ == "__main__":
     unittest.main()

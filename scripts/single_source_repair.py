@@ -364,6 +364,67 @@ def analyze_payload(payload: Any, kind: str) -> dict[str, Any]:
         "patterns": dict(pattern_counts.most_common(8)),
         "samples": pattern_samples,
     }
+
+    # 可归并性扫描：逐行分析差异明细，检测字段级语义等价候选（共同规格 token 交集）
+    # 与真实冲突（容量/像素无交集）。供 LLM 判断哪些差异可产出归并规则（如扩展
+    # merge_phones._semantic_fallback_equal 的字段定向规则）。
+    mergeable_signals: Counter[str] = Counter()
+    conflict_signals: Counter[str] = Counter()
+    mergeable_candidates: list[dict[str, str]] = []
+    conflict_candidates: list[dict[str, str]] = []
+    for index, row in enumerate(rows):
+        status = str(row.get("验证状态", "") or "")
+        if "差异" not in status:
+            continue
+        diff_text = str(row.get("交叉验证差异", "") or "")
+        identity = _identity(kind, row)
+        for block in diff_text.split("；"):
+            if ":" not in block:
+                continue
+            field_name, _, values_part = block.partition(":")
+            field_name = field_name.strip()
+            if field_name not in ("摄像头参数", "处理器", "屏幕", "电池", "内存", "存储", "上市时间", "视频", "前置视频"):
+                continue
+            sides = [s for s in values_part.split("; ") if "=" in s]
+            if len(sides) < 2:
+                continue
+            values = [s.partition("=")[2].strip() for s in sides]
+            signal = None
+            if field_name in ("内存", "存储"):
+                caps = [set(_re.findall(r"\d+\s*[GT]B", v, _re.I)) for v in values]
+                if all(caps):
+                    signal = (field_name + "_cap_intersect") if (caps[0] & caps[1]) else (field_name + "_cap_disjoint")
+            elif field_name == "处理器":
+                procs = [_re.search(r"(骁龙\s*\w*\s*\w*|天玑\s*\d+\w*|麒麟\s*\d+\w*|Exynos\s*\d+|A\d+|Cortex-\w+)", v, _re.I) for v in values]
+                if all(procs):
+                    cores = [_re.sub(r"\s+", "", p.group(1)).lower() for p in procs]
+                    signal = "proc_intersect" if (cores[0] in cores[1] or cores[1] in cores[0]) else "proc_disjoint"
+            elif field_name == "摄像头参数":
+                pxs = [set(_re.findall(r"\d+\s*万像素", v)) for v in values]
+                if all(pxs):
+                    signal = "camera_pixel_intersect" if (pxs[0] & pxs[1]) else "camera_pixel_disjoint"
+            elif field_name == "屏幕":
+                toks = [set(_re.findall(r"\d+Hz|AMOLED|OLED|LCD|IPS", v)) for v in values]
+                if toks[0] & toks[1]:
+                    signal = "screen_token_same" if not (toks[0] ^ toks[1]) else "screen_token_partial"
+            if signal is None:
+                continue
+            if signal.endswith("_intersect") or signal.endswith("_same") or signal.endswith("_partial") or signal == "proc_intersect":
+                mergeable_signals[signal] += 1
+                if len(mergeable_candidates) < 25:
+                    mergeable_candidates.append({"identity": identity, "signal": signal, "detail": diff_text[:240]})
+            elif signal.endswith("_disjoint") or signal == "proc_disjoint" or signal == "camera_pixel_disjoint" or signal == "screen_no_token":
+                conflict_signals[signal] += 1
+                if len(conflict_candidates) < 10:
+                    conflict_candidates.append({"identity": identity, "signal": signal, "detail": diff_text[:200]})
+
+    mergeable_scan = {
+        "mergeable_signals": dict(mergeable_signals.most_common(12)),
+        "conflict_signals": dict(conflict_signals.most_common(8)),
+        "mergeable_candidates": mergeable_candidates,
+        "conflict_candidates": conflict_candidates,
+        "note": "mergeable=字段级语义等价候选（同 identity 行内共同规格 token），可产出归并规则；conflict=容量/像素无交集等真冲突，不得归并。",
+    }
     return {
         "schema": f"{kind}:{shape}",
         "source_fields": dict(source_fields),
@@ -375,6 +436,7 @@ def analyze_payload(payload: Any, kind: str) -> dict[str, Any]:
         "available_sources": sorted({source for record in records for source in record["sources"]}),
         "source_distribution": dict(source_distribution.most_common(30)),
         "discrepancy_patterns": discrepancy_patterns,
+        "mergeable_scan": mergeable_scan,
         "causes": {
             "identity_only_single": single_identity_only,
             "cross_source_merge_gap": cross_source_merge_gap,
@@ -446,6 +508,16 @@ discrepancy_patterns 提供字段级差异分布与三类可修复模式的计�
   比对层日=0 时年月相等即一致（参考 merge_phones.validation_value_equal 上市时间分支）。
 若模式计数高但对应修复已在代码中（如上述分支已存在），应验证线上数据是否重算过（重爬/重合并），
 而不是重复产出相同 patch；确实已修复则返回 should_fix=false 并说明等待数据重算。
+
+mergeable_scan 提供交叉验证差异的**字段级可归并性扫描**（逐行分析差异明细）：
+- mergeable_signals：语义等价候选计数（如 camera_pixel_intersect=两源摄像头都有共同像素、
+  proc_intersect=处理器核心型号包含、screen_token_same=屏幕刷新率/材质 token 一致、存储/内存_cap_intersect=容量交集）——
+  这些是"同 identity 行内格式/粒度差异"，可产出归并规则（扩展 merge_phones._semantic_fallback_equal 字段定向规则，
+  如摄像头参数：主摄像素集合交集非空即一致）；
+- conflict_signals：真冲突（cap_disjoint=容量无交集如 16GB vs 12GB、camera_pixel_disjoint、proc_disjoint）——不得归并；
+- mergeable_candidates/conflict_candidates：每类样例（identity + 差异明细），据此设计规则并验证不误伤冲突样例。
+扫描路径：对每个"可归并信号"判断 (a) 是否已有归并规则（看 _semantic_fallback_equal 对应字段分支）；
+(b) 没有则产出保守规则 + 单测（含冲突样例不得误归并的断言）；(c) 有则验证线上是否重算。
 
 如果证据只能说明某个系列/产品确实只有一个来源覆盖，返回 should_fix=false。不要为了提高多源率而编造来源、放宽唯一键、删除校验或伪造数据。
 
