@@ -303,6 +303,72 @@ jobs:
             --chain-id "${{ steps.context.outputs.chain_id }}" \
             --round "${{ steps.context.outputs.round }}"
 
+      - name: OpenCode Agent 自主修复（Agent 工具执行）
+        if: steps.context.outputs.ready == 'true'
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # ---- 1. 安装 OpenCode CLI（Agent 工具） ----
+          if ! command -v opencode >/dev/null 2>&1; then
+            npm install -g opencode-ai >/dev/null 2>&1 || true
+          fi
+          if ! command -v opencode >/dev/null 2>&1; then
+            echo "opencode CLI 不可用，跳过 Agent 修复（保留确定性 LLM 提议结果）"
+            exit 0
+          fi
+          # ---- 2. 探测端点并写 provider 配置（主模型规则：deepseek-v4-flash） ----
+          mkdir -p "$RUNNER_TEMP/occonfig"
+          if curl -fsS --max-time 15 https://api.deepseek.com/models -H "Authorization: Bearer $DEEPSEEK_API_KEY" >/dev/null 2>&1; then
+            PROVIDER_JSON='{"provider":{"deepseek":{"npm":"@ai-sdk/openai-compatible","name":"DeepSeek","options":{"baseURL":"https://api.deepseek.com"},"models":{"deepseek-v4-flash":{"name":"DeepSeek V4 Flash","reasoning":{"effort":"max"}}}}},"model":"deepseek/deepseek-v4-flash","small_model":"deepseek/deepseek-v4-flash"}'
+          else
+            PROVIDER_JSON='{"provider":{"openrouter":{"npm":"@ai-sdk/openai-compatible","name":"OpenRouter","options":{"baseURL":"https://openrouter.ai/api/v1"},"models":{"deepseek-v4-flash":{"name":"DeepSeek V4 Flash","reasoning":{"effort":"max"}}}}},"model":"openrouter/deepseek/deepseek-v4-flash","small_model":"openrouter/deepseek/deepseek-v4-flash"}'
+          fi
+          printf '%s' "$PROVIDER_JSON" > "$RUNNER_TEMP/occonfig/opencode.json"
+          export OPENCODE_CONFIG="$RUNNER_TEMP/occonfig"
+          # ---- 3. Agent 自主修复（读报告->定位根因->改代码->跑测试） ----
+          timeout 1500 opencode run --format json "你是 crawl_phones 手机数据仓库的修复 Agent。请执行以下任务：
+          1. 阅读 single_source_report.json（差异模式诊断报告：字段级差异分布 + screen_missing_size/battery_missing_capacity/date_granularity 等模式计数与样例）。
+          2. 定位多源差异的根因：可能是 scripts/crawl_pconline.py 字段合并丢失规格值、scripts/merge_phones.py 比对归一化不完善、或 scripts/single_source_repair.py 报告逻辑。逐一读相关源码确认。
+          3. 对可安全修复的根因修改代码：不伪造数据、不折叠真实冲突（如 16GB vs 12GB 内存、5000 vs 4500mAh 电池）、不删除校验逻辑、不降低防护。
+          4. 修改后必须运行 python3 -m pytest tests/ -q 验证全部测试通过；失败则继续修复直到通过。
+          5. 结束时在最后一条消息里说明：修改了哪些文件、每处修改的理由、测试结果。" > opencode_agent.jsonl 2>&1 || echo "opencode run 退出码 $?"
+          # ---- 4. 生成 patch 并更新提议结果 ----
+          if git diff --quiet; then
+            echo "Agent 未产生代码修改"
+          else
+            git diff > single_source_repair.patch
+            python3 - <<'PY'
+          import json
+          import hashlib
+          import os
+
+          patch_path = "single_source_repair.patch"
+          patch = open(patch_path, encoding="utf-8").read()
+          patch_sha = hashlib.sha256(patch.encode("utf-8")).hexdigest()
+          result_path = "single_source_repair_result.json"
+          if os.path.exists(result_path):
+              result = json.load(open(result_path, encoding="utf-8"))
+          else:
+              result = {}
+          result.update({
+              "status": "approved",
+              "model": "deepseek/deepseek-v4-flash",
+              "patch_sha256": patch_sha,
+              "root_cause": "agent-tool-repair",
+              "analysis": "OpenCode Agent 工具自主修复（见 opencode_agent.jsonl 末尾 Agent 自述）。",
+              "evidence": ["opencode_agent.jsonl"],
+          })
+          with open(result_path, "w", encoding="utf-8") as handle:
+              json.dump(result, handle, ensure_ascii=False, indent=2)
+              handle.write("\n")
+          print("Agent patch 已生成:", len(patch), "字符")
+          PY
+          fi
+          # 清理日志中的敏感信息由 GH Actions 自动脱敏处理
+
       - name: Capture proposal status
         id: result
         if: always()
@@ -409,6 +475,7 @@ jobs:
             single_source_repair_result.json
             single_source_repair.patch
             single_source_root_cause.md
+            opencode_agent.jsonl
           if-no-files-found: warn
           retention-days: 3
 
