@@ -237,11 +237,11 @@ jobs:
           GIT_SYNC_BRANCH="$GITHUB_REF_NAME" bash scripts/git_sync_progress.sh "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
 
       - name: Parse and merge data
-        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true' && steps.step1.outputs.complete == 'true'
+        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true'
         run: python scripts/crawl_pconline.py --step 2
 
       - name: Validate generated PConline data
-        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true' && steps.step1.outputs.complete == 'true'
+        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true'
         id: validate_data
         run: |
           TODAY=$(date +%Y%m%d)
@@ -271,11 +271,11 @@ jobs:
           fi
 
       - name: Generate summary
-        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true' && steps.step1.outputs.complete == 'true'
+        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true'
         run: python scripts/crawl_pconline.py --step 3
 
       - name: Mark crawl complete and commit
-        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true' && steps.step1.outputs.complete == 'true' && github.event.inputs.debug_mode != 'true'
+        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true' && github.event.inputs.debug_mode != 'true'
         run: |
           # 仅当扫描完成（scan_complete=true）才标记半月周期；有待重试时数据照常产出但不打 .done
           if python3 -c "import json,sys; p=json.load(open('crawl_state/pconline/progress.json')); sys.exit(0 if p.get('scan_complete') else 1)"; then
@@ -291,7 +291,7 @@ jobs:
           GIT_SYNC_BRANCH="$GITHUB_REF_NAME" bash scripts/git_sync_progress.sh "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
 
       - name: Upload crawl data
-        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true' && steps.step1.outputs.complete == 'true'
+        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true'
         id: upload_data
         uses: actions/upload-artifact@v4
         with:
@@ -303,7 +303,7 @@ jobs:
           if-no-files-found: error
 
       - name: 检测新增数据并触发合并分析
-        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true' && steps.step1.outputs.complete == 'true'
+        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true'
         id: check_new_data
         run: |
           echo "pconline_data_file=${{ steps.validate_data.outputs.pconline_data_file }}" >> "$GITHUB_OUTPUT"
