@@ -70,6 +70,21 @@ jobs:
       - name: Run unit tests
         run: python -m unittest discover -s tests -p 'test_*.py'
 
+      - name: Dispatch self-repair on CI failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.ACTION_PAT || secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          echo "CI 失败，派发自修复（OpenCode Agent 修复）..."
+          gh workflow run single-source-repair.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref main \
+            -f pages_run_id="${{ github.run_id }}" \
+            -f source_sha="${{ github.sha }}" \
+            -f trigger=ci \
+            -f ci_run_id="${{ github.run_id }}"
+
   storage-policy:
     name: Storage policy
     if: >-

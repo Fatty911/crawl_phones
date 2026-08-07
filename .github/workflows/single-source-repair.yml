@@ -17,6 +17,16 @@ on:
         description: 该 Pages run 的 workflow_run.head_sha
         required: true
         type: string
+      trigger:
+        description: 触发模式（pages=合并后修复；ci=CI 失败自动修复）
+        required: false
+        default: 'pages'
+        type: string
+      ci_run_id:
+        description: CI 失败触发时的 CI workflow run ID（trigger=ci 时必填）
+        required: false
+        default: ''
+        type: string
 
 concurrency:
   group: single-source-repair-phones
@@ -33,6 +43,8 @@ env:
   SOURCE_SHA: ${{ github.event_name == 'workflow_run' && github.sha || inputs.source_sha }}
   PAGES_ARTIFACT_NAME: github-pages
   NVIDIA_NIM_MODEL: deepseek-ai/deepseek-v4-flash
+  TRIGGER_MODE: ${{ inputs.trigger || 'pages' }}
+  CI_RUN_ID: ${{ inputs.ci_run_id || '' }}
 
 jobs:
   propose:
@@ -63,7 +75,54 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Bind CI failure context (ci trigger)
+        if: env.TRIGGER_MODE == 'ci'
+        id: ci_context
+        env:
+          GH_TOKEN: ${{ secrets.ACTION_PAT || secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$CI_RUN_ID" ]]; then
+            printf '%s\n' 'reason=ci-run-id-missing' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CI_RUN_ID" > "$RUNNER_TEMP/ci-run.json"; then
+            printf '%s\n' 'reason=ci-run-not-readable' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          CI_HEAD_SHA="$(python3 -c 'import json; print(json.load(open("/home/runner/work/_temp/ci-run.json")).get("head_sha",""))')"
+          if [[ "$CI_HEAD_SHA" != "$SOURCE_SHA" ]]; then
+            printf '%s\n' 'reason=ci-run-sha-mismatch' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          gh run view "$CI_RUN_ID" --repo "$GITHUB_REPOSITORY" --log-failed > ci_failure.log 2>/dev/null || true
+          if [[ ! -s ci_failure.log ]]; then
+            printf '%s\n' 'reason=ci-failure-log-empty' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # 提取失败摘要：失败测试名/断言/堆栈尾部
+          python3 - <<'PY'
+          import json
+          import re
+          lines = open("ci_failure.log", encoding="utf-8", errors="replace").read().splitlines()
+          failed_tests = [l.split("FAILED", 1)[1].strip() for l in lines if "FAILED" in l]
+          tail = "\n".join(lines[-150:])
+          report = {
+              "mode": "ci-failure",
+              "ci_run_id": "$CI_RUN_ID",
+              "failed_tests": failed_tests[:20],
+              "summary_tail": tail,
+              "note": "CI 失败修复：先复现失败（python3 -m pytest tests/ -q），修复测试断言或代码，确保 194 全过后再提交。",
+          }
+          json.dump(report, open("ci_failure_report.json", "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+          PY
+          printf '%s\n' 'ready=true' >> "$GITHUB_OUTPUT"
+          printf '%s\n' 'ci_mode=true' >> "$GITHUB_OUTPUT"
+          printf '%s\n' 'chain_id=ci-'"$CI_RUN_ID" >> "$GITHUB_OUTPUT"
+
       - name: Bind Pages artifact and repair chain
+        if: steps.ci_context.outputs.ci_mode != 'true'
         id: context
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -280,6 +339,7 @@ jobs:
           PY
 
       - name: Ask free-first LLM for a bounded repair proposal
+        if: steps.context.outputs.ready == 'true' && steps.ci_context.outputs.ci_mode != 'true'
         if: steps.context.outputs.ready == 'true'
         env:
           NVIDIA_NIM_API_KEY: ${{ secrets.NVIDIA_NIM_API_KEY }}
@@ -332,12 +392,22 @@ jobs:
           printf '%s' "$PROVIDER_JSON" > "$RUNNER_TEMP/occonfig/opencode.json"
           export OPENCODE_CONFIG="$RUNNER_TEMP/occonfig/opencode.json"
           # ---- 3. Agent 自主修复（读报告->定位根因->改代码->跑测试） ----
-          timeout 1500 opencode run --format json "你是 crawl_phones 手机数据仓库的修复 Agent。请执行以下任务：
+          if [[ "$TRIGGER_MODE" == "ci" ]]; then
+            CI_PROMPT='你是 crawl_phones 手机数据仓库的 CI 修复 Agent。请执行以下任务：
+            1. 阅读 ci_failure_report.json（CI 失败摘要：失败测试名 + 日志尾部）。
+            2. 本地复现失败：运行 python3 -m pytest tests/ -q 观察真实报错（断言/导入/语法错误）。
+            3. 定位根因：测试断言与代码逻辑不一致则修正测试；代码 bug 则修代码。不降低防护、不删除校验。
+            4. 修复后必须运行 python3 -m pytest tests/ -q 确认全部通过（含既有 194 测试）。
+            5. 结束时在最后一条消息里说明：修改了哪些文件、每处修改的理由、测试结果。'
+            timeout 1500 opencode run --format json "$CI_PROMPT" > opencode_agent.jsonl 2>&1 || echo "opencode run 退出码 $?"
+          else
+            timeout 1500 opencode run --format json "你是 crawl_phones 手机数据仓库的修复 Agent。请执行以下任务：
           1. 阅读 single_source_report.json（差异模式诊断报告：字段级差异分布 + screen_missing_size/battery_missing_capacity/date_granularity 等模式计数与样例）。
           2. 定位多源差异的根因：可能是 scripts/crawl_pconline.py 字段合并丢失规格值、scripts/merge_phones.py 比对归一化不完善、或 scripts/single_source_repair.py 报告逻辑。逐一读相关源码确认。
           3. 对可安全修复的根因修改代码：不伪造数据、不折叠真实冲突（如 16GB vs 12GB 内存、5000 vs 4500mAh 电池）、不删除校验逻辑、不降低防护。
           4. 修改后必须运行 python3 -m pytest tests/ -q 验证全部测试通过；失败则继续修复直到通过。
           5. 结束时在最后一条消息里说明：修改了哪些文件、每处修改的理由、测试结果。" > opencode_agent.jsonl 2>&1 || echo "opencode run 退出码 $?"
+          fi
           # ---- 4. 生成 patch 并更新提议结果 ----
           if git diff --quiet; then
             echo "Agent 未产生代码修改"
@@ -371,6 +441,34 @@ jobs:
           PY
           fi
           # 清理日志中的敏感信息由 GH Actions 自动脱敏处理
+
+      - name: Generate CI-mode proposal result
+        if: steps.ci_context.outputs.ci_mode == 'true' && steps.context.outputs.ready == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.ACTION_PAT || secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo "Agent 无修改（CI 失败无法修复或无需修复）"
+            python3 - <<'PY'
+          import json
+          json.dump({"version": 1, "status": "no-op", "repo_kind": "$REPO_KIND", "base_sha": "$SOURCE_SHA",
+                     "pages_run_id": "$CI_RUN_ID", "pages_url": "$PAGES_URL", "chain_id": "ci-$CI_RUN_ID",
+                     "round": 1, "analysis": "CI 失败但 Agent 未产生修改（见 opencode_agent.jsonl）"}, open("single_source_repair_result.json", "w", encoding="utf-8"), ensure_ascii=False)
+          PY
+            exit 0
+          fi
+          git diff > single_source_repair.patch
+          python3 - <<'PY'
+          import hashlib
+          import json
+          patch = open("single_source_repair.patch", encoding="utf-8").read()
+          json.dump({"version": 1, "status": "approved", "repo_kind": "$REPO_KIND", "base_sha": "$SOURCE_SHA",
+                     "pages_run_id": "$CI_RUN_ID", "pages_url": "$PAGES_URL", "chain_id": "ci-$CI_RUN_ID",
+                     "round": 1, "patch_sha256": hashlib.sha256(patch.encode("utf-8")).hexdigest(),
+                     "analysis": "OpenCode Agent 修复 CI 失败（见 opencode_agent.jsonl）"}, open("single_source_repair_result.json", "w", encoding="utf-8"), ensure_ascii=False)
+          PY
 
       - name: Capture proposal status
         id: result
