@@ -655,7 +655,7 @@ jobs:
           PY
 
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
-          git -c "http.extraheader=AUTHORIZATION: bearer $PUSH_TOKEN" fetch origin main --depth=1
+          git fetch "https://x-access-token:${PUSH_TOKEN}@github.com/$GITHUB_REPOSITORY.git" main --depth=1
           test "$(git rev-parse origin/main)" = "$SOURCE_SHA"
           python scripts/single_source_repair.py --repo-kind "$REPO_KIND" --check-patch proposal/single_source_repair.patch
           git apply --whitespace=error proposal/single_source_repair.patch
@@ -674,7 +674,7 @@ jobs:
             -m "Single-Source-Repair-Chain: ${{ needs.propose.outputs.chain_id }}" \
             -m "Single-Source-Repair-Round: ${{ needs.propose.outputs.round }}" \
             -m "Single-Source-Repair-Base-SHA: $SOURCE_SHA"
-          git -c "http.extraheader=AUTHORIZATION: bearer $PUSH_TOKEN" push origin HEAD:main
+          git push "https://x-access-token:${PUSH_TOKEN}@github.com/$GITHUB_REPOSITORY.git" HEAD:main
           printf 'commit_sha=%s\n' "$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Trigger the next Pages deployment
