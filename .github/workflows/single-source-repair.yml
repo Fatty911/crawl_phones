@@ -340,7 +340,6 @@ jobs:
 
       - name: Ask free-first LLM for a bounded repair proposal
         if: steps.context.outputs.ready == 'true' && steps.ci_context.outputs.ci_mode != 'true'
-        if: steps.context.outputs.ready == 'true'
         env:
           NVIDIA_NIM_API_KEY: ${{ secrets.NVIDIA_NIM_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
