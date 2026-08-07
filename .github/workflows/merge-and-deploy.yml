@@ -239,6 +239,14 @@ jobs:
           mkdir -p data
           download_stable_artifacts "crawl-zol.yml" "zol" "中关村在线" "zol_phones_*.json" "zol_phones_*.csv"
           download_stable_artifacts "crawl-pconline.yml" "pconline" "太平洋电脑网" "pconline_phones_*.json" "pconline_phones_*.csv"
+          # 恢复已解析的 PConline 数据（时间限制 exit 10 的 run 数据在 git 中，含屏幕尺寸等新字段）
+          PCL_PARSED=$(git ls-tree -r --name-only origin/main crawl_state/pconline_parsed/ 2>/dev/null | tail -1)
+          if [ -n "$PCL_PARSED" ] && [ ! -f "data/$(basename "$PCL_PARSED")" ]; then
+            git show "origin/main:$PCL_PARSED" > "data/$(basename "$PCL_PARSED")"
+            echo "PConline parsed data recovered from git: $PCL_PARSED"
+          elif [ -n "$PCL_PARSED" ]; then
+            echo "PConline parsed data already present, skip git recovery"
+          fi
           download_stable_artifacts "crawl-cnmo.yml" "cnmo" "CNMO" "cnmo_phones_*.json" "cnmo_phones_*.csv"
           # CNMO data fallback: CNMO crawler has been blocked by 503 anti-bot,
           # so its stable artifact is missing, but the live baseline still holds

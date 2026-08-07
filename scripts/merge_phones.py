@@ -1416,7 +1416,7 @@ def main():
     print(f"CNMO数据文件 ({len(cnmo_files)}): {[os.path.basename(f) for f in cnmo_files]}")
 
     zol_rows = guard_publish_rows(norm_rows(load_all("data/zol_phones_*.json"), '中关村在线'))
-    pconline_rows = guard_publish_rows(norm_rows(load_all("data/pconline_phones_*.json"), '太平洋电脑网'))
+    pconline_rows = guard_publish_rows(norm_rows(load_all("data/pconline_phones_*.json", prefer_latest=True), '太平洋电脑网'))
     raw_cnmo_rows = norm_rows(load_all("data/cnmo_phones_*.json", prefer_latest=True), 'CNMO')
     cnmo_rows = guard_publish_rows(raw_cnmo_rows, source='CNMO')
     print(f"发布防御丢弃未来上市: CNMO {len(raw_cnmo_rows) - len(cnmo_rows)} 条；CNMO价格仅保留数值或空")
