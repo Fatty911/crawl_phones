@@ -327,7 +327,7 @@ jobs:
             PROVIDER_JSON='{"provider":{"openrouter":{"npm":"@ai-sdk/openai-compatible","name":"OpenRouter","options":{"baseURL":"https://openrouter.ai/api/v1"},"models":{"deepseek-v4-flash":{"name":"DeepSeek V4 Flash","reasoning":{"effort":"max"}}}}},"model":"openrouter/deepseek/deepseek-v4-flash","small_model":"openrouter/deepseek/deepseek-v4-flash"}'
           fi
           printf '%s' "$PROVIDER_JSON" > "$RUNNER_TEMP/occonfig/opencode.json"
-          export OPENCODE_CONFIG="$RUNNER_TEMP/occonfig"
+          export OPENCODE_CONFIG="$RUNNER_TEMP/occonfig/opencode.json"
           # ---- 3. Agent 自主修复（读报告->定位根因->改代码->跑测试） ----
           timeout 1500 opencode run --format json "你是 crawl_phones 手机数据仓库的修复 Agent。请执行以下任务：
           1. 阅读 single_source_report.json（差异模式诊断报告：字段级差异分布 + screen_missing_size/battery_missing_capacity/date_granularity 等模式计数与样例）。
