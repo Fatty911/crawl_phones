@@ -66,7 +66,6 @@ OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
 
 # NIM 可用模型（按优先级排序，首选大上下文 + 推理能力强的）
 NIM_MODELS = [
-    "deepseek-ai/deepseek-v4-pro",
     "nvidia/nemotron-3-super-120b-a12b",
     "nvidia/nemotron-3-ultra-550b-a55b",
     "deepseek-ai/deepseek-v4-flash",
