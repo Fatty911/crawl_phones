@@ -448,7 +448,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if git diff --quiet; then
+          # Agent 可能已直接提交（无 push 凭证时本地 commit）；也可能留工作区改动
+          if [[ "$(git rev-parse HEAD)" != "$SOURCE_SHA" ]]; then
+            echo "Agent 已提交 commit $(git rev-parse --short HEAD)，捕获 source_sha..HEAD 的 diff"
+            git diff "$SOURCE_SHA"..HEAD > single_source_repair.patch
+          else
+            git diff > single_source_repair.patch
+          fi
+          if [[ ! -s single_source_repair.patch ]]; then
             echo "Agent 无修改（CI 失败无法修复或无需修复）"
             python3 - <<'PY'
           import json
@@ -458,7 +465,6 @@ jobs:
           PY
             exit 0
           fi
-          git diff > single_source_repair.patch
           python3 - <<'PY'
           import hashlib
           import json
