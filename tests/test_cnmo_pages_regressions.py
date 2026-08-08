@@ -22,8 +22,17 @@ def load_script_module(name: str, path: Path):
     if spec is None or spec.loader is None:
         raise RuntimeError(f"cannot load {path}")
     module = importlib.util.module_from_spec(spec)
-    with mock.patch.object(sys, "argv", [path.name]):
-        spec.loader.exec_module(module)
+    # 脚本间相互 import（merge_phones/preserve/verify）需要 scripts/ 在 sys.path
+    scripts_dir = str(path.parent)
+    sys.path.insert(0, scripts_dir)
+    try:
+        with mock.patch.object(sys, "argv", [path.name]):
+            spec.loader.exec_module(module)
+    finally:
+        try:
+            sys.path.remove(scripts_dir)
+        except ValueError:
+            pass
     return module
 
 
@@ -2154,6 +2163,55 @@ class MonthGranularityBatteryToleranceTests(unittest.TestCase):
 
     def test_battery_large_diff_real(self) -> None:
         self.assertFalse(self.merge._semantic_fallback_equal("电池", "5630mAh|不可拆卸式电池", "锂聚合物电池,5360mAh|不支持"))
+
+
+
+class PreserveSpuCoverageTests(unittest.TestCase):
+    """preserve_baseline 的 SPU+配置 覆盖：id 漂移行被同产品候选替代且 id 追溯保留。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.preserve = load_script_module("preserve_spu", ROOT / "scripts" / "preserve_publish_baseline.py")
+        cls.verify = load_script_module("verify_spu", ROOT / "scripts" / "verify_publish_superset.py")
+
+    def _rows(self):
+        return [
+            {"型号": "iQOO 13", "品牌": "iQOO", "内存": "12GB", "存储": "256GB",
+             "手机ID": "1001", "数据来源": "太平洋电脑网", "验证状态": "双源差异"},
+            {"型号": "iQOO 13(12GB+256GB)", "品牌": "iQOO", "内存": "12GB", "存储": "256GB",
+             "手机ID": "2001", "数据来源": "中关村在线", "验证状态": "单源"},
+        ]
+
+    def test_spu_coverage_replaces_drifted_id(self) -> None:
+        baseline = self._rows()
+        # 候选：id 漂移（+9000000）但同 SPU+配置
+        cand = [dict(r) for r in baseline]
+        for i, r in enumerate(cand):
+            r["手机ID"] = str(int(r["手机ID"]) + 9000000)
+        merged, missing = self.preserve.preserve_baseline(baseline, cand)
+        # 基线行全部被候选覆盖（无 missing），候选 id 生效
+        self.assertEqual(missing, [])
+        self.assertEqual(len(merged), len(cand))
+        # traceability：基线 id 合并进关联手机ID（首个匹配候选行吸收，verify 可追溯）
+        all_related = "|".join(str(r.get("关联手机ID") or "") for r in merged)
+        self.assertIn("1001", all_related)
+        self.assertIn("2001", all_related)
+        # verify 铁律仍通过（id 追溯保留）
+        self.verify.verify_superset(baseline, merged)
+
+    def test_spu_key_distinguishes_configs(self) -> None:
+        a = self.preserve.spu_config_key({"型号": "iQOO 13(12GB+256GB)", "内存": "12GB", "存储": "256GB"})
+        b = self.preserve.spu_config_key({"型号": "iQOO 13(16GB+512GB)", "内存": "16GB", "存储": "512GB"})
+        self.assertNotEqual(a, b)
+        self.assertEqual(
+            self.preserve.spu_config_key({"型号": "iQOO 13(12GB+256GB)", "内存": "12GB", "存储": "256GB"}),
+            self.preserve.spu_config_key({"型号": "iQOO 13", "内存": "12GB", "存储": "256GB"}),
+        )
+
+    def test_spu_key_no_cross_brand_collision(self) -> None:
+        a = self.preserve.spu_config_key({"型号": "X10(12GB+256GB)", "品牌": "品牌A", "内存": "12GB", "存储": "256GB"})
+        b = self.preserve.spu_config_key({"型号": "X10(12GB+256GB)", "品牌": "品牌B", "内存": "12GB", "存储": "256GB"})
+        self.assertNotEqual(a, b)
 
 if __name__ == "__main__":
     unittest.main()
