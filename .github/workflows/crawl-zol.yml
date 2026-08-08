@@ -270,9 +270,11 @@ jobs:
           if [ "${{ steps.step1.outputs.complete }}" = "true" ]; then
             touch "$ZOL_DONE_MARKER"
             echo "爬取完成（扫描所有品牌），标记半月周期"
-          elif [ "${{ steps.validate_data.outputs.has_data }}" = "true" ] && [ -f "data/zol_phones_$(date +%Y%m%d).json" ]; then
+          elif [ "${{ steps.validate_data.outputs.has_data }}" = "true" ] && [ -f "data/zol_phones_$(date +%Y%m%d).json" ] && [ "${{ steps.validate_data.outputs.zol_row_count }}" -ge 50 ]; then
             touch "$ZOL_DONE_MARKER"
-            echo "爬取完成（有有效数据），标记半月周期"
+            echo "爬取完成（有效数据 >=50 行），标记半月周期"
+          elif [ "${{ steps.validate_data.outputs.has_data }}" = "true" ]; then
+            echo "有数据但行数不足 50（反爬残留），不标记周期——下次运行继续重试"
           else
             echo "本次爬取未完成，仅同步进度"
           fi
