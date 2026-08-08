@@ -2083,5 +2083,39 @@ class TSeriesSignatureTests(unittest.TestCase):
         self.assertEqual(appended, [])
         self.assertIn("CNMO", base[0]["数据来源"])
 
+
+
+class SpuGroupingTests(unittest.TestCase):
+    """SPU 分组归并：营销后缀括号剥离 + append 的 fuzzy 兜底候选。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.merge = load_script_module("merge_phones_spu", ROOT / "scripts" / "merge_phones.py")
+
+    def test_marketing_suffix_same_spu(self) -> None:
+        self.assertEqual(
+            self.merge.model_key({"型号": "小米15 Ultra(双卫星版)", "内存": "", "存储": ""}),
+            self.merge.model_key({"型号": "小米15 Ultra", "内存": "", "存储": ""}),
+        )
+        self.assertEqual(
+            self.merge.model_key({"型号": "荣耀Magic V Flip(高定款)", "内存": "", "存储": ""}),
+            self.merge.model_key({"型号": "荣耀Magic V Flip", "内存": "", "存储": ""}),
+        )
+
+    def test_unknown_parenthesis_kept(self) -> None:
+        # 未知括号（可能是真实型号差异）不剥离
+        self.assertNotEqual(
+            self.merge.model_key({"型号": "X Phone(Pro)", "内存": "", "存储": ""}),
+            self.merge.model_key({"型号": "X Phone", "内存": "", "存储": ""}),
+        )
+
+    def test_fuzzy_append_matches_marketing_variant(self) -> None:
+        base = [{"型号": "小米15 Ultra", "品牌": "小米", "内存": "12GB", "存储": "512GB", "数据来源": "太平洋电脑网"}]
+        extra = [{"型号": "小米15 Ultra(双卫星版)", "品牌": "小米", "内存": "12GB", "存储": "512GB", "数据来源": "CNMO"}]
+        appended, matched = self.merge.append_unique_single_source(base, extra, "CNMO")
+        self.assertEqual(matched, 1)
+        self.assertEqual(appended, [])
+        self.assertIn("CNMO", base[0]["数据来源"])
+
 if __name__ == "__main__":
     unittest.main()

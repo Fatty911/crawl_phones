@@ -888,6 +888,17 @@ def model_key(row):
         flags=re.IGNORECASE,
     )
     name = name.replace('()', '')
+    # 营销后缀括号（双卫星版/高定款/钛金属特别版 等）是同一 SPU 的营销变体，
+    # 不剥离会把同型号判成不同 family（CNMO 无法归并）；白名单词保守剥离，
+    # 未知括号（可能是真实型号差异）保留。
+    name = re.sub(
+        r'[（(](?:双卫星版?|高定款|高定版|钛金属特别版|钛金属版|特别版|限量版|'
+        r'冠军版|联名版|典藏版|礼盒版?|套装版|尊享版|臻享版|优享版|青春版|活力版|'
+        r'嘉年华版|lite版)[）)]',
+        '',
+        name,
+        flags=re.IGNORECASE,
+    )
     name = re.sub(r'\s+', '', name)
     # 统一品牌名：中文→英文（以 ZOL 命名为准）
     brand_map = {
@@ -1337,11 +1348,22 @@ def append_unique_single_source(base_rows, extra_rows, source):
     appended = []
     matched = 0
     appended_keys = set()
+    fuzzy_index = {}
+    for index, row in enumerate(base_rows):
+        fk = fuzzy_model_key(row)
+        if fk:
+            fuzzy_index.setdefault(fk, []).append(index)
     for extra_row in extra_rows:
         family = model_key(extra_row)
         signature = model_storage_signature(extra_row)
         signature_options = model_storage_signatures(extra_row)
         candidates = family_index.get(family, [])
+        if not candidates:
+            # SPU 级兜底：型号名有细微差异（标点/空格/大小写/营销后缀）时
+            # fuzzy_model_key 相同仍视为同一 SPU 的候选，交给签名/型号级分支判定。
+            fk = fuzzy_model_key(extra_row)
+            if fk and fk != family:
+                candidates = fuzzy_index.get(fk, [])
         exact_variant = [
             index for index in candidates
             if signature and model_storage_signature(base_rows[index]) == signature
