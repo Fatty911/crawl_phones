@@ -721,6 +721,16 @@ def _semantic_fallback_equal(field, left, right):
     bat_b = set(re.findall(r'\d+\s*mAh', b_str, re.IGNORECASE))
     if bat_a and bat_b and bat_a & bat_b:
         return True
+    # 电池容量差 ≤1%：同一电池的标注差异（7025 vs 7050、3692 vs 3693 mAh——
+    # 源站取整/四舍五入差异），差值更大（5630 vs 5360 ≈4.8%）是真实差异。
+    if bat_a and bat_b:
+        num_a = [float(n) for n in re.findall(r'(\d+)\s*mAh', a_str, re.IGNORECASE)]
+        num_b = [float(n) for n in re.findall(r'(\d+)\s*mAh', b_str, re.IGNORECASE)]
+        if num_a and num_b:
+            for na in num_a:
+                for nb in num_b:
+                    if na != nb and abs(na - nb) / max(na, nb) <= 0.01:
+                        return True
     # 一方无容量信息（如仅"不可拆卸式电池"）另一方有：信息缺失非冲突；
     # 但可拆卸性互斥（可拆卸 vs 不可拆卸）仍是真实差异
     if bool(bat_a) != bool(bat_b):
@@ -791,6 +801,17 @@ def _semantic_fallback_equal(field, left, right):
             month_b = re.search(r'20\d{2}年[,，]?\s*\d+月', b_str)
             if bool(month_a) != bool(month_b):
                 return True
+            # 月粒度：同年同月，一方无日（只有年月）另一方有日（PCL 精确到日 vs
+            # CNMO 只有年月——同一上市月份，日粒度标注差异）；双方都有日但不同
+            # （如 29 日 vs 30 日）保守保留差异。
+            if month_a and month_b:
+                mm_a = re.search(r'20\d{2}年[,，]?\s*(\d{1,2})月', a_str)
+                mm_b = re.search(r'20\d{2}年[,，]?\s*(\d{1,2})月', b_str)
+                if mm_a and mm_b and mm_a.group(1) == mm_b.group(1):
+                    day_a = re.search(r'20\d{2}年[,，]?\s*\d{1,2}月\s*(\d{1,2})日', a_str)
+                    day_b = re.search(r'20\d{2}年[,，]?\s*\d{1,2}月\s*(\d{1,2})日', b_str)
+                    if bool(day_a) != bool(day_b):
+                        return True
 
     # 处理器：品牌核心型号包含
     if field == '处理器':

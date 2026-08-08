@@ -2129,5 +2129,31 @@ class SpuGroupingTests(unittest.TestCase):
         self.assertEqual(appended, [])
         self.assertIn("CNMO", base[0]["数据来源"])
 
+
+
+class MonthGranularityBatteryToleranceTests(unittest.TestCase):
+    """上市时间月粒度（一方无日）+ 电池容量 1% 容差规则。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.merge = load_script_module("merge_phones_mgbt", ROOT / "scripts" / "merge_phones.py")
+
+    def test_date_month_granularity_equal(self) -> None:
+        self.assertTrue(self.merge._semantic_fallback_equal("上市时间", "2025年10月30日", "2025年10月"))
+        self.assertTrue(self.merge._semantic_fallback_equal("上市时间", "2025年10月", "2025年10月30日"))
+
+    def test_date_same_month_different_day_real(self) -> None:
+        self.assertFalse(self.merge._semantic_fallback_equal("上市时间", "2025年10月29日", "2025年10月30日"))
+
+    def test_date_different_month_real(self) -> None:
+        self.assertFalse(self.merge._semantic_fallback_equal("上市时间", "2025年10月30日", "2025年11月"))
+
+    def test_battery_1pct_tolerance_equal(self) -> None:
+        self.assertTrue(self.merge._semantic_fallback_equal("电池", "7025mAh大电池|不可拆卸式电池", "锂聚合物电池,7050mAh|不支持"))
+        self.assertTrue(self.merge._semantic_fallback_equal("电池", "3692mAh", "3693mAh"))
+
+    def test_battery_large_diff_real(self) -> None:
+        self.assertFalse(self.merge._semantic_fallback_equal("电池", "5630mAh|不可拆卸式电池", "锂聚合物电池,5360mAh|不支持"))
+
 if __name__ == "__main__":
     unittest.main()
