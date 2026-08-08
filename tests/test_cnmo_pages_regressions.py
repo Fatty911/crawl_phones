@@ -2054,5 +2054,34 @@ class MergeRuleExtTests(unittest.TestCase):
         self.assertFalse(self._equal("屏幕", "6.82英寸|144Hz", "7.0英寸|144Hz"))  # 超容差
 
 
+
+
+class TSeriesSignatureTests(unittest.TestCase):
+    """model_storage_signature 不得把 T 系列型号后缀（17T/15T）误解析为 TB 容量。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.merge = load_script_module("merge_phones_tseries", ROOT / "scripts" / "merge_phones.py")
+
+    def test_t_series_model_level(self) -> None:
+        for name in ("Xiaomi 17T", "Xiaomi 15T", "iQOO 15T", "小米 13T", "Xiaomi 17T Pro"):
+            self.assertEqual(self.merge.model_storage_signature({"型号": name, "内存": "", "存储": ""}), (),
+                             f"{name} 应判型号级（无容量签名）")
+
+    def test_real_tb_suffix_still_detected(self) -> None:
+        self.assertEqual(self.merge.model_storage_signature({"型号": "X 17TB", "内存": "", "存储": ""}), (17408,))
+        self.assertEqual(self.merge.model_storage_signature({"型号": "X 512GB", "内存": "", "存储": ""}), (512,))
+
+    def test_variant_merge_with_t_series_base(self) -> None:
+        base = [{"型号": "Xiaomi 17T", "内存": "LPDDR5X", "存储": "256GB|512GB|UFS 4.1", "数据来源": "太平洋电脑网"}]
+        extra = [
+            {"型号": "小米17T(12GB+256GB)", "品牌": "小米", "内存": "12GB", "存储": "256GB", "数据来源": "CNMO"},
+            {"型号": "小米17T(12GB+512GB)", "品牌": "小米", "内存": "12GB", "存储": "512GB", "数据来源": "CNMO"},
+        ]
+        appended, matched = self.merge.append_unique_single_source(base, extra, "CNMO")
+        self.assertEqual(matched, 2)
+        self.assertEqual(appended, [])
+        self.assertIn("CNMO", base[0]["数据来源"])
+
 if __name__ == "__main__":
     unittest.main()

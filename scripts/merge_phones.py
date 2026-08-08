@@ -938,7 +938,10 @@ def model_storage_signature(row):
         amounts = re.findall(r'(\d+)\s*([gt]b?)', group, re.IGNORECASE)
         if len(amounts) == 1:
             return (amount(*amounts[0]),)
-    suffix = re.search(r'(\d+)\s*([gt]b?)\s*$', name, re.IGNORECASE)
+    # 型号名末尾容量后缀必须带完整单位（gb/tb）。裸 "t" 是 T 系列型号后缀
+    # （小米 17T/15T、iQOO 15T 等），不是 "tb"——误解析会把型号级 base 判为
+    # 带容量签名，导致 CNMO 容量变体无法归并（model_level 分支排除）。
+    suffix = re.search(r'(\d+)\s*(gb|tb)\s*$', name, re.IGNORECASE)
     if suffix:
         return (amount(suffix.group(1), suffix.group(2)),)
     memory = re.findall(r'(\d+)\s*([gt]b?)', str(row.get('内存') or ''), re.IGNORECASE)
