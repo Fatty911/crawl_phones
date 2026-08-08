@@ -2042,6 +2042,18 @@ class MergeRuleExtTests(unittest.TestCase):
     def test_screen_missing_side_material_equal(self) -> None:
         self.assertTrue(self._equal("屏幕", "6.8英寸|120Hz|AMOLED", "--|柔性AMOLED|10.7亿色数"))
 
+    def test_screen_missing_dash_no_material_side_equal(self) -> None:
+        # 缺失侧以 -- 占位符开头且无任何材质/尺寸（CNMO 屏幕字段整体缺失）→ 信息缺失非冲突
+        self.assertTrue(self._equal("屏幕", "7.93英寸|打孔屏,折叠屏,多点触摸|120Hz|OLED|P3广色域", "--|10.7亿色数"))
+        self.assertTrue(self._equal("屏幕", "6.94英寸|打孔屏,多点触摸|OLED|P3广色域", "--|120Hz"))
+        self.assertTrue(self._equal("屏幕", "8.03英寸|打孔屏,折叠屏,多点触摸|120Hz|AMOLED|【内屏】专业原色屏", "--|120Hz"))
+
+    def test_screen_missing_dash_side_with_spec_still_real(self) -> None:
+        # 缺失侧虽是 -- 前缀但带尺寸/材质：仍按常规尺寸/材质交集判定，不因占位符一刀切
+        self.assertTrue(self._equal("屏幕", "6.8英寸|120Hz|AMOLED", "--|柔性AMOLED|10.7亿色数"))
+        # 一方有尺寸另一方完全无屏幕信息（无 -- 前缀、无尺寸无材质）→ 仍是差异
+        self.assertFalse(self._equal("屏幕", "6.8英寸|OLED", "打孔屏,多点触摸|120Hz"))
+
     def test_screen_missing_side_no_material_real(self) -> None:
         self.assertFalse(self._equal("屏幕", "6.8英寸|OLED", "打孔屏,多点触摸|120Hz"))  # 无材质交集
         self.assertFalse(self._equal("屏幕", "6.8英寸|OLED", "6.5英寸|OLED"))  # 双方有尺寸且不同

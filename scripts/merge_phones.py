@@ -753,9 +753,17 @@ def _semantic_fallback_equal(field, left, right):
     if field == '屏幕':
         size_a = set(re.findall(r'\d+(?:\.\d+)?\s*英寸', a_str))
         size_b = set(re.findall(r'\d+(?:\.\d+)?\s*英寸', b_str))
+        mat_a = set(re.findall(r'AMOLED|OLED|LCD|IPS', a_str))
+        mat_b = set(re.findall(r'AMOLED|OLED|LCD|IPS', b_str))
+        # 一侧屏幕值以缺失占位符（--）开头且无尺寸无材质（如 CNMO "--|10.7亿色数"），
+        # 另一侧有屏幕规格 → 信息缺失非冲突（该源屏幕字段整体缺失，非真实冲突）。
+        for value, has_size, mat in ((a_str, bool(size_a), mat_a), (b_str, bool(size_b), mat_b)):
+            if not has_size and not mat and re.match(r'^\s*--', value):
+                other_has = bool(size_b if value == a_str else size_a) or bool(mat_b if value == a_str else mat_a)
+                if other_has:
+                    return True
         if bool(size_a) != bool(size_b):
-            mat_a = set(re.findall(r'AMOLED|OLED|LCD|IPS', a_str))
-            mat_b = set(re.findall(r'AMOLED|OLED|LCD|IPS', b_str))
+            # 一侧有尺寸、另一侧无尺寸但材质交集非空 → 信息缺失非冲突
             if mat_a and mat_b and mat_a & mat_b:
                 return True
         # 尺寸容差：两源标注的屏幕尺寸可能相差 0.05-0.1 英寸（四舍五入/取整差异，
