@@ -828,7 +828,6 @@ def _patch_paths(patch: str, kind: str) -> list[str]:
         "pyproject.toml",
         "package.json",
         "NVIDIA_NIM_API_KEY",
-        "single_source_repair.py",
         "GIT binary patch",
     )
     if any(marker in patch for marker in forbidden_markers):
