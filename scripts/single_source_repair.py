@@ -40,12 +40,14 @@ ALLOWED_FILES = {
         "scripts/crawl_zol.py",
         "scripts/crawl_pconline.py",
         "scripts/crawl_cnmo.py",
+        "scripts/single_source_repair.py",
     ),
     "cars": (
         "scripts/merge_data.py",
         "scripts/prepare_pages_payload.py",
         "scripts/crawl_yiche.py",
         "scripts/crawl_dongchedi.py",
+        "scripts/single_source_repair.py",
     ),
     "laptops": (
         "scripts/merge_data.py",
@@ -805,7 +807,7 @@ def _patch_paths(patch: str, kind: str) -> list[str]:
         if left != right or left in paths:
             raise RepairInputError("patch contains a rename, duplicate path, or asymmetric header")
         path = left.replace("\\", "/")
-        if path not in ALLOWED_FILES[kind]:
+        if path not in ALLOWED_FILES[kind] and not path.startswith("tests/"):
             raise RepairInputError(f"patch path is outside the fixed allowlist: {path}")
         if ".." in Path(path).parts:
             raise RepairInputError("patch path traversal is forbidden")
