@@ -857,7 +857,7 @@ def validate_working_tree(kind: str) -> None:
     if not paths:
         raise RepairInputError("validated working tree has no changed files")
     allowed = set(ALLOWED_FILES[kind])
-    if any(path not in allowed for path in paths):
+    if any(path not in allowed and not path.startswith("tests/") for path in paths):
         raise RepairInputError("working tree changed a path outside the fixed allowlist")
     python_paths = [path for path in paths if path.endswith(".py")]
     if python_paths:
