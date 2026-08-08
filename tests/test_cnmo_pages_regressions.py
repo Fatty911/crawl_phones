@@ -2019,5 +2019,40 @@ class MergeGapScanTests(unittest.TestCase):
         self.assertIn("中关村在线", cand["other_sources"])
         self.assertIn("base_identity", cand)
 
+
+
+class MergeRuleExtTests(unittest.TestCase):
+    """4 个新增保守归并规则（年粒度/屏幕缺失侧材质/尺寸容差/内存类型）+ 防误归并。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.merge = load_script_module("merge_phones_rules", ROOT / "scripts" / "merge_phones.py")
+
+    def _equal(self, field, a, b):
+        return self.merge._semantic_fallback_equal(field, a, b)
+
+    def test_date_year_only_equal(self) -> None:
+        self.assertTrue(self._equal("上市时间", "2026年", "2026年03月"))
+        self.assertTrue(self._equal("上市时间", "2025年,12月8日", "2025年"))  # 反向
+
+    def test_date_different_years_real(self) -> None:
+        self.assertFalse(self._equal("上市时间", "2025年", "2026年03月"))
+        self.assertFalse(self._equal("上市时间", "2025年03月", "2025年11月"))  # 双方都有月
+
+    def test_screen_missing_side_material_equal(self) -> None:
+        self.assertTrue(self._equal("屏幕", "6.8英寸|120Hz|AMOLED", "--|柔性AMOLED|10.7亿色数"))
+
+    def test_screen_missing_side_no_material_real(self) -> None:
+        self.assertFalse(self._equal("屏幕", "6.8英寸|OLED", "打孔屏,多点触摸|120Hz"))  # 无材质交集
+        self.assertFalse(self._equal("屏幕", "6.8英寸|OLED", "6.5英寸|OLED"))  # 双方有尺寸且不同
+
+    def test_screen_size_tolerance_equal(self) -> None:
+        self.assertTrue(self._equal("屏幕", "6.82英寸|144Hz|AMOLED", "6.83英寸|AMOLED|144Hz"))
+
+    def test_screen_size_tolerance_no_hz_real(self) -> None:
+        self.assertFalse(self._equal("屏幕", "6.82英寸|AMOLED", "6.83英寸|AMOLED"))  # 无刷新率确认
+        self.assertFalse(self._equal("屏幕", "6.82英寸|144Hz", "7.0英寸|144Hz"))  # 超容差
+
+
 if __name__ == "__main__":
     unittest.main()

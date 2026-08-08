@@ -747,6 +747,43 @@ def _semantic_fallback_equal(field, left, right):
         if cam_a and cam_b and cam_a & cam_b:
             return True
 
+    # 屏幕：一侧无尺寸无刷新率（仅材质/描述）另一侧有规格，且材质（AMOLED/OLED/LCD/IPS）
+    # 交集非空 → 信息缺失非冲突（材质一致即同屏幕）。
+    # 防误归并：双方都有尺寸时由上方尺寸交集分支判定（不同尺寸仍差异）；材质无交集→差异。
+    if field == '屏幕':
+        size_a = set(re.findall(r'\d+(?:\.\d+)?\s*英寸', a_str))
+        size_b = set(re.findall(r'\d+(?:\.\d+)?\s*英寸', b_str))
+        if bool(size_a) != bool(size_b):
+            mat_a = set(re.findall(r'AMOLED|OLED|LCD|IPS', a_str))
+            mat_b = set(re.findall(r'AMOLED|OLED|LCD|IPS', b_str))
+            if mat_a and mat_b and mat_a & mat_b:
+                return True
+        # 尺寸容差：两源标注的屏幕尺寸可能相差 0.05-0.1 英寸（四舍五入/取整差异，
+        # 如 6.82 vs 6.83），同时刷新率一致 → 同一屏幕；容差上限 0.1 英寸（不同型号
+        # 屏幕尺寸差通常 ≥0.2），刷新率交集是强确认信号。
+        if size_a and size_b and not (size_a & size_b):
+            nums = []
+            for value in (a_str, b_str):
+                match = re.search(r'(\d+(?:\.\d+)?)\s*英寸', value)
+                if match:
+                    nums.append(float(match.group(1)))
+            hz_a = set(re.findall(r'\d+\s*Hz', a_str))
+            hz_b = set(re.findall(r'\d+\s*Hz', b_str))
+            if len(nums) == 2 and abs(nums[0] - nums[1]) <= 0.1 and hz_a & hz_b:
+                return True
+
+    # 上市时间：一方只有年份（"2026年"）另一方同年份带月份（"2026年03月"）→
+    # 年粒度一致（源站标注粒度差异，如 PCL 上市时间只精确到年）。
+    # 防误归并：双方都有月份信息时由上方日期粒度分支判定（不同月份仍差异）；年份不同→差异。
+    if field == '上市时间':
+        year_a = set(re.findall(r'(20\d{2})年', a_str))
+        year_b = set(re.findall(r'(20\d{2})年', b_str))
+        if year_a and year_b and year_a == year_b:
+            month_a = re.search(r'20\d{2}年[,，]?\s*\d+月', a_str)
+            month_b = re.search(r'20\d{2}年[,，]?\s*\d+月', b_str)
+            if bool(month_a) != bool(month_b):
+                return True
+
     # 处理器：品牌核心型号包含
     if field == '处理器':
         proc_patterns = [
