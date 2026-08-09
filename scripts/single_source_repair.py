@@ -393,10 +393,32 @@ def analyze_payload(payload: Any, kind: str) -> dict[str, Any]:
                     pattern_counts["date_granularity"] += 1
                     pattern_samples.setdefault("date_granularity", identity + " | " + diff_text[:150])
 
+    # 按属性分组明细（用户要求：所有差异条目按 处理器/内存/存储/屏幕/电池/摄像头/上市时间 分组，
+    # 每组列出全部条目——identity + 两侧值——Agent 可在组内逐条分析归并策略）
+    grouped_by_field: dict[str, list[dict[str, str]]] = {}
+    _GROUP_FIELDS = ("处理器", "内存", "存储", "屏幕", "电池", "摄像头参数", "上市时间")
+    for row in rows:
+        status = str(row.get("验证状态", "") or "")
+        if "差异" not in status:
+            continue
+        diff_text = str(row.get("交叉验证差异", "") or "")
+        identity = _identity(kind, row)
+        for field_name, values_part in _top_level_diff_fields(diff_text):
+            if field_name not in _GROUP_FIELDS:
+                continue
+            grouped_by_field.setdefault(field_name, []).append({
+                "identity": identity,
+                "values": values_part[:220],
+            })
+    for field_name in _GROUP_FIELDS:
+        if field_name in grouped_by_field:
+            grouped_by_field[field_name] = grouped_by_field[field_name][:60]
+
     discrepancy_patterns = {
         "field_discrepancies": dict(field_discrepancies.most_common(12)),
         "patterns": dict(pattern_counts.most_common(8)),
         "samples": pattern_samples,
+        "grouped_by_field": grouped_by_field,
     }
 
     # 可归并性扫描：逐行分析差异明细，检测字段级语义等价候选（共同规格 token 交集）
@@ -572,7 +594,11 @@ single_rate（单源占比）。若某源 single_rate 显著高于其他源（�
 - 对"多源未校验"行，若差异字段缺失或字段名不一致导致无法比对，应修复字段对齐；
 - 真实冲突（如同型号存储 256GB vs 512GB、电池 5000 vs 4500mAh）不得折叠，应保留差异标注。
 
-discrepancy_patterns 提供字段级差异分布与三类可修复模式的计数和样例，按模式归因：
+discrepancy_patterns 提供字段级差异分布、三类可修复模式的计数和样例、以及
+grouped_by_field 按属性分组（处理器/内存/存储/屏幕/电池/摄像头参数/上市时间）的全部差异条目明细：
+修复 Agent 应优先读 grouped_by_field——每个属性组内逐条分析两侧值，识别可安全归并的
+语义等价模式（同源互补/粒度差异/规格交集）与真实冲突（容量/像素无交集），
+再决定是否扩展 merge_phones._semantic_fallback_equal 的字段定向规则。
 - screen_missing_size：某源屏幕值缺"N英寸"（如太平洋电脑网参数页有屏幕大小但爬虫合并时被长文本覆盖）——
   修复方向在爬虫侧（参数页解析/字段合并保留规格值），若已在 crawl_pconline.py 修复则验证重爬数据是否带上尺寸；
 - battery_missing_capacity：某源电池值无 mAh 容量（如仅"不可拆卸式电池"）而另一源有——信息缺失非冲突，
