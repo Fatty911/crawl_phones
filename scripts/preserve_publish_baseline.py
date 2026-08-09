@@ -39,8 +39,10 @@ def spu_config_key(row: dict[str, Any]) -> str:
     brand = normalize_brand(row.get("品牌") or derive_brand_from_name(str(row.get("型号") or "")))
     if not brand:
         brand = str(row.get("品牌") or "").strip().casefold() or derive_brand_from_name(str(row.get("型号") or ""))
-    mem = re.sub(r"\D", "", str(row.get("内存") or ""))[:4]
-    sto = re.sub(r"\D", "", str(row.get("存储") or ""))[:4]
+    # 容量数字只取 GB/TB 容量值（"16GB|LPDDR5" -> "16"），避免混入类型后缀数字
+    # （LPDDR5 的 5、UFS 3.1 的 3）导致同产品不同源字段格式产生不同 spu 键。
+    mem = "|".join(sorted(set(re.findall(r"(\d+)\s*[GT]B", str(row.get("内存") or ""), re.IGNORECASE))))
+    sto = "|".join(sorted(set(re.findall(r"(\d+)\s*[GT]B", str(row.get("存储") or ""), re.IGNORECASE))))
     return f"spu:{brand}|{mk}|{mem}|{sto}"
 
 
