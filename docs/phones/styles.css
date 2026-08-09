@@ -691,14 +691,16 @@ tbody tr:hover td {
 .center-range-inputs input { width: 72px; min-width: 0; padding: 4px 6px; border: 1px solid var(--border); border-radius: 5px; background: var(--surface); }
 .selected-tags { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
 .selected-tags span { padding: 6px 10px; border-radius: 999px; background: var(--accent-soft); color: var(--accent-strong); font-size: 12px; font-weight: 700; }
-.card-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.card-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; max-width: 980px; margin: 0 auto; }
 .card-list article { margin: 0; box-shadow: none; }
 .card-list h3 { margin: 0 0 8px; font-size: 17px; }
 .series-card-toggle { display: grid; grid-template-columns: minmax(0, 1fr) auto; width: 100%; padding: 0; border: 0; background: transparent; color: var(--text); text-align: left; cursor: pointer; }
 .series-card-toggle h3 { grid-column: 1; margin-bottom: 3px; }
 .series-match-count { grid-column: 1; color: var(--muted); font-size: 12px; font-weight: 650; }
 .series-expand-indicator { grid-column: 2; grid-row: 1 / span 2; align-self: center; color: var(--accent-strong); font-size: 12px; font-weight: 750; }
-.series-model-list { display: grid; gap: 10px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+.series-model-list { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(230px, 1fr); gap: 10px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); overflow-x: auto; }
+.series-model-list .card-meta { flex-wrap: nowrap; overflow: hidden; }
+.series-model-list .card-meta span { white-space: nowrap; text-overflow: ellipsis; overflow: hidden; max-width: 160px; }
 .series-model-row { padding: 10px; border-radius: 8px; background: var(--surface-soft); }
 .series-model-row h4 { margin: 0 0 7px; font-size: 14px; }
 .card-meta { display: flex; flex-wrap: wrap; gap: 6px; color: var(--muted); font-size: 12px; }
@@ -714,4 +716,7 @@ tbody tr:hover td {
 @media (max-width: 860px) {
   .workspace, .center-filters { grid-template-columns: 1fr; }
   .center-hero { align-items: flex-start; flex-direction: column; }
+  .series-model-list { grid-auto-flow: row; grid-auto-columns: auto; }
+  .series-model-list .card-meta { flex-wrap: wrap; }
+  .series-model-list .card-meta span { max-width: none; white-space: normal; }
 }
