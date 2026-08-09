@@ -698,9 +698,11 @@ tbody tr:hover td {
 .series-card-toggle h3 { grid-column: 1; margin-bottom: 3px; }
 .series-match-count { grid-column: 1; color: var(--muted); font-size: 12px; font-weight: 650; }
 .series-expand-indicator { grid-column: 2; grid-row: 1 / span 2; align-self: center; color: var(--accent-strong); font-size: 12px; font-weight: 750; }
-.series-model-list { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(230px, 1fr); gap: 10px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); overflow-x: auto; }
-.series-model-list .card-meta { flex-wrap: nowrap; overflow: hidden; }
-.series-model-list .card-meta span { white-space: nowrap; text-overflow: ellipsis; overflow: hidden; max-width: 160px; }
+.series-model-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+.series-model-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.series-model-row h4 { margin: 0; flex: 0 0 auto; min-width: 150px; }
+.series-model-row .card-meta { flex: 1 1 auto; flex-wrap: nowrap; overflow: hidden; min-width: 0; }
+.series-model-row .card-meta span { white-space: nowrap; text-overflow: ellipsis; overflow: hidden; max-width: 180px; }
 .series-model-row { padding: 10px; border-radius: 8px; background: var(--surface-soft); }
 .series-model-row h4 { margin: 0 0 7px; font-size: 14px; }
 .card-meta { display: flex; flex-wrap: wrap; gap: 6px; color: var(--muted); font-size: 12px; }
@@ -716,7 +718,7 @@ tbody tr:hover td {
 @media (max-width: 860px) {
   .workspace, .center-filters { grid-template-columns: 1fr; }
   .center-hero { align-items: flex-start; flex-direction: column; }
-  .series-model-list { grid-auto-flow: row; grid-auto-columns: auto; }
-  .series-model-list .card-meta { flex-wrap: wrap; }
-  .series-model-list .card-meta span { max-width: none; white-space: normal; }
+  .series-model-row { flex-direction: column; align-items: flex-start; gap: 4px; }
+  .series-model-row .card-meta { flex-wrap: wrap; }
+  .series-model-row .card-meta span { max-width: none; white-space: normal; }
 }

@@ -1828,16 +1828,17 @@ class DiffTextStripTests(unittest.TestCase):
         cls.preserve = load_script_module("preserve_publish_baseline2", ROOT / "scripts" / "preserve_publish_baseline.py")
 
     def test_classify_diff_text_stripped(self) -> None:
-        # PCL 屏幕值带名词气泡、CNMO 干净——屏幕真差异（无尺寸），但文本输出应无残留
+        # PCL 屏幕值带名词气泡、CNMO 干净——屏幕真差异（刷新率冲突 60Hz vs 144Hz），
+        # 但文本输出应无残留
         rows = {
-            "太平洋电脑网": {"处理器": "骁龙 8 Elite Gen5更多骁龙 8 Elite Gen5手机>|八核", "屏幕": "打孔屏,多点触摸•多点触摸是什么•查看所有多点触摸iQOO|144Hz", "存储": "512GB", "内存": "16GB", "电池": "5000mAh", "摄像头参数": "5000万", "上市时间": "2025年10月"},
+            "太平洋电脑网": {"处理器": "骁龙 8 Elite Gen5更多骁龙 8 Elite Gen5手机>|八核", "屏幕": "打孔屏,多点触摸•多点触摸是什么•查看所有多点触摸iQOO|60Hz", "存储": "512GB", "内存": "16GB", "电池": "5000mAh", "摄像头参数": "5000万", "上市时间": "2025年10月"},
             "CNMO": {"处理器": "高通骁龙8 Elite Gen5|3nm|八核", "屏幕": "6.85英寸|AMOLED|144Hz", "存储": "512GB", "内存": "16GB", "电池": "5000mAh", "摄像头参数": "5000万", "上市时间": "2025年10月"},
         }
         status, text = self.merge.classify_source_agreement(rows)
         self.assertEqual(status, "双源差异")
         self.assertNotIn("是什么", text)
         self.assertNotIn("手机>", text)
-        self.assertIn("打孔屏,多点触摸|144Hz", text)
+        self.assertIn("打孔屏,多点触摸|60Hz", text)
 
     def test_preserve_baseline_strips_carried_diff_text(self) -> None:
         baseline = [{
@@ -2066,6 +2067,30 @@ class MergeRuleExtTests(unittest.TestCase):
     def test_screen_missing_side_no_material_real(self) -> None:
         self.assertFalse(self._equal("屏幕", "6.8英寸|OLED", "打孔屏,多点触摸|120Hz"))  # 无材质交集
         self.assertFalse(self._equal("屏幕", "6.8英寸|OLED", "6.5英寸|OLED"))  # 双方有尺寸且不同
+
+    def test_screen_missing_side_pure_shape_equal(self) -> None:
+        # 一侧有尺寸、另一侧无尺寸且无材质（纯形态描述）→ 信息缺失非冲突
+        self.assertTrue(self._equal("屏幕", "打孔屏,多点触摸", "6.55英寸|AMOLED|10.7亿色数|120Hz"))
+        # 缺失侧带刷新率且与有尺寸侧刷新率一致 → 折叠
+        self.assertTrue(self._equal("屏幕", "打孔屏,多点触摸|120Hz", "6.78英寸|AMOLED|10.7亿色数|120Hz"))
+        # 反向顺序
+        self.assertTrue(self._equal("屏幕", "6.56英寸|TFT|120Hz", "打孔屏,多点触摸|120Hz"))
+
+    def test_screen_missing_side_pure_shape_hz_conflict_real(self) -> None:
+        # 缺失侧刷新率与有尺寸侧冲突（144Hz vs 120Hz）→ 真实差异，不得折叠
+        self.assertFalse(self._equal("屏幕", "屏下摄像头全面屏,多点触摸|144Hz|100% DCI-P3", "6.85英寸|AMOLED|10.7亿色数|120Hz"))
+
+    def test_screen_missing_side_with_material_real(self) -> None:
+        # 缺失侧带材质（LCD vs POLED）→ 材质冲突，不得折叠
+        self.assertFalse(self._equal("屏幕", "打孔屏,多点触摸|120Hz|LCD", "6.72英寸|POLED|144Hz"))
+
+    def test_screen_missing_side_with_color_depth_real(self) -> None:
+        # 缺失侧带色深数字（10.7亿色数 vs 1600万色数）→ 保留差异
+        self.assertFalse(self._equal("屏幕", "打孔屏,多点触摸|10.7亿色数", "6.55英寸|AMOLED|1600万色数|120Hz"))
+
+    def test_screen_missing_side_one_side_no_hz_real(self) -> None:
+        # 缺失侧有刷新率但对侧无刷新率信息，无法确认同屏 → 保守保持差异
+        self.assertFalse(self._equal("屏幕", "打孔屏,多点触摸|120Hz", "6.74英寸"))
 
     def test_screen_size_tolerance_equal(self) -> None:
         self.assertTrue(self._equal("屏幕", "6.82英寸|144Hz|AMOLED", "6.83英寸|AMOLED|144Hz"))

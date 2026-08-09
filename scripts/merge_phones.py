@@ -776,6 +776,18 @@ def _semantic_fallback_equal(field, left, right):
             # 一侧有尺寸、另一侧无尺寸但材质交集非空 → 信息缺失非冲突
             if mat_a and mat_b and mat_a & mat_b:
                 return True
+            # 一侧有尺寸、另一侧无尺寸且无任何材质/色深/分辨率规格（纯形态描述如
+            # "打孔屏,多点触摸"）→ 该侧不含可冲突的规格信息，信息缺失非冲突。
+            # 防误归并：缺失侧刷新率与有尺寸侧冲突（如 144Hz vs 120Hz）、或缺失侧
+            # 带材质（LCD vs POLED）、或带色深/分辨率数字（如 10.7亿色数 vs 1600万色）
+            # 时仍保持差异，不折叠。
+            no_size_text = a_str if not size_a else b_str
+            no_size_mat = mat_a if not size_a else mat_b
+            if not no_size_mat and not re.search(r'(?:万色数|色数|像素|分辨率|PPI)', no_size_text):
+                hz_no = set(re.findall(r'\d+\s*Hz', no_size_text))
+                hz_other = set(re.findall(r'\d+\s*Hz', b_str if not size_a else a_str))
+                if not hz_no or (hz_no and hz_other and hz_no & hz_other):
+                    return True
         # 尺寸容差：两源标注的屏幕尺寸可能相差 0.05-0.1 英寸（四舍五入/取整差异，
         # 如 6.82 vs 6.83），同时刷新率一致 → 同一屏幕；容差上限 0.1 英寸（不同型号
         # 屏幕尺寸差通常 ≥0.2），刷新率交集是强确认信号。
