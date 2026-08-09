@@ -102,6 +102,16 @@ def is_out_of_scope_cnmo_single_source(row: dict[str, Any]) -> bool:
     return brand not in CNMO_SINGLE_SOURCE_ALLOWED_BRANDS
 
 
+def spu_config_key(row: dict[str, Any]) -> str:
+    """SPU+配置 级身份键：model_key(品牌|型号剥离变体)|内存数字|存储数字。"""
+    model = str(row.get("型号") or row.get("name") or "").strip().lower()
+    model = re.sub(r"\s+", "", model)
+    model = re.sub(r"[（(]\s*\d+\s*[gG][bB][^）)]*[）)]", "", model)
+    mem = "|".join(sorted(set(re.findall(r"(\d+)\s*[GT]B", str(row.get("内存") or ""), re.IGNORECASE))))
+    sto = "|".join(sorted(set(re.findall(r"(\d+)\s*[GT]B", str(row.get("存储") or ""), re.IGNORECASE))))
+    return f"spu:{model}|{mem}|{sto}"
+
+
 def identity_key(row: dict[str, Any]) -> str:
     keys = identity_keys(row)
     if not keys:
@@ -165,8 +175,34 @@ def verify_superset(
     candidate_ids = {key for row in candidate for key in identity_keys(row)}
     missing = sorted(baseline_ids - candidate_ids)
     if missing:
-        preview = ", ".join(missing[:10])
-        raise ValueError(f"候选缺少基线身份: count={len(missing)} sample={preview}")
+        # spu 兜底：缺失 id 的基线行若同 SPU+配置 的候选行存在且源数不退化（候选源数 >= 基线源数），
+        # 视为已覆盖（preserve 的源数保护替代）——数据未丢（同产品在），只是 id 随候选行变化。
+        cand_spu_rows: dict[str, list[dict[str, Any]]] = {}
+        for crow in candidate:
+            cand_spu_rows.setdefault(spu_config_key(crow), []).append(crow)
+
+        def _covered_via_spu(row: dict[str, Any]) -> bool:
+            spu = spu_config_key(row)
+            if not spu or spu.endswith("||"):  # 无型号无容量（空键）→ 不兜底（真缺失仍拒）
+                return False
+            cand_rows = cand_spu_rows.get(spu, [])
+            if not cand_rows:
+                return False
+            base_src = len([p for p in str(row.get("数据来源", "")).split("+") if p.strip()])
+            best = max(len([p for p in str(c.get("数据来源", "")).split("+") if p.strip()]) for c in cand_rows)
+            return best >= base_src
+
+        truly_missing = []
+        for key in missing:
+            rows = [row for row in scoped_baseline if key in identity_keys(row)]
+            if not rows:
+                truly_missing.append(key)
+                continue
+            if not all(_covered_via_spu(row) for row in rows):
+                truly_missing.append(key)
+        if truly_missing:
+            preview = ", ".join(truly_missing[:10])
+            raise ValueError(f"候选缺少基线身份: count={len(truly_missing)} sample={preview}")
 
 
 def main() -> int:

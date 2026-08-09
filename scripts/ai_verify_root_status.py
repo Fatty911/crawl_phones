@@ -234,7 +234,17 @@ def _record_plan_request(metadata, prompt, context):
 
 def _try_free_route(prompt, deadline, context=None):
     """Route one query through every configured free endpoint with explicit limits."""
-    from scripts import free_first_router
+    try:
+        from scripts import free_first_router
+    except ModuleNotFoundError:
+        # runner 偶发 namespace-package 解析失败（scripts 目录无 __init__.py）：
+        # 回退到脚本目录相对导入（sys.path[0] = scripts/ 时直接可用）
+        import sys as _sys
+        from pathlib import Path as _Path
+        _scripts_dir = str(_Path(__file__).resolve().parent)
+        if _scripts_dir not in _sys.path:
+            _sys.path.insert(0, _scripts_dir)
+        from free_first_router import free_first_router
 
     timeout = _request_timeout(deadline)
     if timeout is None:
