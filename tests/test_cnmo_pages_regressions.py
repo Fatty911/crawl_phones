@@ -2382,6 +2382,78 @@ class ProcessorBrandModelTests(unittest.TestCase):
 
 
 
+class ScreenMaterialNormalizationTests(unittest.TestCase):
+    """屏幕材质归一化（AMOLED⊆OLED、IPS⊆LCD）+ 刷新率/色深防冲突守卫。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.merge = load_script_module("merge_phones_screenmat", ROOT / "scripts" / "merge_phones.py")
+
+    def _equal(self, field, a, b):
+        return self.merge._semantic_fallback_equal(field, a, b)
+
+    def test_amoled_oled_same_refresh_equal(self) -> None:
+        # 一侧无尺寸但有材质+刷新率，另一侧有尺寸，AMOLED 与 OLED 是同一屏幕
+        self.assertTrue(self._equal("屏幕", "打孔屏,多点触摸|120Hz|AMOLED", "6.7英寸|OLED|120Hz|超视网膜 XDR"))
+        self.assertTrue(self._equal("屏幕", "打孔屏,多点触摸|120Hz|AMOLED|支持广色域（P3）", "6.7英寸|OLED|10.7亿色数|120Hz"))
+
+    def test_ips_lcd_equal(self) -> None:
+        # IPS 是 LCD 的一种：同一屏幕
+        self.assertTrue(self._equal("屏幕", "多点触摸|LCD|广色域显示 (P3)|1400:1 对比度", "4.7英寸|IPS"))
+
+    def test_cross_notation_refresh_conflict_real(self) -> None:
+        # 跨写法材质 + 刷新率冲突（AMOLED 120Hz vs OLED 144Hz）仍是真实差异
+        self.assertFalse(self._equal("屏幕", "打孔屏,多点触摸|120Hz|AMOLED", "6.72英寸|OLED|144Hz"))
+        self.assertFalse(self._equal("屏幕", "打孔屏,多点触摸|120Hz|IPS", "6.72英寸|LCD|144Hz"))
+
+    def test_cross_notation_color_depth_conflict_real(self) -> None:
+        # 材质归一化后双方色深不同（10.7亿色 vs 1600万色）仍保持差异
+        self.assertFalse(self._equal("屏幕", "6.8英寸|LCD|1600万色数|120Hz", "IPS|10.7亿色数"))
+        self.assertFalse(self._equal("屏幕", "6.8英寸|AMOLED|10.7亿色数|120Hz", "6.82英寸|OLED|1600万色数"))
+
+    def test_same_color_depth_still_equal(self) -> None:
+        # 归一化后色深一致仍归并（既有尺寸容差单侧无刷新率行为不受影响）
+        self.assertTrue(self._equal(
+            "屏幕", "6.32英寸|打孔屏,多点触摸|120Hz|AMOLED|全局默认最高亮度：800尼特", "6.3英寸|柔性AMOLED|10.7亿色数"))
+
+    def test_existing_conflict_guards_unchanged(self) -> None:
+        # 既有防误归用：LCD vs POLED、144Hz vs 120Hz、色深数字差异全部保持差异
+        self.assertFalse(self._equal("屏幕", "打孔屏,多点触摸|120Hz|LCD", "6.72英寸|POLED|144Hz"))
+        self.assertFalse(self._equal(
+            "屏幕", "6.82英寸|打孔屏,多点触摸|144Hz|OLED|800尼特", "6.83英寸|柔性AMOLED|10.7亿色数|120Hz"))
+        self.assertFalse(self._equal("屏幕", "打孔屏,多点触摸|10.7亿色数", "6.55英寸|AMOLED|1600万色数|120Hz"))
+
+
+class ProcessorDashMissingTests(unittest.TestCase):
+    """处理器 -- 缺失占位符归并 + 品牌冲突防误归并。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.merge = load_script_module("merge_phones_procdash", ROOT / "scripts" / "merge_phones.py")
+
+    def _equal(self, field, a, b):
+        return self.merge._semantic_fallback_equal(field, a, b)
+
+    def test_dash_missing_side_equal(self) -> None:
+        # 一侧处理器以 -- 占位符开头（型号缺失）另一侧有型号/品牌 → 信息缺失非冲突
+        self.assertTrue(self._equal("处理器", "麒麟8000A点击型号查看完整天梯图", "-- ；核心数：--"))
+        self.assertTrue(self._equal("处理器", "华为海思", "-- ；核心数：--|Cortex-A55,Cortex-A76"))
+
+    def test_dash_missing_side_no_brand_model_real(self) -> None:
+        # 缺失侧仍带型号/品牌（处理器信息未整体缺失）→ 与异品牌/异型号保持差异
+        self.assertFalse(self._equal("处理器", "--麒麟9000", "华为麒麟9020"))
+        self.assertFalse(self._equal("处理器", "--|联发科", "骁龙8Gen3"))
+
+    def test_both_dash_real(self) -> None:
+        # 两侧都是 -- 占位符：无信息可比，保持差异
+        self.assertFalse(self._equal("处理器", "-- ；核心数：--", "-- ；核心数：--"))
+
+    def test_real_model_conflicts_unchanged(self) -> None:
+        self.assertFalse(self._equal("处理器", "麒麟9010点击型号查看完整天梯图", "华为麒麟9020"))
+        self.assertFalse(self._equal("处理器", "联发科(MTK)|频率", "高通骁龙8 Gen2"))
+
+
+
 class PreserveSourceProtectionTests(unittest.TestCase):
     """spu 覆盖的源数保护：ZOL 缺失时三源型号级行不被单源变体替代。"""
 

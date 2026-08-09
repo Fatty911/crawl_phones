@@ -689,6 +689,32 @@ def _camera_pixels(text: str) -> set:
     return pixels
 
 
+def _screen_materials(text: str) -> set:
+    """提取屏幕材质集合，并归一化包含关系：
+    AMOLED 是 OLED 的一种（PCL 标 AMOLED vs CNMO 标 OLED 是同一屏幕），
+    IPS 是 LCD 的一种（PCL 标 LCD vs CNMO 标 IPS 是同一屏幕）。
+    归一化仅用于材质交集判定，不改变原始值。
+    """
+    mats = set(re.findall(r'AMOLED|OLED|LCD|IPS', text))
+    if 'AMOLED' in mats:
+        mats.add('OLED')
+    if 'IPS' in mats:
+        mats.add('LCD')
+    return mats
+
+
+def _screen_color_depth(text: str):
+    """提取屏幕色深并归一化为"万色"（10.7亿色 → 107000 万色、1670万色 → 1670），
+    无色深信息返回 None。用于防误归并：双方都标了不同色深（10.7亿色 vs 1600万色）
+    是真实冲突，不得折叠。
+    """
+    match = re.search(r'(\d+(?:\.\d+)?)\s*(亿|万)\s*色', text)
+    if not match:
+        return None
+    value = float(match.group(1))
+    return value * 10000 if match.group(2) == '亿' else value
+
+
 def normalize_validation_value(field, value):
     text = unicodedata.normalize('NFKC', str(value)).strip().casefold()
     text = _strip_residue(text)
@@ -813,8 +839,8 @@ def _semantic_fallback_equal(field, left, right):
     if field == '屏幕':
         size_a = set(re.findall(r'\d+(?:\.\d+)?\s*英寸', a_str))
         size_b = set(re.findall(r'\d+(?:\.\d+)?\s*英寸', b_str))
-        mat_a = set(re.findall(r'AMOLED|OLED|LCD|IPS', a_str))
-        mat_b = set(re.findall(r'AMOLED|OLED|LCD|IPS', b_str))
+        mat_a = _screen_materials(a_str)
+        mat_b = _screen_materials(b_str)
         # 一侧屏幕值以缺失占位符（--）开头且无尺寸无材质（如 CNMO "--|10.7亿色数"），
         # 另一侧有屏幕规格 → 信息缺失非冲突（该源屏幕字段整体缺失，非真实冲突）。
         for value, has_size, mat in ((a_str, bool(size_a), mat_a), (b_str, bool(size_b), mat_b)):
@@ -823,8 +849,16 @@ def _semantic_fallback_equal(field, left, right):
                 if other_has:
                     return True
         if bool(size_a) != bool(size_b):
-            # 一侧有尺寸、另一侧无尺寸但材质交集非空 → 信息缺失非冲突
-            if mat_a and mat_b and mat_a & mat_b:
+            # 一侧有尺寸、另一侧无尺寸但材质交集非空 → 信息缺失非冲突。
+            # 防误归并：两侧都标了不同刷新率（如 AMOLED 120Hz vs OLED 144Hz）或
+            # 不同色深（10.7亿色 vs 1600万色）仍是真实冲突，不得折叠。
+            hz_a_all = set(re.findall(r'\d+\s*Hz', a_str))
+            hz_b_all = set(re.findall(r'\d+\s*Hz', b_str))
+            hz_ok = (not hz_a_all) or (not hz_b_all) or (hz_a_all & hz_b_all)
+            depth_a = _screen_color_depth(a_str)
+            depth_b = _screen_color_depth(b_str)
+            depth_ok = depth_a is None or depth_b is None or depth_a == depth_b
+            if mat_a and mat_b and mat_a & mat_b and hz_ok and depth_ok:
                 return True
             # 一侧有尺寸、另一侧无尺寸且无任何材质/色深/分辨率规格（纯形态描述如
             # "打孔屏,多点触摸"）→ 该侧不含可冲突的规格信息，信息缺失非冲突。
@@ -853,12 +887,16 @@ def _semantic_fallback_equal(field, left, right):
                 return True
             # 尺寸差 ≤0.1 且 一方无刷新率、另一方有（信息缺失，如 PCL 不标刷新率）
             # 且材质交集（AMOLED/OLED/LCD/IPS）→ 同一屏幕。
-            # 防误归并：双方都标了不同刷新率（144Hz vs 120Hz）或材质无交集时保留差异。
+            # 防误归并：双方都标了不同刷新率（144Hz vs 120Hz）、材质无交集、或双方
+            # 色深不同（10.7亿色 vs 1600万色）时保留差异。
             if len(nums) == 2 and abs(nums[0] - nums[1]) <= 0.1:
                 if bool(hz_a) != bool(hz_b):
-                    mat_a = set(re.findall(r'AMOLED|OLED|LCD|IPS', a_str))
-                    mat_b = set(re.findall(r'AMOLED|OLED|LCD|IPS', b_str))
-                    if mat_a and mat_b and mat_a & mat_b:
+                    mat_a = _screen_materials(a_str)
+                    mat_b = _screen_materials(b_str)
+                    depth_a = _screen_color_depth(a_str)
+                    depth_b = _screen_color_depth(b_str)
+                    depth_ok = depth_a is None or depth_b is None or depth_a == depth_b
+                    if mat_a and mat_b and mat_a & mat_b and depth_ok:
                         return True
 
     # 上市时间：一方只有年份（"2026年"）另一方同年份带月份（"2026年03月"）→
@@ -915,6 +953,35 @@ def _semantic_fallback_equal(field, left, right):
                 for mb in models_b:
                     if ma in mb or mb in ma or ma == mb:
                         return True
+
+        # 一侧以缺失占位符 -- 开头（如 CNMO "--；核心数：--|Cortex-A55,A76" 处理器型号缺失），
+        # 另一侧有处理器型号/品牌 → 该源处理器规格整体缺失，信息缺失非冲突（与内存/屏幕的
+        # -- 占位符处理一致）。防误归并：缺失侧本身带型号（--|麒麟9000）或两侧都是占位符时
+        # 保持差异；品牌级 vs 型号级互补由下方品牌分支判定。
+        a_dash = bool(re.match(r'^\s*--', a_str))
+        b_dash = bool(re.match(r'^\s*--', b_str))
+        if a_dash != b_dash:
+            missing_side = a_str if a_dash else b_str
+            info_side = b_str if a_dash else a_str
+            missing_model = re.search(
+                r'(麒麟\s*\d+\w*|骁龙\s*\d+\w*|天玑\s*\d+\w*|Exynos\s*\d+|A1[0-9]|Tensor\s*\w+|Helio\s*\w+)',
+                missing_side,
+                re.IGNORECASE,
+            )
+            # 缺失侧若仍带品牌词（如 "--|联发科"、"高通骁龙"）则处理器信息并未整体
+            # 缺失，与另一侧品牌不同（或品牌可冲突）时不得折叠，防误归并。
+            missing_brand = re.search(
+                r'(海思|联发科|高通|苹果|三星|谷歌|华为|小米|紫光展锐|展锐|骁龙|麒麟|天玑)',
+                missing_side,
+                re.IGNORECASE,
+            )
+            info_brand_model = re.search(
+                r'(麒麟\s*\d+\w*|骁龙\s*\d+\w*|天玑\s*\d+\w*|Exynos\s*\d+|A1[0-9]|Tensor\s*\w+|Helio\s*\w+|海思|联发科|高通|苹果)',
+                info_side,
+                re.IGNORECASE,
+            )
+            if not missing_model and not missing_brand and info_brand_model:
+                return True
 
         # 品牌级 vs 型号级（同 SPU 信息互补）：一方有具体型号（天玑8100-Max 等），
         # 另一方只有品牌（"联发科(MTK)|1×3.25GHz..."——PCL 处理器字段缺型号但带频率）——
