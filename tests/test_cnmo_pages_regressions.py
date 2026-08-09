@@ -2238,5 +2238,31 @@ class PreserveSpuCoverageTests(unittest.TestCase):
         b = self.preserve.spu_config_key({"型号": "X10(12GB+256GB)", "品牌": "品牌B", "内存": "12GB", "存储": "256GB"})
         self.assertNotEqual(a, b)
 
+
+
+class ProcessorBrandModelTests(unittest.TestCase):
+    """处理器品牌级 vs 型号级归并（同 SPU 信息互补）+ 防误归并。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.merge = load_script_module("merge_phones_proc", ROOT / "scripts" / "merge_phones.py")
+
+    def test_brand_vs_model_equal(self) -> None:
+        self.assertTrue(self.merge._semantic_fallback_equal(
+            "处理器", "联发科(MTK)|1×3.25GHz+3×3.0GHz+4×2.1GHz", "联发科天玑8400|4nm|Cortex-A78,A55"))
+        self.assertTrue(self.merge._semantic_fallback_equal(
+            "处理器", "高通(骁龙)手机性能排行>|2.63GHz", "高通 骁龙7 Gen3"))
+        self.assertTrue(self.merge._semantic_fallback_equal(
+            "处理器", "海思 麒麟9000S", "海思(HiSilicon)|2.62GHz"))
+
+    def test_both_have_models_different_real(self) -> None:
+        self.assertFalse(self.merge._semantic_fallback_equal("处理器", "联发科天玑8400", "联发科天玑8500"))
+
+    def test_different_brand_real(self) -> None:
+        self.assertFalse(self.merge._semantic_fallback_equal("处理器", "联发科(MTK)|频率", "高通骁龙8 Gen2"))
+
+    def test_both_brand_only_real(self) -> None:
+        self.assertFalse(self.merge._semantic_fallback_equal("处理器", "联发科(MTK)|1×2.6GHz", "联发科(MTK)|1×3.0GHz"))
+
 if __name__ == "__main__":
     unittest.main()

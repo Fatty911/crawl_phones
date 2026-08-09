@@ -839,6 +839,27 @@ def _semantic_fallback_equal(field, left, right):
                 if core_a in core_b or core_b in core_a or core_a == core_b:
                     return True
 
+        # 品牌级 vs 型号级（同 SPU 信息互补）：一方有具体型号（天玑8100-Max 等），
+        # 另一方只有品牌（"联发科(MTK)|1×3.25GHz..."——PCL 处理器字段缺型号但带频率）——
+        # 同一手机只有一颗处理器，品牌一致 + 一侧有型号 → 语义等价（信息互补非冲突）。
+        # 防误归并：双方都有型号（走上方核心型号包含判定）、品牌不同、或双方都无型号时保持差异。
+        brand_patterns = [r'(联发科|高通|海思|苹果|三星|谷歌|华为|小米|紫光展锐|展锐)']
+        model_patterns = [
+            r'(天玑\s*\d+\w*|骁龙\s*\d+\w*|麒麟\s*\d+\w*|Exynos\s*\d+|A\d{2,}|Tensor\s*\w*)',
+        ]
+        brand_a = re.search(brand_patterns[0], a_str)
+        brand_b = re.search(brand_patterns[0], b_str)
+        if brand_a and brand_b and brand_a.group(1) == brand_b.group(1):
+            model_a = None
+            model_b = None
+            for pat in model_patterns:
+                if model_a is None:
+                    model_a = re.search(pat, a_str, re.IGNORECASE)
+                if model_b is None:
+                    model_b = re.search(pat, b_str, re.IGNORECASE)
+            if bool(model_a) != bool(model_b):
+                return True
+
     return False
 
 
