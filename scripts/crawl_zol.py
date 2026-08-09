@@ -202,9 +202,44 @@ HEADERS = {
 BASE_URL = "https://detail.zol.com.cn"
 
 
+_LAST_PROGRESS_PUSH = 0.0
+_PROGRESS_PUSH_INTERVAL = 1200  # 20 分钟一次活性提交
+
+
+def _maybe_push_progress():
+    """运行中定期把进度提交推送到 git（活性信号）。
+
+    卡死判定不应只靠运行时长——爬虫可能慢但活着。运行中每 20 分钟提交一次
+    进度，外部监控可通过 git 进度提交时间戳判断爬取是否仍在推进
+    （有提交=没卡死，不退出就是没卡死）。push 失败静默（不阻断爬取）。
+    """
+    global _LAST_PROGRESS_PUSH
+    now = time.time()
+    if now - _LAST_PROGRESS_PUSH < _PROGRESS_PUSH_INTERVAL:
+        return
+    _LAST_PROGRESS_PUSH = now
+    try:
+        branch = os.environ.get("GITHUB_REF_NAME", "main")
+        subprocess.run(["git", "add", "crawl_state/zol"], check=True, capture_output=True)
+        check = subprocess.run(["git", "diff", "--cached", "--quiet"], capture_output=True)
+        if check.returncode != 0:
+            subprocess.run(
+                ["git", "commit", "-m", "chore: update ZOL crawl progress [skip ci]"],
+                check=True, capture_output=True,
+            )
+            subprocess.run(
+                ["git", "push", "origin", branch],
+                check=True, capture_output=True, timeout=90,
+            )
+    except Exception:
+        # 活性提交失败不阻断爬取（下次间隔再试）
+        pass
+
+
 def save_progress():
     with open(progress_file, 'w', encoding='utf-8') as f:
         json.dump(progress, f, ensure_ascii=False, indent=2)
+    _maybe_push_progress()
 
 
 def human_delay(label=""):
