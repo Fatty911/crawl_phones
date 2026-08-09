@@ -866,11 +866,22 @@ def _semantic_fallback_equal(field, left, right):
             # 带材质（LCD vs POLED）、或带色深/分辨率数字（如 10.7亿色数 vs 1600万色）
             # 时仍保持差异，不折叠。
             no_size_text = a_str if not size_a else b_str
+            size_text = b_str if not size_a else a_str
             no_size_mat = mat_a if not size_a else mat_b
-            if not no_size_mat and not re.search(r'(?:万色数|色数|像素|分辨率|PPI)', no_size_text):
+            size_mat = mat_b if not size_a else mat_a
+            if not re.search(r'(?:万色数|色数|像素|分辨率|PPI)', no_size_text):
                 hz_no = set(re.findall(r'\d+\s*Hz', no_size_text))
-                hz_other = set(re.findall(r'\d+\s*Hz', b_str if not size_a else a_str))
-                if not hz_no or (hz_no and hz_other and hz_no & hz_other):
+                hz_size = set(re.findall(r'\d+\s*Hz', size_text))
+                # 材质：任一侧无材质（信息缺失），或材质交集非空（AMOLED⊆OLED、
+                # IPS⊆LCD）→ 无冲突；双方都带不同材质（LCD vs POLED）仍差异。
+                mat_ok = (not no_size_mat) or (not size_mat) or bool(no_size_mat & size_mat)
+                # 刷新率：任一侧未标刷新率（信息缺失），或刷新率交集非空 → 无冲突；
+                # 双方都标了不同刷新率（144Hz vs 120Hz）仍差异。
+                hz_ok = (not hz_no) or (not hz_size) or bool(hz_no & hz_size)
+                depth_no = _screen_color_depth(no_size_text)
+                depth_size = _screen_color_depth(size_text)
+                depth_ok = depth_no is None or depth_size is None or depth_no == depth_size
+                if mat_ok and hz_ok and depth_ok:
                     return True
         # 尺寸容差：两源标注的屏幕尺寸可能相差 0.05-0.1 英寸（四舍五入/取整差异，
         # 如 6.82 vs 6.83），同时刷新率一致 → 同一屏幕；容差上限 0.1 英寸（不同型号
@@ -926,6 +937,9 @@ def _semantic_fallback_equal(field, left, right):
     # 支持中英文苹果（苹果A16/Apple A16）、麒麟多型号列表（"麒麟9020B，麒麟9020A"）、
     # Helio、天玑/骁龙/Exynos/Tensor；`A1[0-9]` 只匹配苹果 A 系列（A10-A19），
     # 不会把 Cortex 核心代号（A725/A730/A55）误当成处理器型号。
+    # 玄戒（小米玄戒O1）为小米自研处理器：一方带"小米"前缀、一方仅型号（玄戒O1）
+    # 是同一颗芯片的品牌前缀差，纳入型号提取以归并；不同型号（玄戒O1 vs 玄戒O2）
+    # 仍由包含判定保留差异。
     # 防误归并：两侧核心型号不同（天玑8400 vs 天玑8500、麒麟9010 vs 麒麟9020）保留差异。
     if field == '处理器':
         proc_patterns = [
@@ -937,6 +951,7 @@ def _semantic_fallback_equal(field, left, right):
             r'Exynos\s*\d+',
             r'Tensor\s*\w+',
             r'Helio\s*\w+',
+            r'玄戒\s*\w*',
         ]
 
         def _processor_models(text: str) -> set:
