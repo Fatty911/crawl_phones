@@ -103,6 +103,27 @@ class SingleSourceRepairTests(unittest.TestCase):
             validate_patch_text(patch, "phones")
         self.assertTrue(ALLOWED_FILES["phones"])
 
+    def test_camera_pixel_list_and_yi_are_mergeable_signal(self) -> None:
+        # 修复后报告层的摄像头像素提取与 merge 层一致：
+        # CNMO "X+X+X万像素" 列表与 "X亿像素" 归一化后应判为可归并（camera_pixel_intersect），
+        # 而不是误报 conflict（否则修复 Agent 会被误导去折叠或跳过修复）。
+        rows = [
+            {
+                "手机ID": "1", "品牌": "OPPO", "型号": "Find X9s Pro",
+                "数据来源": "中关村在线+CNMO",
+                "验证状态": "双源差异",
+                "交叉验证差异": (
+                    "摄像头参数: 中关村在线="
+                    "红外感应,指纹识别,陀螺仪|5000万像素,超广角摄像头，F2.0|2亿像素,潜望长焦摄像头，F2.6|第二代丹霞色彩还原镜头"
+                    "; CNMO=20000+5000+20000万像素|3200万像素"
+                ),
+            },
+        ]
+        report = analyze_payload(rows, "phones")
+        scan = report["mergeable_scan"]
+        self.assertIn("camera_pixel_intersect", scan["mergeable_signals"])
+        self.assertNotIn("camera_pixel_disjoint", scan["conflict_signals"])
+
 
 if __name__ == "__main__":
     unittest.main()

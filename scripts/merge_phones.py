@@ -669,6 +669,26 @@ def _strip_residue(text: str) -> str:
     return text
 
 
+def _camera_pixels(text: str) -> set:
+    """提取摄像头像素规格集合。
+
+    - 支持 CNMO 的 "X+X+X万像素" 多摄列表（5000+800万像素 → {5000, 800}）；
+    - 支持 "X亿像素"（2亿像素 → 20000 万像素）；
+    - 单个 "X万像素" 直接收录。
+    """
+    normalized = re.sub(
+        r'(\d+(?:\.\d+)?)\s*亿\s*像素',
+        lambda m: f"{int(float(m.group(1)) * 10000)}万像素",
+        str(text),
+    )
+    pixels: set = set()
+    for match in re.finditer(r'([\d+＋]+)\s*万像素', normalized):
+        for part in re.split(r'[+＋]', match.group(1)):
+            if part.isdigit():
+                pixels.add(part)
+    return pixels
+
+
 def normalize_validation_value(field, value):
     text = unicodedata.normalize('NFKC', str(value)).strip().casefold()
     text = _strip_residue(text)
@@ -715,6 +735,19 @@ def _semantic_fallback_equal(field, left, right):
     cap_b = set(re.findall(r'\d+\s*[GT]B', b_str, re.IGNORECASE))
     if cap_a and cap_b and cap_a & cap_b:
         return True
+    # 存储：一侧无任何容量数字（如仅"不支持容量扩展"）另一侧有容量 → 信息缺失非冲突
+    if field == '存储' and bool(cap_a) != bool(cap_b):
+        return True
+    # 内存：一侧以缺失占位符 -- 开头且无容量、另一侧带容量或 LPDDR 类型 → 信息缺失非冲突。
+    # 注意：型号级 base 只写内存类型（如 LPDDR5X Ultra）而变体带具体容量（12GB）时
+    # 保持差异（既有防线：归并不折叠"型号级类型 vs 具体容量"冲突）。
+    if field == '内存':
+        lpddr_a = {m.casefold() for m in re.findall(r'LPDDR\d*X?', a_str, re.IGNORECASE)}
+        lpddr_b = {m.casefold() for m in re.findall(r'LPDDR\d*X?', b_str, re.IGNORECASE)}
+        if re.match(r'^\s*--', a_str) and (cap_b or lpddr_b):
+            return True
+        if re.match(r'^\s*--', b_str) and (cap_a or lpddr_a):
+            return True
 
     # 电池：容量交集
     bat_a = set(re.findall(r'\d+\s*mAh', a_str, re.IGNORECASE))
@@ -740,6 +773,15 @@ def _semantic_fallback_equal(field, left, right):
         if _removable(a_str) != _removable(b_str):
             return False
         return True
+    # 双方都无容量数字（如 "不可拆卸式电池" vs "锂聚合物电池"）：均为电池类型
+    # 描述，无容量可比；可拆卸性互斥仍是真实差异。
+    if field == '电池' and not bat_a and not bat_b:
+        def _removable(text: str) -> bool:
+            return '可拆卸' in text and '不可拆卸' not in text
+
+        if _removable(a_str) != _removable(b_str):
+            return False
+        return True
 
     # 屏幕：尺寸交集
     size_a = set(re.findall(r'\d+(?:\.\d+)?\s*英寸', a_str))
@@ -752,10 +794,18 @@ def _semantic_fallback_equal(field, left, right):
     # vs CNMO 像素列表"5000+5000+5000万像素"），只要像素集合有交集即视为格式差异；
     # 无交集（如 200万 vs 5000+800万）是真实冲突，不得折叠。
     if field == '摄像头参数':
-        cam_a = set(re.findall(r'\d+\s*万像素', a_str))
-        cam_b = set(re.findall(r'\d+\s*万像素', b_str))
+        cam_a = _camera_pixels(a_str)
+        cam_b = _camera_pixels(b_str)
         if cam_a and cam_b and cam_a & cam_b:
             return True
+        # 一侧无任何像素数字（如 PCL 仅"红外感应,陀螺仪"传感器列表或"距离感应"），
+        # 另一侧有完整像素列表 → 信息缺失非冲突（该侧摄像头规格整体缺失）。
+        # 防误归并：无像素侧若带数字（视频规格"8K/1080P"等）则保留差异；
+        # 双方都有像素但无交集（500万 vs 5000+800万）保留差异。
+        if bool(cam_a) != bool(cam_b):
+            no_pixel_text = a_str if not cam_a else b_str
+            if not re.search(r'\d', no_pixel_text):
+                return True
 
     # 屏幕：一侧无尺寸无刷新率（仅材质/描述）另一侧有规格，且材质（AMOLED/OLED/LCD/IPS）
     # 交集非空 → 信息缺失非冲突（材质一致即同屏幕）。
@@ -801,6 +851,15 @@ def _semantic_fallback_equal(field, left, right):
             hz_b = set(re.findall(r'\d+\s*Hz', b_str))
             if len(nums) == 2 and abs(nums[0] - nums[1]) <= 0.1 and hz_a & hz_b:
                 return True
+            # 尺寸差 ≤0.1 且 一方无刷新率、另一方有（信息缺失，如 PCL 不标刷新率）
+            # 且材质交集（AMOLED/OLED/LCD/IPS）→ 同一屏幕。
+            # 防误归并：双方都标了不同刷新率（144Hz vs 120Hz）或材质无交集时保留差异。
+            if len(nums) == 2 and abs(nums[0] - nums[1]) <= 0.1:
+                if bool(hz_a) != bool(hz_b):
+                    mat_a = set(re.findall(r'AMOLED|OLED|LCD|IPS', a_str))
+                    mat_b = set(re.findall(r'AMOLED|OLED|LCD|IPS', b_str))
+                    if mat_a and mat_b and mat_a & mat_b:
+                        return True
 
     # 上市时间：一方只有年份（"2026年"）另一方同年份带月份（"2026年03月"）→
     # 年粒度一致（源站标注粒度差异，如 PCL 上市时间只精确到年）。
@@ -825,27 +884,45 @@ def _semantic_fallback_equal(field, left, right):
                     if bool(day_a) != bool(day_b):
                         return True
 
-    # 处理器：品牌核心型号包含
+    # 处理器：核心型号提取 + 集合交集/包含。
+    # 支持中英文苹果（苹果A16/Apple A16）、麒麟多型号列表（"麒麟9020B，麒麟9020A"）、
+    # Helio、天玑/骁龙/Exynos/Tensor；`A1[0-9]` 只匹配苹果 A 系列（A10-A19），
+    # 不会把 Cortex 核心代号（A725/A730/A55）误当成处理器型号。
+    # 防误归并：两侧核心型号不同（天玑8400 vs 天玑8500、麒麟9010 vs 麒麟9020）保留差异。
     if field == '处理器':
         proc_patterns = [
-            r'(骁龙\s*8\s*(?:Elite|Gen\d+)|骁龙|天玑\s*\d+\w*|麒麟\s*\d+\w*|Exynos\s*\d+|Tensor|Apple\s*A\d+|Helio\s*\w+)',
+            r'(?:苹果|Apple)\s*A\d+',
+            r'A1[0-9]',
+            r'骁龙\s*\d+\w*',
+            r'天玑\s*\d+\w*',
+            r'麒麟\s*\d+\w*',
+            r'Exynos\s*\d+',
+            r'Tensor\s*\w+',
+            r'Helio\s*\w+',
         ]
-        for pat in proc_patterns:
-            m_a = re.search(pat, a_str, re.IGNORECASE)
-            m_b = re.search(pat, b_str, re.IGNORECASE)
-            if m_a and m_b:
-                core_a = re.sub(r'\s+', '', m_a.group(1)).lower()
-                core_b = re.sub(r'\s+', '', m_b.group(1)).lower()
-                if core_a in core_b or core_b in core_a or core_a == core_b:
-                    return True
+
+        def _processor_models(text: str) -> set:
+            models = set()
+            for pat in proc_patterns:
+                for match in re.finditer(pat, text, re.IGNORECASE):
+                    models.add(re.sub(r'\s+', '', match.group(0)).lower())
+            return models
+
+        models_a = _processor_models(a_str)
+        models_b = _processor_models(b_str)
+        if models_a and models_b:
+            for ma in models_a:
+                for mb in models_b:
+                    if ma in mb or mb in ma or ma == mb:
+                        return True
 
         # 品牌级 vs 型号级（同 SPU 信息互补）：一方有具体型号（天玑8100-Max 等），
         # 另一方只有品牌（"联发科(MTK)|1×3.25GHz..."——PCL 处理器字段缺型号但带频率）——
         # 同一手机只有一颗处理器，品牌一致 + 一侧有型号 → 语义等价（信息互补非冲突）。
-        # 防误归并：双方都有型号（走上方核心型号包含判定）、品牌不同、或双方都无型号时保持差异。
+        # 防误归并：双方都有型号（走上方核心型号判定）、品牌不同、或双方都无型号时保持差异。
         brand_patterns = [r'(联发科|高通|海思|苹果|三星|谷歌|华为|小米|紫光展锐|展锐)']
         model_patterns = [
-            r'(天玑\s*\d+\w*|骁龙\s*\d+\w*|麒麟\s*\d+\w*|Exynos\s*\d+|A\d{2,}|Tensor\s*\w*)',
+            r'(天玑\s*\d+\w*|骁龙\s*\d+\w*|麒麟\s*\d+\w*|Exynos\s*\d+|A1[0-9]|Tensor\s*\w*|Helio\s*\w*)',
         ]
         brand_a = re.search(brand_patterns[0], a_str)
         brand_b = re.search(brand_patterns[0], b_str)

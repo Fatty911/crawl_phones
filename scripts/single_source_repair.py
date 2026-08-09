@@ -452,7 +452,20 @@ def analyze_payload(payload: Any, kind: str) -> dict[str, Any]:
                     cores = [_re.sub(r"\s+", "", p.group(1)).lower() for p in procs]
                     signal = "proc_intersect" if (cores[0] in cores[1] or cores[1] in cores[0]) else "proc_disjoint"
             elif field_name == "摄像头参数":
-                pxs = [set(_re.findall(r"\d+\s*万像素", v)) for v in values]
+                def _pixels(text: str) -> set:
+                    normalized = _re.sub(
+                        r"(\d+(?:\.\d+)?)\s*亿\s*像素",
+                        lambda m: f"{int(float(m.group(1)) * 10000)}万像素",
+                        text,
+                    )
+                    pixels = set()
+                    for match in _re.finditer(r"([\d+＋]+)\s*万像素", normalized):
+                        for part in _re.split(r"[+＋]", match.group(1)):
+                            if part.isdigit():
+                                pixels.add(part)
+                    return pixels
+
+                pxs = [_pixels(v) for v in values]
                 if all(pxs):
                     signal = "camera_pixel_intersect" if (pxs[0] & pxs[1]) else "camera_pixel_disjoint"
             elif field_name == "屏幕":

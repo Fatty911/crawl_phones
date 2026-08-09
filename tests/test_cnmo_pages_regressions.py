@@ -2116,6 +2116,106 @@ class MergeRuleExtTests(unittest.TestCase):
         self.assertFalse(self._equal("屏幕", "6.82英寸|144Hz", "7.0英寸|144Hz"))  # 超容差
 
 
+class InfoMissingSemanticTests(unittest.TestCase):
+    """信息缺失归并：电池双方无容量、存储一侧无容量、摄像头纯传感器缺失、
+    屏幕尺寸容差+单侧无刷新率、处理器苹果中文/多型号/排除 Cortex 核心。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.merge = load_script_module("merge_phones_infomissing", ROOT / "scripts" / "merge_phones.py")
+
+    def _equal(self, field, a, b):
+        return self.merge._semantic_fallback_equal(field, a, b)
+
+    def test_battery_both_no_capacity_equal(self) -> None:
+        # 双方都无容量数字，仅电池类型描述 → 信息缺失非冲突
+        self.assertTrue(self._equal("电池", "不可拆卸式电池", "锂聚合物电池"))
+        self.assertTrue(self._equal("电池", "不可拆卸式电池", "锂聚合物电池|不支持|支持 MagSafe 无线充电和 Qi 无线充电"))
+        self.assertTrue(self._equal("电池", "锂聚合物电池", "不可拆卸式电池"))
+
+    def test_battery_both_no_capacity_removable_conflict_real(self) -> None:
+        # 可拆卸 vs 不可拆卸 互斥仍是真实差异
+        self.assertFalse(self._equal("电池", "可拆卸式电池", "不可拆卸式电池"))
+        self.assertFalse(self._equal("电池", "不可拆卸式电池", "可拆卸式电池"))
+
+    def test_storage_one_side_no_capacity_equal(self) -> None:
+        # 一侧无任何容量数字（仅"不支持容量扩展"）另一侧有容量 → 信息缺失非冲突
+        self.assertTrue(self._equal("存储", "不支持容量扩展", "512GB"))
+        self.assertTrue(self._equal("存储", "512GB", "不支持容量扩展"))
+
+    def test_storage_capacity_disjoint_real(self) -> None:
+        # 双方都有容量但无交集 → 真实冲突
+        self.assertFalse(self._equal("存储", "512GB|1TB|不支持容量扩展", "256GB"))
+        self.assertFalse(self._equal("存储", "128GB|UFS 2.2", "256GB"))
+
+    def test_memory_dash_placeholder_equal(self) -> None:
+        # 内存缺失占位符 -- 一侧 vs 另一侧带容量/类型 → 信息缺失非冲突
+        self.assertTrue(self._equal("内存", "8GB", "--|LPDDR5x"))
+        self.assertTrue(self._equal("内存", "--|LPDDR5x", "LPDDR5X|8533MT|s"))
+        self.assertTrue(self._equal("内存", "LPDDR5X|9600MT|s", "--|LPDDR5x"))
+
+    def test_memory_type_only_vs_capacity_kept_real(self) -> None:
+        # 型号级类型（LPDDR5X Ultra）vs 具体容量（12GB）：既有防线，保持差异
+        self.assertFalse(self._equal("内存", "LPDDR5X Ultra", "12GB|LPDDR5x"))
+        # 类型冲突 LPDDR5X vs LPDDR4x 保持差异
+        self.assertFalse(self._equal("内存", "LPDDR5X", "12GB|LPDDR4x"))
+
+    def test_camera_pure_sensor_missing_equal(self) -> None:
+        # 一侧仅传感器列表（无像素数字）另一侧有完整像素 → 信息缺失非冲突
+        self.assertTrue(self._equal("摄像头参数", "重力感应", "5000万像素|500万像素"))
+        self.assertTrue(self._equal("摄像头参数", "红外感应,电子罗盘", "1300万像素|500万像素"))
+        self.assertTrue(self._equal("摄像头参数", "距离感应", "5000万像素|800万像素"))
+
+    def test_camera_pixel_list_and_yi_equal(self) -> None:
+        # CNMO "X+X+X万像素" 列表 + "X亿像素" 归一化 → 像素交集非空归并
+        self.assertTrue(self._equal(
+            "摄像头参数",
+            "红外感应,指纹识别,陀螺仪|5000万像素,超广角摄像头，F2.0|2亿像素,潜望长焦摄像头，F2.6|第二代丹霞色彩还原镜头",
+            "20000+5000+20000万像素|3200万像素"))
+        self.assertTrue(self._equal(
+            "摄像头参数",
+            "重力感应|4000万像素,超广角摄像头,F2.2|1200万像素,潜望式长焦摄像头,F3.4|150 万多光谱通道红枫原色摄像头",
+            "5000+4000+1200+150万像素|1300万像素"))
+
+    def test_camera_pixel_disjoint_real(self) -> None:
+        # 双方都有像素但无交集 → 真实冲突
+        self.assertFalse(self._equal("摄像头参数", "距离感应|200万像素,黑白摄像头，F2.4", "5000+800万像素|1600万像素"))
+        # 视频规格文本（带数字）≠ 像素缺失
+        self.assertFalse(self._equal("摄像头参数", "视频: 后置最高支持8K视频拍摄，后置慢镜头最高支持1080P", "5000+5000+5000万像素|3200万像素"))
+
+    def test_screen_size_tolerance_one_side_no_hz_equal(self) -> None:
+        # 尺寸差 ≤0.1 且 一侧无刷新率另一侧有 + 材质交集 → 同一屏幕
+        self.assertTrue(self._equal("屏幕", "6.77英寸|打孔屏,多点触摸|20.125:9|LCD|峰值亮度：850nit", "6.8英寸|LCD|1670万色数|90Hz"))
+        self.assertTrue(self._equal("屏幕", "6.78英寸|打孔屏,多点触摸|19.85:9|OLED|DCI-P3广色域", "6.7英寸|OLED|10.7亿色数|120Hz"))
+        self.assertTrue(self._equal("屏幕", "6.32英寸|打孔屏,多点触摸|120Hz|AMOLED|全局默认最高亮度：800尼特", "6.3英寸|柔性AMOLED|10.7亿色数"))
+
+    def test_screen_size_tolerance_both_hz_conflict_real(self) -> None:
+        # 双方都有刷新率但不同（144 vs 120）→ 真实冲突
+        self.assertFalse(self._equal("屏幕", "6.82英寸|打孔屏,多点触摸|144Hz|OLED|800尼特", "6.83英寸|柔性AMOLED|10.7亿色数|120Hz"))
+
+    def test_processor_apple_chinese_equal(self) -> None:
+        # 中文苹果处理器型号
+        self.assertTrue(self._equal("处理器", "苹果A16点击型号查看完整天梯图|6核中央处理器", "苹果A16|4nm"))
+        self.assertTrue(self._equal("处理器", "苹果A18 Pro点击型号查看完整天梯图|6核", "苹果A18 Pro|3nm"))
+
+    def test_processor_multi_model_list_equal(self) -> None:
+        # 麒麟多型号列表（PCL 列出 9020B 与 9020A，CNMO 只有 9020A）→ 交集非空归并
+        self.assertTrue(self._equal("处理器", "麒麟9020B(12GB内存版本)，麒麟9020A(16GB内存版本)点击型号查看完整天梯图", "华为麒麟9020A"))
+
+    def test_processor_cortex_core_not_mistaken_as_model(self) -> None:
+        # Cortex-A725 不是处理器型号：品牌级 vs 型号级互补归并不被阻断
+        self.assertTrue(self._equal("处理器", "联发科(MTK)|1×A725 3.4GHz+3×A725 3.2GHz+4×A725 2.2GHz", "联发科天玑8500|4nm|Cortex-A725"))
+
+    def test_processor_helio_equal(self) -> None:
+        self.assertTrue(self._equal("处理器", "联发科(MTK)|八核处理器，最高主频 2.0GHz", "联发科Helio G81-Ultra"))
+
+    def test_processor_different_models_real(self) -> None:
+        # 不同处理器型号 → 真实冲突
+        self.assertFalse(self._equal("处理器", "麒麟9010点击型号查看完整天梯图", "华为麒麟9020"))
+        self.assertFalse(self._equal("处理器", "麒麟9020点击型号查看完整天梯图", "华为麒麟9100"))
+        self.assertFalse(self._equal("处理器", "联发科天玑8400", "联发科天玑8500"))
+
+
 
 
 class TSeriesSignatureTests(unittest.TestCase):
