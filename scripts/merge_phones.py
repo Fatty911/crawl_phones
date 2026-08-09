@@ -1351,7 +1351,7 @@ def merge_verified_rows(zol_rows, pconline_rows, all_fields):
             elif field in skip_compare_fields:
                 # 结构差异字段，直接取 ZOL 值，不标记为差异
                 combined[field] = zol_val
-            elif semantic_value_equal(zol_val, pc_val):
+            elif validation_value_equal(field, zol_val, pc_val):
                 combined[field] = zol_val  # 优先保留简洁版（通常ZOL更规范）
             else:
                 combined[field] = f"中关村在线: {zol_val} | 太平洋电脑网: {pc_val}"
