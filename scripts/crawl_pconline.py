@@ -91,12 +91,12 @@ def normalize_phone_fields(phone: Dict) -> Dict:
         elif new_key not in normalized:
             normalized[new_key] = value
         elif value and normalized[new_key]:
-            # 屏幕/电池等复合规格字段：拼接全部有效值，规格值（尺寸/容量）排前；
+            # 屏幕/电池/内存/存储等复合规格字段：拼接全部有效值，规格值（尺寸/容量）排前；
             # 其他字段保持原策略（保留较长）
-            if new_key in ('屏幕', '电池'):
+            if new_key in ('屏幕', '电池', '内存', '存储'):
                 merged = []
                 parts = [str(normalized[new_key]), str(value)]
-                # 含规格单位的优先（英寸/mAh/GB），避免"保留较长"丢掉 6.85英寸/7400mAh
+                # 含规格单位的优先（英寸/mAh/GB），避免"保留较长"丢掉 6.85英寸/7400mAh/16GB
                 parts.sort(key=lambda v: (0 if _has_spec_unit(v) else 1))
                 for part in parts:
                     if part and part not in merged:

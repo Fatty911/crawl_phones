@@ -1886,6 +1886,22 @@ class PclMergeStrategyTests(unittest.TestCase):
         self.assertIn("7400mAh", r["电池"])
         self.assertTrue(r["电池"].startswith("7400mAh"), r["电池"])
 
+    def test_memory_capacity_kept_ahead_of_type(self) -> None:
+        # PConline 参数页 运行内存（容量）与 运存类型 同时映射到 内存：
+        # "保留较长"会把 16GB 丢掉只剩 LPDDR5X Ultra，导致与 CNMO 的
+        # 16GB|LPDDR5x 无法按容量交集判为一致（线上内存差异主因）。
+        module = self._load_crawler()
+        phone = {"运行内存": "16GB", "运存类型": "LPDDR5X Ultra"}
+        r = module.normalize_phone_fields(phone)
+        self.assertIn("16GB", r["内存"])
+        self.assertTrue(r["内存"].startswith("16GB"), r["内存"])
+
+    def test_storage_capacity_kept_ahead_of_type(self) -> None:
+        module = self._load_crawler()
+        phone = {"ROM容量": "256GB,512GB,1TB", "ROM存储类型": "UFS 4.0"}
+        r = module.normalize_phone_fields(phone)
+        self.assertIn("256GB", r["存储"])
+
     def test_single_value_unchanged(self) -> None:
         module = self._load_crawler()
         r = module.normalize_phone_fields({"屏幕类型": "打孔屏,多点触摸"})
