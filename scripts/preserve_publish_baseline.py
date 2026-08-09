@@ -49,28 +49,56 @@ def spu_config_key(row: dict[str, Any]) -> str:
 def preserve_baseline(
     baseline: list[dict[str, Any]], candidate: list[dict[str, Any]]
 ) -> tuple[list[dict[str, Any]], list[str]]:
-    covered_ids = {key for row in candidate for key in identity_keys(row)}
+    covered_ids = set()
+    for row in candidate:
+        keys = identity_keys(row)
+        if keys:
+            covered_ids.add(keys[0])
     covered_ids.update(spu_config_key(row) for row in candidate)
 
     # pre-pass：spu 匹配的基线行 id 合并进 candidate 行关联手机ID——id 漂移行
     # （旧输入 id 不在当前候选）被 spu 覆盖替代时，旧 id 保留在关联手机ID，
     # 既让 verify_superset 的基线身份检查通过（traceability 不丢），
     # 又让新归并规则能重算这些行的验证状态。
+    cand_spu_rows: dict[str, list[dict[str, Any]]] = {}
+    for crow in candidate:
+        cand_spu_rows.setdefault(spu_config_key(crow), []).append(crow)
+
+    def _spu_replacement_ok(spu_key: str, row: dict[str, Any]) -> bool:
+        """spu 覆盖时源数保护：候选匹配行源数 >= 基线行才替代。
+
+        ZOL 数据缺失时 candidate 可能只有单源变体行（如 CNMO "Reno9 Pro(16+256GB)"），
+        而基线有同 spu 的三源型号级行（ZOL+PCL+CNMO）——直接替代会丢掉 ZOL/PCL 信息
+        （线上实测 92 个型号级行被误替代）。候选源数不足时保留基线行。
+        """
+        cand_rows = cand_spu_rows.get(spu_key, [])
+        if not cand_rows:
+            return True
+        best = max(_source_count(c) for c in cand_rows)
+        return best >= _source_count(row)
+
     baseline_spu_index: dict[str, list[dict[str, Any]]] = {}
     for brow in baseline:
         baseline_spu_index.setdefault(spu_config_key(brow), []).append(brow)
     for crow in candidate:
         for brow in baseline_spu_index.get(spu_config_key(crow), []):
-            for bid in identity_keys(brow):
-                if bid.startswith("id:") and bid not in covered_ids:
-                    covered_ids.add(bid)
-                    related = str(crow.get("关联手机ID") or "")
-                    related_values = {v.strip() for v in re.split(r"[|,，\s]+", related) if v.strip()}
-                    related_values.add(bid[3:])
-                    crow["关联手机ID"] = "|".join(sorted(related_values))
+            brow_keys = identity_keys(brow)
+            if not brow_keys:
+                continue
+            bid = brow_keys[0]  # 只合并主 id——关联 id 是归并痕迹，不代表真实覆盖
+            # 注意：不能把 bid 加进 covered_ids——否则主循环会把基线行主 id 判定为
+            # "已覆盖"而替代（三源型号级行被单源变体替代，线上 92 型号丢失根因）。
+            # traceability 靠关联手机ID 保留（verify_superset 检查 candidate 行 identity_keys）。
+            if bid.startswith("id:"):
+                related = str(crow.get("关联手机ID") or "")
+                related_values = {v.strip() for v in re.split(r"[|,，\s]+", related) if v.strip()}
+                related_values.add(bid[3:])
+                crow["关联手机ID"] = "|".join(sorted(related_values))
 
     def source_count(row: dict[str, Any]) -> int:
         return len([part for part in str(row.get("数据来源", "")).split("+") if part.strip()])
+
+    _source_count = source_count
 
     # 五年内准入：旧年份行（<2022）不再向后保留（与 merge 的 MIN_PUBLISH_YEAR 对齐）
     baseline = [row for row in baseline if not is_below_min_publish_year(row)]
@@ -85,11 +113,19 @@ def preserve_baseline(
         if not keys:
             identity_key(row)
         spu_key = spu_config_key(row)
-        # id 全覆盖（candidate 有同 id）→ 替代；id 漂移但同 SPU+配置 在 candidate
-        # （spu 键覆盖）→ 替代（让新归并规则重算该行状态）；两者都未覆盖 → 保留基线。
-        if all(key in covered_ids for key in keys):
+        # 主 id 覆盖（candidate 有真实同 id 行）→ 替代。注意：不能用 all(keys)——
+        # 关联手机ID 覆盖只是"归并痕迹"（变体行的关联含型号级行 id），不代表 candidate
+        # 有同 id 行，用 all 会把三源型号级行误判为已覆盖而丢弃（线上 92 型号丢失根因）。
+        primary = keys[0] if keys else ""
+        if primary and primary in covered_ids:
             continue
         if spu_key in covered_ids:
+            # 源数保护：候选行源数不足（ZOL 缺失时单源变体 vs 基线三源型号级）→
+            # 保留基线行（信息更全），且不加 spu 到 covered（同 spu 其他基线行也保留）。
+            if not _spu_replacement_ok(spu_key, row):
+                selected.append((index, row))
+                covered_ids.update(keys)
+                continue
             continue
         selected.append((index, row))
         covered_ids.update(keys)

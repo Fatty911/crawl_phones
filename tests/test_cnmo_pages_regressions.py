@@ -2264,5 +2264,47 @@ class ProcessorBrandModelTests(unittest.TestCase):
     def test_both_brand_only_real(self) -> None:
         self.assertFalse(self.merge._semantic_fallback_equal("处理器", "联发科(MTK)|1×2.6GHz", "联发科(MTK)|1×3.0GHz"))
 
+
+
+class PreserveSourceProtectionTests(unittest.TestCase):
+    """spu 覆盖的源数保护：ZOL 缺失时三源型号级行不被单源变体替代。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.preserve = load_script_module("preserve_srcprot", ROOT / "scripts" / "preserve_publish_baseline.py")
+        cls.verify = load_script_module("verify_srcprot", ROOT / "scripts" / "verify_publish_superset.py")
+
+    def _rows(self):
+        return [
+            {"型号": "OPPO Reno9 Pro", "品牌": "OPPO", "内存": "16GB|LPDDR5", "存储": "256GB|UFS 3.1",
+             "手机ID": "1001", "数据来源": "中关村在线+太平洋电脑网+CNMO", "验证状态": "三源差异"},
+            {"型号": "OPPO Reno9 Pro(16+256GB)", "品牌": "OPPO", "内存": "16GB", "存储": "256GB",
+             "手机ID": "2001", "数据来源": "CNMO", "验证状态": "单源"},
+        ]
+
+    def test_richer_source_row_not_replaced(self) -> None:
+        baseline = self._rows()
+        # candidate 缺型号级行（ZOL 数据缺失），只有单源变体
+        cand = [dict(baseline[1])]
+        merged, missing = self.preserve.preserve_baseline(baseline, cand)
+        self.assertEqual(len(missing), 1)
+        hits = [r for r in merged if str(r.get("型号", "")) == "OPPO Reno9 Pro"]
+        self.assertEqual(len(hits), 1)
+        self.assertIn("中关村在线", str(hits[0].get("数据来源", "")))
+        # traceability 保留（变体行关联含型号级 id）
+        all_related = "|".join(str(r.get("关联手机ID") or "") for r in merged)
+        self.assertIn("1001", all_related)
+        self.verify.verify_superset(baseline, merged)
+
+    def test_drifted_id_still_replaced_when_candidate_richer(self) -> None:
+        baseline = self._rows()
+        # 全漂移 + 同源数 → spu 覆盖替代
+        cand = [dict(r) for r in baseline]
+        for i, r in enumerate(cand):
+            r["手机ID"] = str(int(r["手机ID"]) + 9000000)
+        merged, missing = self.preserve.preserve_baseline(baseline, cand)
+        self.assertEqual(missing, [])
+        self.verify.verify_superset(baseline, merged)
+
 if __name__ == "__main__":
     unittest.main()
