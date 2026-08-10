@@ -206,7 +206,7 @@ def check_merge_workflow(path: Path, errors: list[str]) -> None:
         errors,
     )
     assert_condition(
-        "timeout --signal=KILL 27m python scripts/ai_verify_root_status.py" in text,
+        "timeout --signal=KILL 12m python scripts/ai_verify_root_status.py" in text,
         "merge-and-deploy.yml missing AI verification hard timeout",
         errors,
     )

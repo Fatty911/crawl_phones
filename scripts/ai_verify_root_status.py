@@ -43,10 +43,10 @@ MAX_BATCH = 8
 
 # ── 性能优化配置 ──────────────────────────────────────
 MAX_TOKENS = 300
-API_TIMEOUT = 30
+API_TIMEOUT = 15  # 免费端点慢=不可用——快速失败（2026-08-10 merge 提速：每请求 30s->15s）
 MAX_RETRIES = 3
 MAX_WORKERS = 2  # 并发请求数（保守：最多 2 个网络 worker）
-TOTAL_TIME_BUDGET = 25 * 60  # 25 分钟总时间预算
+TOTAL_TIME_BUDGET = 10 * 60  # 10 分钟总时间预算（2026-08-10 merge 提速：25m->10m——免费端点全挂时最坏等待减 15 分钟；健康时数秒完成不受影响）
 FINALIZE_TIME_BUFFER = 30  # 为保存数据和缓存预留时间
 # 请求级 rate limiting：每秒最多发起 2 个请求
 MIN_REQUEST_INTERVAL = 0.5  # 秒

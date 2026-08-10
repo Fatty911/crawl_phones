@@ -559,7 +559,7 @@ jobs:
           MERGED="data/merged_phones_${MERGE_DATE}.json"
           if [ -s "$MERGED" ]; then
             echo "开始 AI root/越狱验证..."
-            if timeout --signal=KILL 27m python scripts/ai_verify_root_status.py "$MERGED" \
+            if timeout --signal=KILL 12m python scripts/ai_verify_root_status.py "$MERGED" \
               --route-metadata-output phone_free_route.json \
               --plan-prompt-output phone_plan_prompt.md \
               --github-output "$GITHUB_OUTPUT"; then
