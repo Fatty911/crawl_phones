@@ -112,6 +112,24 @@ def spu_config_key(row: dict[str, Any]) -> str:
     return f"spu:{model}|{mem}|{sto}"
 
 
+_VARIANT_BRACKET_RE = re.compile(r"[（(]\s*\d+\s*(?:[+＋]\s*\d+\s*)*[gG][bB]")
+
+
+def is_model_level_row(row: dict[str, Any]) -> bool:
+    """型号级行：型号无容量变体括号。"""
+    return not bool(_VARIANT_BRACKET_RE.search(str(row.get("型号") or "")))
+
+
+def model_level_key(row: dict[str, Any]) -> str:
+    """型号级行覆盖键：品牌|型号剥离变体（与 preserve 一致）。"""
+    model = str(row.get("型号") or row.get("name") or "").strip().lower()
+    model = re.sub(r"\s+", "", model)
+    model = re.sub(r"[（(]\s*\d+\s*(?:[+＋]\s*\d+\s*)*[gG][bB][^）)]*[）)]", "", model)
+    if not model:
+        return ""  # 空型号不参与兜底（真缺失仍拒）
+    return f"ml:{model}"
+
+
 def identity_key(row: dict[str, Any]) -> str:
     keys = identity_keys(row)
     if not keys:
@@ -181,6 +199,14 @@ def verify_superset(
         for crow in candidate:
             cand_spu_rows.setdefault(spu_config_key(crow), []).append(crow)
 
+        cand_ml_rows: dict[str, list[dict[str, Any]]] = {}
+        for crow in candidate:
+            if is_model_level_row(crow):
+                cand_ml_rows.setdefault(model_level_key(crow), []).append(crow)
+
+        def _source_count(row: dict[str, Any]) -> int:
+            return len([p for p in str(row.get("数据来源", "")).split("+") if p.strip()])
+
         def _covered_via_spu(row: dict[str, Any]) -> bool:
             spu = spu_config_key(row)
             if not spu or spu.endswith("||"):  # 无型号无容量（空键）→ 不兜底（真缺失仍拒）
@@ -188,9 +214,23 @@ def verify_superset(
             cand_rows = cand_spu_rows.get(spu, [])
             if not cand_rows:
                 return False
-            base_src = len([p for p in str(row.get("数据来源", "")).split("+") if p.strip()])
-            best = max(len([p for p in str(c.get("数据来源", "")).split("+") if p.strip()]) for c in cand_rows)
-            return best >= base_src
+            best = max(_source_count(c) for c in cand_rows)
+            return best >= _source_count(row)
+
+        def _covered_via_model_level(row: dict[str, Any]) -> bool:
+            """型号级行兜底：同型号级（品牌|型号）的候选行源数不退化 → 视为已覆盖
+            （model_level 归并——vivo S19 两型号级行归并成一条，被覆盖行的 id 靠 pre-pass
+            合并关联保留；个别场景 pre-pass 匹配失败时此处兜底，数据未丢——同型号在 merged）。"""
+            if not is_model_level_row(row):
+                return False
+            ml = model_level_key(row)
+            if not ml or ml.endswith("|") or ml == "ml:":
+                return False
+            cand_rows = cand_ml_rows.get(ml, [])
+            if not cand_rows:
+                return False
+            best = max(_source_count(c) for c in cand_rows)
+            return best >= _source_count(row)
 
         truly_missing = []
         for key in missing:
@@ -198,7 +238,7 @@ def verify_superset(
             if not rows:
                 truly_missing.append(key)
                 continue
-            if not all(_covered_via_spu(row) for row in rows):
+            if not all(_covered_via_spu(row) or _covered_via_model_level(row) for row in rows):
                 truly_missing.append(key)
         if truly_missing:
             preview = ", ".join(truly_missing[:10])

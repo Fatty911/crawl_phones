@@ -244,7 +244,7 @@ def _try_free_route(prompt, deadline, context=None):
         _scripts_dir = str(_Path(__file__).resolve().parent)
         if _scripts_dir not in _sys.path:
             _sys.path.insert(0, _scripts_dir)
-        from free_first_router import free_first_router
+        import free_first_router  # 模块导入（与 from scripts import 同语义——属性访问）
 
     timeout = _request_timeout(deadline)
     if timeout is None:
