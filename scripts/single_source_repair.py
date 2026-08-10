@@ -414,11 +414,57 @@ def analyze_payload(payload: Any, kind: str) -> dict[str, Any]:
         if field_name in grouped_by_field:
             grouped_by_field[field_name] = grouped_by_field[field_name][:60]
 
+    # 型号归并维度（用户要求：型号级归并推进——同 SPU 多行结构与缺失型号级行分析）
+    # SPU 键 = 品牌|型号剥离容量变体；行结构分类：型号级行（无容量括号）vs 变体行（含容量括号）
+    _spu_groups: dict[str, list[dict]] = {}
+    for row in rows:
+        model = str(row.get("型号") or "")
+        if not model:
+            continue
+        spu = re.sub(r"[（(]\s*\d+\s*[gG][bB][^）)]*[）)]", "", model.lower().replace(" ", ""))
+        if not spu:
+            continue
+        _spu_groups.setdefault(spu, []).append({
+            "model": model,
+            "sources": str(row.get("数据来源") or ""),
+            "status": str(row.get("验证状态") or ""),
+        })
+    pure_variant_groups = []
+    model_plus_variant_groups = []
+    missing_model_level = []
+    for spu, items in _spu_groups.items():
+        if len(items) < 2:
+            continue
+        has_model_level = any(not re.search(r"[（(]\s*\d+\s*[gG][bB]", it["model"], re.I) for it in items)
+        variant_items = [it for it in items if re.search(r"[（(]\s*\d+\s*[gG][bB]", it["model"], re.I)]
+        if not has_model_level:
+            multi_src = [it for it in variant_items if "+" in it["sources"]]
+            pure_variant_groups.append({
+                "spu": spu,
+                "variant_count": len(variant_items),
+                "multi_source_count": len(multi_src),
+                "sample_models": [it["model"][:26] for it in items[:3]],
+            })
+        else:
+            model_plus_variant_groups.append({
+                "spu": spu,
+                "total": len(items),
+                "sample_models": [it["model"][:26] for it in items[:3]],
+            })
+    model_merge_analysis = {
+        "same_spu_multi_row_groups": len(model_plus_variant_groups) + len(pure_variant_groups),
+        "model_level_plus_variant_groups": len(model_plus_variant_groups),
+        "pure_variant_groups_no_model_level": len(pure_variant_groups),
+        "pure_variant_with_multi_source": sum(1 for g in pure_variant_groups if g["multi_source_count"] > 0),
+        "pure_variant_samples": pure_variant_groups[:10],
+    }
+
     discrepancy_patterns = {
         "field_discrepancies": dict(field_discrepancies.most_common(12)),
         "patterns": dict(pattern_counts.most_common(8)),
         "samples": pattern_samples,
         "grouped_by_field": grouped_by_field,
+        "model_merge_analysis": model_merge_analysis,
     }
 
     # 可归并性扫描：逐行分析差异明细，检测字段级语义等价候选（共同规格 token 交集）
@@ -612,6 +658,8 @@ grouped_by_field 按属性分组（处理器/内存/存储/屏幕/电池/摄像�
 修复 Agent 应优先读 grouped_by_field——每个属性组内逐条分析两侧值，识别可安全归并的
 语义等价模式（同源互补/粒度差异/规格交集）与真实冲突（容量/像素无交集），
 再决定是否扩展 merge_phones._semantic_fallback_equal 的字段定向规则。
+model_merge_analysis 提供型号归并维度：同 SPU 多行结构（型号级+变体并存 vs 纯变体组）、
+纯变体组的多源信号——型号级行缺失（输入只有变体行）时评估变体行之间的归并机会。
 - screen_missing_size：某源屏幕值缺"N英寸"（如太平洋电脑网参数页有屏幕大小但爬虫合并时被长文本覆盖）——
   修复方向在爬虫侧（参数页解析/字段合并保留规格值），若已在 crawl_pconline.py 修复则验证重爬数据是否带上尺寸；
 - battery_missing_capacity：某源电池值无 mAh 容量（如仅"不可拆卸式电池"）而另一源有——信息缺失非冲突，
