@@ -2542,5 +2542,35 @@ class ModelLevelRowMergeTests(unittest.TestCase):
             self.preserve.model_level_key({"型号": "vivo S19", "品牌": "vivo"}),
         )
 
+
+
+class VariantTbAndMissingInputTests(unittest.TestCase):
+    """TB 单位变体判定（16+1T）+ 输入缺型号时基线保留（Mate 60 Pro+ 案例）。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.preserve = load_script_module("preserve_tbvar", ROOT / "scripts" / "preserve_publish_baseline.py")
+        cls.verify = load_script_module("verify_tbvar", ROOT / "scripts" / "verify_publish_superset.py")
+
+    def test_tb_variant_bracket_is_variant_row(self) -> None:
+        self.assertFalse(self.preserve.is_model_level_row({"型号": "华为Mate60 Pro+(16+1T)"}))
+        self.assertFalse(self.preserve.is_model_level_row({"型号": "华为Mate60 Pro+(16+1TB)"}))
+        self.assertTrue(self.preserve.is_model_level_row({"型号": "华为Mate60 Pro+"}))
+
+    def test_missing_input_keeps_baseline_rows(self) -> None:
+        baseline = [
+            {"型号": "HUAWEI Mate 60 Pro+", "品牌": "华为", "内存": "16GB", "存储": "256GB|512GB",
+             "手机ID": "1001", "数据来源": "中关村在线+太平洋电脑网+CNMO", "验证状态": "三源差异"},
+            {"型号": "华为Mate60 Pro+(16+1T)", "品牌": "华为", "内存": "16GB", "存储": "1TB",
+             "手机ID": "2001", "数据来源": "CNMO", "验证状态": "单源"},
+        ]
+        # candidate 缺 Mate 60 Pro+ 型号级行（输入缺失）→ 基线行必须保留
+        cand = [dict(baseline[1])]
+        merged, missing = self.preserve.preserve_baseline(baseline, cand)
+        self.assertEqual(len(missing), 1)
+        hits = [r for r in merged if "Mate 60 Pro+" in str(r.get("型号", "")) and "(16+1T)" not in str(r.get("型号", ""))]
+        self.assertEqual(len(hits), 1)
+        self.verify.verify_superset(baseline, merged)
+
 if __name__ == "__main__":
     unittest.main()

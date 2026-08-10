@@ -112,7 +112,7 @@ def spu_config_key(row: dict[str, Any]) -> str:
     return f"spu:{model}|{mem}|{sto}"
 
 
-_VARIANT_BRACKET_RE = re.compile(r"[（(]\s*\d+\s*(?:[+＋]\s*\d+\s*)*[gG][bB]")
+_VARIANT_BRACKET_RE = re.compile(r"[（(]\s*\d+\s*(?:[+＋]\s*\d+\s*)*(?:[gGtT][bB]?)")
 
 
 def is_model_level_row(row: dict[str, Any]) -> bool:
@@ -201,8 +201,11 @@ def verify_superset(
 
         cand_ml_rows: dict[str, list[dict[str, Any]]] = {}
         for crow in candidate:
-            if is_model_level_row(crow):
-                cand_ml_rows.setdefault(model_level_key(crow), []).append(crow)
+            # 所有候选行按型号级键索引（同型号的变体行也代表产品在——model_level 归并语义：
+            # 型号级行缺失时同型号候选行即覆盖，数据未丢）
+            mlk = model_level_key(crow)
+            if mlk:
+                cand_ml_rows.setdefault(mlk, []).append(crow)
 
         def _source_count(row: dict[str, Any]) -> int:
             return len([p for p in str(row.get("数据来源", "")).split("+") if p.strip()])

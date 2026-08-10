@@ -22,7 +22,7 @@ from merge_phones import (
 from verify_publish_superset import identity_key, identity_keys, is_below_min_publish_year, load_rows, verify_superset
 
 
-_VARIANT_BRACKET_RE = re.compile(r"[（(]\s*\d+\s*(?:[+＋]\s*\d+\s*)*[gG][bB]")
+_VARIANT_BRACKET_RE = re.compile(r"[（(]\s*\d+\s*(?:[+＋]\s*\d+\s*)*(?:[gGtT][bB]?)")
 
 def is_model_level_row(row: dict[str, Any]) -> bool:
     """型号级行：型号无容量变体括号（"vivo S19"）——与变体行（"vivo S19(8+256GB)"）区分。"""
