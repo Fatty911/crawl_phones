@@ -980,6 +980,15 @@ def validate_working_tree(kind: str) -> None:
             text=True,
         )
     subprocess.run(["git", "diff", "--check"], cwd=ROOT, check=True, capture_output=True, text=True)
+    # 发布链加固（2026-08-10 教训）：Agent 改比对规则但不同步测试断言曾被发布
+    # （388cda3 屏幕缺失侧语义与 3 个旧断言冲突，CI 才暴露）——publish 前强制全量 pytest。
+    subprocess.run(
+        [sys.executable, "-m", "pytest", "tests/", "-q"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
 
 
 def _validate_ephemeral_patch(patch: str, kind: str) -> list[str]:

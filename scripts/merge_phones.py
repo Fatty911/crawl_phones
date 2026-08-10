@@ -813,6 +813,12 @@ def _semantic_fallback_equal(field, left, right):
     size_a = set(re.findall(r'\d+(?:\.\d+)?\s*英寸', a_str))
     size_b = set(re.findall(r'\d+(?:\.\d+)?\s*英寸', b_str))
     if size_a and size_b and size_a & size_b:
+        # 防误归并：双方都标了不同材质（OLED vs LCD、AMOLED vs TFT）→ 不同屏幕，
+        # 即使尺寸相同也保留差异；仅一方有材质（信息缺失）或材质交集非空 → 一致。
+        mat_a = _screen_materials(a_str)
+        mat_b = _screen_materials(b_str)
+        if mat_a and mat_b and not (mat_a & mat_b):
+            return False
         return True
 
     # 摄像头参数：主摄像素集合交集非空即一致。

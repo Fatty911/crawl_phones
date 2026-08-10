@@ -2077,12 +2077,17 @@ class MergeRuleExtTests(unittest.TestCase):
     def test_screen_missing_dash_side_with_spec_still_real(self) -> None:
         # 缺失侧虽是 -- 前缀但带尺寸/材质：仍按常规尺寸/材质交集判定，不因占位符一刀切
         self.assertTrue(self._equal("屏幕", "6.8英寸|120Hz|AMOLED", "--|柔性AMOLED|10.7亿色数"))
-        # 一方有尺寸另一方完全无屏幕信息（无 -- 前缀、无尺寸无材质）→ 仍是差异
-        self.assertFalse(self._equal("屏幕", "6.8英寸|OLED", "打孔屏,多点触摸|120Hz"))
+        # 一方有尺寸另一方为纯形态描述（无尺寸无材质，缺失侧）→ 信息缺失非冲突
+        # （Agent 388cda3 语义：缺失侧材质/刷新率/色深任一为空即无冲突）
+        self.assertTrue(self._equal("屏幕", "6.8英寸|OLED", "打孔屏,多点触摸|120Hz"))
 
-    def test_screen_missing_side_no_material_real(self) -> None:
-        self.assertFalse(self._equal("屏幕", "6.8英寸|OLED", "打孔屏,多点触摸|120Hz"))  # 无材质交集
-        self.assertFalse(self._equal("屏幕", "6.8英寸|OLED", "6.5英寸|OLED"))  # 双方有尺寸且不同
+    def test_screen_missing_side_no_material(self) -> None:
+        # 缺失侧无材质（纯形态描述）→ 信息缺失非冲突（材质交集要求仅当双方都有材质）
+        self.assertTrue(self._equal("屏幕", "6.8英寸|OLED", "打孔屏,多点触摸|120Hz"))
+        # 双方有尺寸且不同 → 真实差异保留
+        self.assertFalse(self._equal("屏幕", "6.8英寸|OLED", "6.5英寸|OLED"))
+        # 双方都有材质且不同 → 真实差异保留
+        self.assertFalse(self._equal("屏幕", "6.8英寸|OLED", "6.8英寸|LCD"))
 
     def test_screen_missing_side_pure_shape_equal(self) -> None:
         # 一侧有尺寸、另一侧无尺寸且无材质（纯形态描述）→ 信息缺失非冲突
@@ -2104,9 +2109,11 @@ class MergeRuleExtTests(unittest.TestCase):
         # 缺失侧带色深数字（10.7亿色数 vs 1600万色数）→ 保留差异
         self.assertFalse(self._equal("屏幕", "打孔屏,多点触摸|10.7亿色数", "6.55英寸|AMOLED|1600万色数|120Hz"))
 
-    def test_screen_missing_side_one_side_no_hz_real(self) -> None:
-        # 缺失侧有刷新率但对侧无刷新率信息，无法确认同屏 → 保守保持差异
-        self.assertFalse(self._equal("屏幕", "打孔屏,多点触摸|120Hz", "6.74英寸"))
+    def test_screen_missing_side_one_side_no_hz_equal(self) -> None:
+        # 缺失侧有刷新率、有尺寸侧无刷新率 → 单侧信息缺失非冲突（Agent 388cda3 语义：
+        # 任一侧未标刷新率即无冲突；双方都标了不同刷新率 144 vs 120 才是真实差异）
+        self.assertTrue(self._equal("屏幕", "打孔屏,多点触摸|120Hz", "6.74英寸"))
+        self.assertFalse(self._equal("屏幕", "6.74英寸|120Hz", "6.78英寸|144Hz"))
 
     def test_screen_size_tolerance_equal(self) -> None:
         self.assertTrue(self._equal("屏幕", "6.82英寸|144Hz|AMOLED", "6.83英寸|AMOLED|144Hz"))

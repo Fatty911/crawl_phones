@@ -403,7 +403,7 @@ jobs:
             timeout 1500 opencode run --format json "你是 crawl_phones 手机数据仓库的修复 Agent。请执行以下任务：
           1. 阅读 single_source_report.json（差异模式诊断报告：字段级差异分布 + screen_missing_size/battery_missing_capacity/date_granularity 等模式计数与样例）。
           2. 定位多源差异的根因：先读 discrepancy_patterns.grouped_by_field（按属性分组明细：处理器/内存/存储/屏幕/电池/摄像头参数/上市时间，每组含全部差异条目的 identity 与两侧值）。每个属性组内逐条分析两侧值：识别可安全归并的语义等价模式（同源互补/粒度差异/规格交集/单侧缺失）与真实冲突（容量/像素无交集——如 16GB vs 12GB、5000 vs 4500mAh，绝不折叠）。再对照 scripts/merge_phones.py 的 _semantic_fallback_equal 现有字段规则，找出组内未被规则覆盖的可归并模式，扩展字段定向规则（保守：信息缺失侧可并，信息冲突侧保留）；同时排查 scripts/crawl_pconline.py 字段合并丢失规格值、scripts/single_source_repair.py 报告逻辑。逐一读相关源码确认。
-          3. 对可安全修复的根因修改代码：不伪造数据、不折叠真实冲突（如 16GB vs 12GB 内存、5000 vs 4500mAh 电池）、不删除校验逻辑、不降低防护。
+          3. 对可安全修复的根因修改代码：不伪造数据、不折叠真实冲突（如 16GB vs 12GB 内存、5000 vs 4500mAh 电池）、不删除校验逻辑、不降低防护。修改 _semantic_fallback_equal 等比对/归并规则时，必须检查该字段所有相关测试断言并同步（行为变了断言必须跟着变——2026-08-10 教训：改行为不同步断言导致 CI 红）；修改后必须运行 python3 -m pytest tests/ -q 确认全部通过（含既有全部测试）。
           4. 修改后必须运行 python3 -m pytest tests/ -q 验证全部测试通过；失败则继续修复直到通过。
           5. 结束时在最后一条消息里说明：修改了哪些文件、每处修改的理由、测试结果。" > opencode_agent.jsonl 2>&1 || echo "opencode run 退出码 $?"
           fi
