@@ -626,6 +626,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # pytest 门禁依赖（runner 环境缺 yaml——2026-08-10 闭环验证当场抓到）
+          pip install --quiet pyyaml requests pytest 2>/dev/null || true
           test -f proposal/single_source_repair.patch
           test -f proposal/single_source_repair_result.json
           python3 - "$SOURCE_SHA" "$PAGES_RUN_ID" "$REPO_KIND" "$PAGES_URL" <<'PY'
