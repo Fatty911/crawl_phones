@@ -22,6 +22,28 @@ from merge_phones import (
 from verify_publish_superset import identity_key, identity_keys, is_below_min_publish_year, load_rows, verify_superset
 
 
+_VARIANT_BRACKET_RE = re.compile(r"[（(]\s*\d+\s*(?:[+＋]\s*\d+\s*)*[gG][bB]")
+
+def is_model_level_row(row: dict[str, Any]) -> bool:
+    """型号级行：型号无容量变体括号（"vivo S19"）——与变体行（"vivo S19(8+256GB)"）区分。"""
+    return not bool(_VARIANT_BRACKET_RE.search(str(row.get("型号") or "")))
+
+
+def model_level_key(row: dict[str, Any]) -> str:
+    """型号级行的覆盖键：品牌|型号剥离变体——同型号的型号级行（无论来源/容量描述格式）
+    应归并成一条（vivo S19 三源差异行 + vivo S19 双源一致行 → 一条）。
+    变体行（含容量括号）仍用 spu_config_key 精确容量区分。"""
+    mk = model_key(row)
+    if not mk:
+        model = str(row.get("型号") or "").strip().lower()
+        model = re.sub(r"\s+", "", model)
+        mk = model
+    brand = normalize_brand(row.get("品牌") or derive_brand_from_name(str(row.get("型号") or "")))
+    if not brand:
+        brand = str(row.get("品牌") or "").strip().casefold() or derive_brand_from_name(str(row.get("型号") or ""))
+    return f"ml:{brand}|{mk}"
+
+
 def spu_config_key(row: dict[str, Any]) -> str:
     """SPU+配置 级身份键：model_key(品牌|型号剥离变体/后缀)|内存数字|存储数字。
 
@@ -55,6 +77,7 @@ def preserve_baseline(
         if keys:
             covered_ids.add(keys[0])
     covered_ids.update(spu_config_key(row) for row in candidate)
+    covered_ids.update(model_level_key(row) for row in candidate if is_model_level_row(row))
 
     # pre-pass：spu 匹配的基线行 id 合并进 candidate 行关联手机ID——id 漂移行
     # （旧输入 id 不在当前候选）被 spu 覆盖替代时，旧 id 保留在关联手机ID，
@@ -78,10 +101,16 @@ def preserve_baseline(
         return best >= _source_count(row)
 
     baseline_spu_index: dict[str, list[dict[str, Any]]] = {}
+    baseline_ml_index: dict[str, list[dict[str, Any]]] = {}
     for brow in baseline:
         baseline_spu_index.setdefault(spu_config_key(brow), []).append(brow)
+        if is_model_level_row(brow):
+            baseline_ml_index.setdefault(model_level_key(brow), []).append(brow)
     for crow in candidate:
-        for brow in baseline_spu_index.get(spu_config_key(crow), []):
+        _spu_baselines = list(baseline_spu_index.get(spu_config_key(crow), []))
+        if is_model_level_row(crow):
+            _spu_baselines += baseline_ml_index.get(model_level_key(crow), [])
+        for brow in _spu_baselines:
             brow_keys = identity_keys(brow)
             if not brow_keys:
                 continue
@@ -113,13 +142,14 @@ def preserve_baseline(
         if not keys:
             identity_key(row)
         spu_key = spu_config_key(row)
+        cover_key = model_level_key(row) if is_model_level_row(row) else spu_key
         # 主 id 覆盖（candidate 有真实同 id 行）→ 替代。注意：不能用 all(keys)——
         # 关联手机ID 覆盖只是"归并痕迹"（变体行的关联含型号级行 id），不代表 candidate
         # 有同 id 行，用 all 会把三源型号级行误判为已覆盖而丢弃（线上 92 型号丢失根因）。
         primary = keys[0] if keys else ""
         if primary and primary in covered_ids:
             continue
-        if spu_key in covered_ids:
+        if cover_key in covered_ids:
             # 源数保护：候选行源数不足（ZOL 缺失时单源变体 vs 基线三源型号级）→
             # 保留基线行（信息更全），且不加 spu 到 covered（同 spu 其他基线行也保留）。
             if not _spu_replacement_ok(spu_key, row):

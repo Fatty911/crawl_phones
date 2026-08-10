@@ -2501,5 +2501,46 @@ class PreserveSourceProtectionTests(unittest.TestCase):
         self.assertEqual(missing, [])
         self.verify.verify_superset(baseline, merged)
 
+
+
+class ModelLevelRowMergeTests(unittest.TestCase):
+    """同型号的型号级行（无变体括号）按 SPU 键归并成一条（用户 vivo S19 案例）。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.preserve = load_script_module("preserve_mlrow", ROOT / "scripts" / "preserve_publish_baseline.py")
+        cls.verify = load_script_module("verify_mlrow", ROOT / "scripts" / "verify_publish_superset.py")
+
+    def _rows(self):
+        return [
+            {"型号": "vivo S19", "品牌": "vivo", "内存": "8GB|LPDDR4X 双通道", "存储": "256GB|UFS 2.2",
+             "手机ID": "1001", "数据来源": "中关村在线+太平洋电脑网+CNMO", "验证状态": "三源差异"},
+            {"型号": "vivo S19", "品牌": "vivo",
+             "内存": "LPDDR5|LPDDR4X 双通道（8GB+256GB)", "存储": "256GB|512GB|UFS 3.1",
+             "手机ID": "2001", "数据来源": "太平洋电脑网+CNMO", "验证状态": "双源一致"},
+            {"型号": "vivo S19(8+256GB)", "品牌": "vivo", "内存": "8GB", "存储": "256GB",
+             "手机ID": "3001", "数据来源": "CNMO", "验证状态": "单源"},
+        ]
+
+    def test_model_level_rows_merge_into_one(self) -> None:
+        baseline = self._rows()
+        # candidate 只有一行 S19 型号级（三源）
+        cand = [dict(baseline[0]), dict(baseline[2])]
+        merged, missing = self.preserve.preserve_baseline(baseline, cand)
+        ml = [r for r in merged if str(r.get("型号", "")) == "vivo S19"]
+        self.assertEqual(len(ml), 1)  # 两行型号级归并成一条
+        # 变体行不受影响
+        var = [r for r in merged if "8+256GB" in str(r.get("型号", ""))]
+        self.assertEqual(len(var), 1)
+        self.verify.verify_superset(baseline, merged)
+
+    def test_model_level_key_distinguishes_variants(self) -> None:
+        self.assertTrue(self.preserve.is_model_level_row({"型号": "vivo S19"}))
+        self.assertFalse(self.preserve.is_model_level_row({"型号": "vivo S19(8+256GB)"}))
+        self.assertEqual(
+            self.preserve.model_level_key({"型号": "vivo S19", "品牌": "vivo"}),
+            self.preserve.model_level_key({"型号": "vivo S19", "品牌": "vivo"}),
+        )
+
 if __name__ == "__main__":
     unittest.main()
