@@ -2572,5 +2572,75 @@ class VariantTbAndMissingInputTests(unittest.TestCase):
         self.assertEqual(len(hits), 1)
         self.verify.verify_superset(baseline, merged)
 
+
+
+class ModelLevelDedupeTests(unittest.TestCase):
+    """型号级行去重（同 ml 保留一行）+ 变体行不替代型号级行（SKU 归并——用户 X90 Pro+ 案例）。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.preserve = load_script_module("preserve_mldedupe", ROOT / "scripts" / "preserve_publish_baseline.py")
+        cls.verify = load_script_module("verify_mldedupe", ROOT / "scripts" / "verify_publish_superset.py")
+
+    def _rows(self):
+        return [
+            {"型号": "vivo X90 Pro+", "品牌": "vivo", "内存": "12GB", "存储": "256GB|512GB",
+             "手机ID": "1001", "数据来源": "中关村在线+太平洋电脑网+CNMO", "验证状态": "三源差异"},
+            {"型号": "vivo X90 Pro+", "品牌": "vivo", "内存": "12GB", "存储": "256GB",
+             "手机ID": "2001", "数据来源": "中关村在线+太平洋电脑网", "验证状态": "双源差异"},
+            {"型号": "vivo X90 Pro+(12+256GB)", "品牌": "vivo", "内存": "12GB", "存储": "256GB",
+             "手机ID": "3001", "数据来源": "CNMO", "验证状态": "单源"},
+        ]
+
+    def test_duplicate_model_level_rows_dedupe_to_one(self) -> None:
+        baseline = self._rows()
+        cand = [dict(baseline[2])]  # 候选只有变体行（输入缺型号级）
+        merged, missing = self.preserve.preserve_baseline(baseline, cand)
+        ml = [r for r in merged if str(r.get("型号", "")) == "vivo X90 Pro+"]
+        self.assertEqual(len(ml), 1)  # 两行型号级去重成一行（保留源数最全的）
+        self.assertIn("中关村在线+太平洋电脑网+CNMO", str(ml[0].get("数据来源", "")))
+        self.verify.verify_superset(baseline, merged)
+
+    def test_variant_row_never_replaces_model_level(self) -> None:
+        baseline = self._rows()
+        # 候选含三源变体行（源数 ≥ 型号级）——也不能替代型号级行（SKU 不同）
+        var = dict(baseline[2])
+        var["数据来源"] = "中关村在线+太平洋电脑网+CNMO"
+        merged, missing = self.preserve.preserve_baseline(baseline, [var])
+        ml = [r for r in merged if str(r.get("型号", "")) == "vivo X90 Pro+"]
+        self.assertEqual(len(ml), 1)  # 型号级行保留（变体行不覆盖型号级）
+        self.verify.verify_superset(baseline, merged)
+
+
+
+class ModelLevelDedupeBoundaryTests(unittest.TestCase):
+    """边界补强（Nemotron 场景矩阵评审指出）：candidate 侧型号级去重 + 全角括号变体。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.preserve = load_script_module("preserve_mldedge", ROOT / "scripts" / "preserve_publish_baseline.py")
+        cls.verify = load_script_module("verify_mldedge", ROOT / "scripts" / "verify_publish_superset.py")
+
+    def _row(self, model, mid, src, mem="12GB", sto="256GB"):
+        return {"型号": model, "品牌": "vivo", "内存": mem, "存储": sto,
+                "手机ID": mid, "数据来源": src, "验证状态": "单源"}
+
+    def test_candidate_side_model_level_dedupe(self) -> None:
+        # 候选自身有多个同型号级行（同 ml 不同 id）→ 候选不去重，但基线覆盖后不产生额外保留
+        baseline = [self._row("vivo X90 Pro+", "1001", "中关村在线+太平洋电脑网+CNMO"),
+                    self._row("vivo X90 Pro+(12+256GB)", "2001", "CNMO")]
+        cand = [self._row("vivo X90 Pro+", "3001", "中关村在线+太平洋电脑网+CNMO"),
+                self._row("vivo X90 Pro+", "3002", "太平洋电脑网+CNMO")]
+        merged, missing = self.preserve.preserve_baseline(baseline, cand)
+        ml = [r for r in merged if str(r.get("型号", "")) == "vivo X90 Pro+"]
+        self.assertEqual(len(ml), 2)  # 候选 2 行 + 基线 0 保留（覆盖）——行数守恒
+        self.verify.verify_superset(baseline, merged)
+
+    def test_full_width_bracket_variant(self) -> None:
+        # 全角括号变体（（12+256GB））判为变体行——不污染型号级
+        self.assertFalse(self.preserve.is_model_level_row({"型号": "vivo X90 Pro+（12+256GB）"}))
+        self.assertFalse(self.preserve.is_model_level_row({"型号": "vivo X90 Pro+（16+1T）"}))
+        self.assertTrue(self.preserve.is_model_level_row({"型号": "vivo X90 Pro+"}))
+
 if __name__ == "__main__":
     unittest.main()

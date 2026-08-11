@@ -77,7 +77,11 @@ def preserve_baseline(
         if keys:
             covered_ids.add(keys[0])
     covered_ids.update(spu_config_key(row) for row in candidate)
+    # 型号级覆盖键只来自候选的型号级行——变体行（含容量括号）是具体 SKU，不能替代
+    # 型号级聚合行（X90 Pro+(12+256GB) 替代 X90 Pro+ 会丢多配置信息）。变体行的
+    # 型号级键只用于 verify 层的"产品在"兜底（同型号变体行存在=数据未丢）。
     covered_ids.update(model_level_key(row) for row in candidate if is_model_level_row(row))
+    kept_ml: set[str] = set()
 
     # pre-pass：spu 匹配的基线行 id 合并进 candidate 行关联手机ID——id 漂移行
     # （旧输入 id 不在当前候选）被 spu 覆盖替代时，旧 id 保留在关联手机ID，
@@ -153,14 +157,25 @@ def preserve_baseline(
             # 源数保护：候选行源数不足（ZOL 缺失时单源变体 vs 基线三源型号级）→
             # 保留基线行（信息更全），且不加 spu 到 covered（同 spu 其他基线行也保留）。
             if not _spu_replacement_ok(spu_key, row):
+                if is_model_level_row(row):
+                    mlk = model_level_key(row)
+                    if mlk in kept_ml:
+                        continue  # 同型号级已保留一行（ranked 排序保证源数最多先处理）——去重
+                    kept_ml.add(mlk)
                 selected.append((index, row))
                 covered_ids.update(keys)
                 continue
             continue
+        if is_model_level_row(row):
+            mlk = model_level_key(row)
+            if mlk in kept_ml:
+                continue  # 同型号级已保留一行——去重
+            kept_ml.add(mlk)
         selected.append((index, row))
         covered_ids.update(keys)
         # 注意：不能把保留行的 spu 键加入 covered——否则后续同 SPU+配置 的行
         # （candidate 同样没有）会被误判为已覆盖而不再保留，造成数据丢失。
+        # 型号级行例外：mlk 加入 kept_ml（去重），不加 covered（保留行仍可被候选覆盖）。
     missing_rows = [row for _, row in sorted(selected, key=lambda item: item[0])]
     merged = [
         normalize_audited_published_headers(row)

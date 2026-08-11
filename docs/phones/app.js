@@ -1783,7 +1783,21 @@
       var latestPath = state.manifest && state.manifest.files && state.manifest.files.latestJson || "data/latest.json";
       return fetchJson(latestPath).then(function (latest) {
         initializeRows(latest);
-        var dateText = state.manifest && state.manifest.date ? "数据日期 " + state.manifest.date : "最新数据";
+        var dateText = "最新数据";
+        if (state.manifest) {
+          if (state.manifest.updatedAt) {
+            try {
+              var dt = new Date(state.manifest.updatedAt);
+              if (isNaN(dt.getTime())) { throw new Error("invalid date"); }
+              var pad = function (n) { return n < 10 ? "0" + n : n; };
+              dateText = "数据生成 " + dt.getFullYear() + "-" + pad(dt.getMonth() + 1) + "-" + pad(dt.getDate()) + " " + pad(dt.getHours()) + ":" + pad(dt.getMinutes());
+            } catch (e) {
+              dateText = "数据日期 " + (state.manifest.date || "未知");
+            }
+          } else if (state.manifest.date) {
+            dateText = "数据日期 " + state.manifest.date;
+          }
+        }
         els.dataMeta.textContent = dateText + " · 综合收录 " + state.rows.length + " 台手机";
       }).catch(function () {
         initializeRows(SAMPLE_ROWS);
