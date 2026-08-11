@@ -157,6 +157,13 @@ jobs:
           PROXY_SUBSCRIPTIONS: ${{ secrets.PROXY_SUBSCRIPTIONS }}
         run: python scripts/setup_proxy_runtime.py --github-env "$GITHUB_ENV"
 
+      - name: Restore ZOL crawl state (cross-run accumulation)
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: zol-phone-data
+          path: crawl_state/zol/
+
       - name: Clamp step1 runtime to workflow budget
         if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true'
         run: python scripts/crawl_budget.py clamp --step-label step1 --skip-env STEP1_SKIP
@@ -215,22 +222,22 @@ jobs:
           echo "complete=true" >> "$GITHUB_OUTPUT"
           echo "failed=false" >> "$GITHUB_OUTPUT"
 
-      - name: Upload crawl data (early, after step1)
-        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && github.event.inputs.debug_mode != 'true'
-        continue-on-error: true
-        uses: actions/upload-artifact@v4
-        with:
-          name: zol-phone-data-early-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            crawl_state/zol/json/
-            crawl_state/zol/progress.json
-          retention-days: 3
-
       - name: ZOL 搜索补充（绕过 checking 墙，按型号搜站内详情）
         if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true'
         run: |
           python scripts/zol_search_models.py
           python scripts/zol_search_supplement.py --models-file /tmp/zol_models.txt --max-per-model 3 --limit "${ZOL_SEARCH_LIMIT:-200}"
+
+      - name: Upload crawl data (early, after step1)
+        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && github.event.inputs.debug_mode != 'true'
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: zol-phone-data
+          path: |
+            crawl_state/zol/json/
+            crawl_state/zol/progress.json
+          retention-days: 3
 
       - name: Parse and merge data
         if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outputs.failed != 'true'
