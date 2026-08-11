@@ -37,7 +37,6 @@ on:
       - 'scripts/ai_verify_root_status.py'
       - 'scripts/search_root_info.py'
       - 'scripts/git_sync_progress.sh'
-      - 'docs/phones/**'
       - '!.done'
       - '!crawl_state/**'
 
