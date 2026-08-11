@@ -2122,6 +2122,24 @@ class MergeRuleExtTests(unittest.TestCase):
         self.assertFalse(self._equal("屏幕", "6.82英寸|AMOLED", "6.83英寸|AMOLED"))  # 无刷新率确认
         self.assertFalse(self._equal("屏幕", "6.82英寸|144Hz", "7.0英寸|144Hz"))  # 超容差
 
+    def test_screen_no_size_dash_with_material_equal(self) -> None:
+        # 双方都无尺寸 + 一侧以 -- 占位符开头但带材质（CNMO 折叠屏尺寸缺失）+
+        # 另一侧材质一致 → 信息缺失非冲突（同一屏幕）
+        self.assertTrue(self._equal(
+            "屏幕",
+            "打孔屏,折叠屏,多点触摸|120Hz|AMOLED|主屏：100% P3 色域副屏：100% P3 色域",
+            "--|柔性AMOLED|1670万色"))
+        self.assertTrue(self._equal(
+            "屏幕",
+            "打孔屏,多点触摸|120Hz|AMOLED|【内屏】全局默认最高亮度：600尼特典型值",
+            "--|柔性AMOLED|10.7亿色数"))
+
+    def test_screen_no_size_dash_material_conflict_real(self) -> None:
+        # 防误归并：双方都无尺寸时，材质无交集（LCD vs AMOLED）仍真实差异
+        self.assertFalse(self._equal("屏幕", "打孔屏,多点触摸|120Hz|LCD", "--|AMOLED|10.7亿色数"))
+        # 刷新率冲突（144Hz vs 120Hz）仍真实差异
+        self.assertFalse(self._equal("屏幕", "打孔屏,多点触摸|144Hz|AMOLED", "--|柔性AMOLED|10.7亿色数|120Hz"))
+
 
 class InfoMissingSemanticTests(unittest.TestCase):
     """信息缺失归并：电池双方无容量、存储一侧无容量、摄像头纯传感器缺失、
@@ -2212,6 +2230,15 @@ class InfoMissingSemanticTests(unittest.TestCase):
     def test_processor_cortex_core_not_mistaken_as_model(self) -> None:
         # Cortex-A725 不是处理器型号：品牌级 vs 型号级互补归并不被阻断
         self.assertTrue(self._equal("处理器", "联发科(MTK)|1×A725 3.4GHz+3×A725 3.2GHz+4×A725 2.2GHz", "联发科天玑8500|4nm|Cortex-A725"))
+
+    def test_processor_unisoc_brand_alias_equal(self) -> None:
+        # 紫光展锐/展锐/展讯 是同一家（Unisoc）品牌别名：同 T 型号（T760）归并
+        self.assertTrue(self._equal("处理器", "紫光展锐T760点击型号查看完整天梯图", "展讯展讯T760|Cortex-A76,Cortex-A55"))
+        self.assertTrue(self._equal("处理器", "展讯T760|Cortex-A76,Cortex-A55", "紫光展锐T760点击型号查看完整天梯图"))
+
+    def test_processor_unisoc_different_t_series_real(self) -> None:
+        # 防误归并：Unisoc 不同 T 型号（T8200 vs T820）仍真实差异
+        self.assertFalse(self._equal("处理器", "紫光展锐 T8200 Flyme 特调满血版点击型号查看完整天梯图", "紫光展锐紫光展锐T820|6nm|Cortex-A76,Cortex-A55"))
 
     def test_processor_helio_equal(self) -> None:
         self.assertTrue(self._equal("处理器", "联发科(MTK)|八核处理器，最高主频 2.0GHz", "联发科Helio G81-Ultra"))

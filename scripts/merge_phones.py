@@ -889,6 +889,24 @@ def _semantic_fallback_equal(field, left, right):
                 depth_ok = depth_no is None or depth_size is None or depth_no == depth_size
                 if mat_ok and hz_ok and depth_ok:
                     return True
+        # 双方都无尺寸 + 一侧以缺失占位符（--）开头但带材质（如 CNMO
+        # "--|柔性AMOLED|1670万色"）、另一侧有材质描述（如 PCL 折叠屏
+        # "打孔屏,折叠屏,多点触摸|120Hz|AMOLED|..."）→ 该源屏幕尺寸整体缺失，
+        # 材质交集非空即同一屏幕，信息缺失非冲突。
+        # 防误归并：双方都无尺寸时，材质无交集（LCD vs OLED）、刷新率冲突
+        # （120Hz vs 144Hz）、或色深不同（10.7亿色 vs 1600万色）仍保留差异。
+        if not size_a and not size_b:
+            a_dash = bool(re.match(r'^\s*--', a_str))
+            b_dash = bool(re.match(r'^\s*--', b_str))
+            if a_dash != b_dash and mat_a and mat_b and mat_a & mat_b:
+                hz_a_all = set(re.findall(r'\d+\s*Hz', a_str))
+                hz_b_all = set(re.findall(r'\d+\s*Hz', b_str))
+                hz_ok = (not hz_a_all) or (not hz_b_all) or (hz_a_all & hz_b_all)
+                depth_a = _screen_color_depth(a_str)
+                depth_b = _screen_color_depth(b_str)
+                depth_ok = depth_a is None or depth_b is None or depth_a == depth_b
+                if hz_ok and depth_ok:
+                    return True
         # 尺寸容差：两源标注的屏幕尺寸可能相差 0.05-0.1 英寸（四舍五入/取整差异，
         # 如 6.82 vs 6.83），同时刷新率一致 → 同一屏幕；容差上限 0.1 英寸（不同型号
         # 屏幕尺寸差通常 ≥0.2），刷新率交集是强确认信号。
@@ -958,13 +976,19 @@ def _semantic_fallback_equal(field, left, right):
             r'Tensor\s*\w+',
             r'Helio\s*\w+',
             r'玄戒\s*\w*',
+            # 紫光展锐/展锐/展讯 是同一家（Unisoc）的品牌别名：型号归一化到 T 系列，
+            # 使 "紫光展锐T760" 与 "展讯T760"（CNMO 品牌词重复）判定为同一颗芯片。
+            # 不同 T 型号（T8200 vs T820）仍由集合交集判定保留差异。
+            r'(?:紫光展锐|展锐|展讯)\s*(T\d{3,4})',
         ]
 
         def _processor_models(text: str) -> set:
             models = set()
             for pat in proc_patterns:
                 for match in re.finditer(pat, text, re.IGNORECASE):
-                    models.add(re.sub(r'\s+', '', match.group(0)).lower())
+                    group = match.groups()
+                    selected = group[0] if group else match.group(0)
+                    models.add(re.sub(r'\s+', '', selected).lower())
             return models
 
         models_a = _processor_models(a_str)
@@ -973,6 +997,10 @@ def _semantic_fallback_equal(field, left, right):
             for ma in models_a:
                 for mb in models_b:
                     if ma in mb or mb in ma or ma == mb:
+                        # 展锐 T 系列型号（T8200 vs T820）数字前缀相同，子串包含
+                        # 会误判为同一型号；T 型号之间只允许完全相等。
+                        if re.fullmatch(r't\d{3,4}', ma) and re.fullmatch(r't\d{3,4}', mb) and ma != mb:
+                            continue
                         return True
 
         # 一侧以缺失占位符 -- 开头（如 CNMO "--；核心数：--|Cortex-A55,A76" 处理器型号缺失），
