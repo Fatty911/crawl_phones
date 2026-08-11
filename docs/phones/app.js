@@ -1040,7 +1040,7 @@
         var details = document.createElement("div");
         details.className = "series-model-list";
         details.id = detailId;
-        group.rows.forEach(function (row) {
+        skuRows.forEach(function (row) {
           var model = document.createElement("div");
           model.className = "series-model-row";
           var modelTitle = document.createElement("h4");
