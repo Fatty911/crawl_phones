@@ -194,7 +194,7 @@ jobs:
           fi
 
           set +e
-          python scripts/crawl_zol.py --step 1 --time-limit "$RUN_TIME" --max-pages "$MAX_PAGES" --max-phones "$MAX_PHONES" --auto $INCREMENTAL_FLAG $DEBUG_LIMIT_FLAG
+          python scripts/crawl_zol.py --step 1 --time-limit "${STEP1_TIME_LIMIT:-900}" --max-pages "$MAX_PAGES" --max-phones "$MAX_PHONES" --auto $INCREMENTAL_FLAG $DEBUG_LIMIT_FLAG
           EXIT_CODE=$?
           set -e
           echo "ZOL step1 exit code: $EXIT_CODE"
