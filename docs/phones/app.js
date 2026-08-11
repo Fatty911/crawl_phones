@@ -1030,7 +1030,11 @@
       var meta = document.createElement("div");
       meta.className = "card-meta";
       appendCardMeta(meta, group.representative, ["品牌", "手机类型", "价格", "处理器", "电池"]);
-      card.appendChild(meta);
+      // 展开时不显示 meta 预览——否则与展开的第一行（型号级行）重复显示同一份
+      // 处理器/电池/状态，用户会误以为型号级行未归并（数据实际只有一行型号级）。
+      if (!expanded) {
+        card.appendChild(meta);
+      }
 
       if (expanded) {
         var details = document.createElement("div");
