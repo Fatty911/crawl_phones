@@ -1015,9 +1015,18 @@
       toggle.setAttribute("aria-controls", detailId);
       var title = document.createElement("h3");
       title.textContent = group.name;
+      // 型号级行（型号 == SPU 名）并入卡片头展示（聚合/跨源验证信息），
+      // 展开列表只显示 SKU 行（带配置后缀的变体）——型号级行不重复出现。
+      var modelRow = null;
+      var skuRows = group.rows.filter(function (r) { return String(r["型号"] || "") !== group.name; });
+      if (skuRows.length === 0) {
+        skuRows = group.rows.slice(); // 无 SKU 变体——型号级行作为唯一版本
+      } else {
+        modelRow = group.rows.find(function (r) { return String(r["型号"] || "") === group.name; }) || null;
+      }
       var count = document.createElement("small");
       count.className = "series-match-count";
-      count.textContent = group.rows.length + " 个版本符合条件";
+      count.textContent = (skuRows.length || 1) + " 个版本符合条件";
       var indicator = document.createElement("span");
       indicator.className = "series-expand-indicator";
       indicator.setAttribute("aria-hidden", "true");
@@ -1029,12 +1038,12 @@
 
       var meta = document.createElement("div");
       meta.className = "card-meta";
-      appendCardMeta(meta, group.representative, ["品牌", "手机类型", "价格", "处理器", "电池"]);
-      // 展开时不显示 meta 预览——否则与展开的第一行（型号级行）重复显示同一份
-      // 处理器/电池/状态，用户会误以为型号级行未归并（数据实际只有一行型号级）。
-      if (!expanded) {
-        card.appendChild(meta);
-      }
+      var metaRow = modelRow || group.representative;
+      var metaFields = modelRow
+        ? ["上市时间", "手机类型", "处理器", "电池"]
+        : ["品牌", "手机类型", "价格", "处理器", "电池"];
+      appendCardMeta(meta, metaRow, metaFields);
+      card.appendChild(meta);
 
       if (expanded) {
         var details = document.createElement("div");
