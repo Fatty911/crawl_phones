@@ -82,6 +82,19 @@ def preserve_baseline(
     # 型号级键只用于 verify 层的"产品在"兜底（同型号变体行存在=数据未丢）。
     covered_ids.update(model_level_key(row) for row in candidate if is_model_level_row(row))
     kept_ml: set[str] = set()
+    kept_ml_rows: dict[str, dict[str, Any]] = {}  # ml -> 已保留行（去重时合并 id）
+
+    def _merge_deduped_ids(rows_map: dict[str, dict[str, Any]], mlk: str, keys: list[str]) -> None:
+        """被去重的同型号级行：主 id 合并进保留行关联手机ID（traceability 保留——verify 不丢）。"""
+        kept = rows_map.get(mlk)
+        if kept is None or not keys:
+            return
+        bid = keys[0]
+        if bid.startswith("id:"):
+            related = str(kept.get("关联手机ID") or "")
+            values = {v.strip() for v in re.split(r"[|,，\s]+", related) if v.strip()}
+            values.add(bid[3:])
+            kept["关联手机ID"] = "|".join(sorted(values))
 
     # pre-pass：spu 匹配的基线行 id 合并进 candidate 行关联手机ID——id 漂移行
     # （旧输入 id 不在当前候选）被 spu 覆盖替代时，旧 id 保留在关联手机ID，
@@ -160,8 +173,10 @@ def preserve_baseline(
                 if is_model_level_row(row):
                     mlk = model_level_key(row)
                     if mlk in kept_ml:
+                        _merge_deduped_ids(kept_ml_rows, mlk, keys)
                         continue  # 同型号级已保留一行（ranked 排序保证源数最多先处理）——去重
                     kept_ml.add(mlk)
+                    kept_ml_rows[mlk] = row
                 selected.append((index, row))
                 covered_ids.update(keys)
                 continue
@@ -169,8 +184,10 @@ def preserve_baseline(
         if is_model_level_row(row):
             mlk = model_level_key(row)
             if mlk in kept_ml:
+                _merge_deduped_ids(kept_ml_rows, mlk, keys)
                 continue  # 同型号级已保留一行——去重
             kept_ml.add(mlk)
+            kept_ml_rows[mlk] = row
         selected.append((index, row))
         covered_ids.update(keys)
         # 注意：不能把保留行的 spu 键加入 covered——否则后续同 SPU+配置 的行
