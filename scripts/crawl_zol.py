@@ -467,7 +467,12 @@ def _scan_all_models(session: requests.Session) -> List[Dict]:
 
     all_phones = []
     page = 1
+    scan_start = time.time()
     while True:
+        if MAX_TIME_PER_STEP > 0:
+            if time.time() - scan_start >= MAX_TIME_PER_STEP:
+                logger.info(f"扫描达到时间限制 ({MAX_TIME_PER_STEP}秒)，停止扫描")
+                break
         phones = crawl_list_page(session, page)
         if not phones:
             break
