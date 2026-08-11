@@ -172,7 +172,7 @@ setTimeout(() => {
                     return int(match.group(2))
             return None
 
-        filtered = [row for row in rows if (release_year(row) or 0) >= 2022]
+        filtered = [row for row in rows if (release_year(row) or 0) >= (datetime.date.today().year - 2)]
         source_count = lambda source: sum(source in str(row.get("数据来源", "")) for row in rows)
         verified_count = sum(
             bool(row.get("验证状态")) and row.get("验证状态") != "单源"
@@ -1622,7 +1622,7 @@ class ValidationSemanticEquivalenceTests(unittest.TestCase):
 
 
 class PublishYearFilterTests(unittest.TestCase):
-    """guard_publish_rows 五年内发布准入（MIN_PUBLISH_YEAR=2022，与前端对齐）。"""
+    """guard_publish_rows 三年内发布准入（MIN_PUBLISH_YEAR=当前年-2，与前端对齐）。"""
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -1630,9 +1630,9 @@ class PublishYearFilterTests(unittest.TestCase):
 
     def test_old_models_are_dropped_from_publish_rows(self) -> None:
         now = datetime.date.today().year
-        min_year = now - 4
+        min_year = now - 2
         rows = [
-            {"型号": "老款", "上市时间": f"{min_year - 4}年10月", "品牌": "测试"},
+            {"型号": "老款", "上市时间": f"{min_year - 2}年10月", "品牌": "测试"},
             {"型号": "临界", "上市时间": f"{min_year - 1}年12月", "品牌": "测试"},
             {"型号": "新款", "上市时间": f"{min_year}年01月", "品牌": "测试"},
             {"型号": "最新", "上市时间": f"{now}年08月", "品牌": "测试"},
@@ -1656,14 +1656,14 @@ class PublishYearFilterTests(unittest.TestCase):
 
     def test_min_publish_year_constant_matches_frontend(self) -> None:
         app = (ROOT / "docs/phones/app.js").read_text(encoding="utf-8")
-        expected = datetime.date.today().year - 4
+        expected = datetime.date.today().year - 2
         self.assertEqual(self.merge.MIN_PUBLISH_YEAR, expected)
-        self.assertIn("getFullYear() - 4", app)
+        self.assertIn("getFullYear() - 2", app)
 
 
 
 class BaselineYearFilterTests(unittest.TestCase):
-    """preserve_baseline / verify_superset 不再向后保留五年外（<2022）旧型号。"""
+    """preserve_baseline / verify_superset 不再向后保留三年外（<2024）旧型号。"""
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -1671,7 +1671,7 @@ class BaselineYearFilterTests(unittest.TestCase):
         cls.verify = load_script_module("verify_publish_superset", ROOT / "scripts" / "verify_publish_superset.py")
 
     def test_old_baseline_rows_are_not_carried_forward(self) -> None:
-        min_year = datetime.date.today().year - 4
+        min_year = datetime.date.today().year - 2
         baseline = [
             {"型号": "老款A", "上市时间": f"{min_year - 3}年10月", "数据来源": "CNMO", "品牌": "测试", "手机ID": "1"},
             {"型号": "老款B", "上市时间": f"{min_year - 1}年06月", "数据来源": "CNMO", "品牌": "测试", "手机ID": "2"},
@@ -1686,7 +1686,7 @@ class BaselineYearFilterTests(unittest.TestCase):
         self.assertTrue(all(not self.verify.is_below_min_publish_year(r) for r in merged))
 
     def test_boundary_min_year_row_is_kept(self) -> None:
-        min_year = datetime.date.today().year - 4
+        min_year = datetime.date.today().year - 2
         baseline = [
             {"型号": "临界", "上市时间": f"{min_year}年01月", "数据来源": "CNMO", "品牌": "测试", "手机ID": "1"},
         ]
@@ -1697,9 +1697,9 @@ class BaselineYearFilterTests(unittest.TestCase):
 
     def test_verify_superset_ignores_old_baseline_rows(self) -> None:
         # candidate 不含旧行时，verify_superset 不应报缺失（旧行已被过滤）
-        min_year = datetime.date.today().year - 4
+        min_year = datetime.date.today().year - 2
         baseline = [
-            {"型号": "老款", "上市时间": f"{min_year - 4}年10月", "数据来源": "CNMO", "品牌": "测试", "手机ID": "1"},
+            {"型号": "老款", "上市时间": f"{min_year - 2}年10月", "数据来源": "CNMO", "品牌": "测试", "手机ID": "1"},
         ]
         candidate = []
         try:

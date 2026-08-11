@@ -451,7 +451,7 @@
 
   function rowMatchesDefaultRowType(row) {
     var year = releaseYear(row);
-    return year !== null && year >= (new Date().getFullYear() - 4);
+    return year !== null && year >= (new Date().getFullYear() - 2);  // 三年内（2024+）
   }
 
   function parseCustomOrder(text) {

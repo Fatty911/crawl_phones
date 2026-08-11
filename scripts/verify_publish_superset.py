@@ -88,7 +88,7 @@ def release_year(row: dict[str, Any]) -> int | None:
 
 
 def is_below_min_publish_year(row: dict[str, Any]) -> bool:
-    # 五年内发布准入（与 merge_phones.MIN_PUBLISH_YEAR 动态对齐）：
+    # 三年内发布准入（与 merge_phones.MIN_PUBLISH_YEAR 动态对齐）：
     # 无年份行不在此过滤，保持与前端一致。
     year = release_year(row)
     return year is not None and year < MIN_PUBLISH_YEAR
