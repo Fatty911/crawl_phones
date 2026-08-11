@@ -1775,13 +1775,17 @@
 
   function loadData() {
     return Promise.all([
-      fetchJson("filter_conditions.json").catch(function () { return fallbackConfig; }),
-      fetchJson("data/manifest.json").catch(function () { return null; })
+      fetchJson("filter_conditions.json?t=" + Date.now()).catch(function () { return fallbackConfig; }),
+      fetchJson("data/manifest.json?t=" + Date.now()).catch(function () { return null; })
     ]).then(function (results) {
       state.config = Object.assign({}, fallbackConfig, results[0] || {});
       state.manifest = results[1];
       var latestPath = state.manifest && state.manifest.files && state.manifest.files.latestJson || "data/latest.json";
-      return fetchJson(latestPath).then(function (latest) {
+      // CDN 缓存绕过（2026-08-11：Pages _headers 未生效，latest.json 仍 max-age=600）：
+      // 用 manifest.updatedAt 作版本参数——数据更新则 URL 变化（CDN miss 拉新），
+      // 数据未变则 URL 相同（CDN 命中缓存——不重复下载 11MB）。
+      var ts = (state.manifest && state.manifest.updatedAt) ? encodeURIComponent(state.manifest.updatedAt) : String(Date.now());
+      return fetchJson(latestPath + "?t=" + ts).then(function (latest) {
         initializeRows(latest);
         var dateText = "最新数据";
         if (state.manifest) {
