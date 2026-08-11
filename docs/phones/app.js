@@ -983,11 +983,29 @@
     });
   }
 
+  var PHONE_TYPE_KEEP = [
+    "老人手机", "折叠屏手机", "游戏手机", "后置三摄", "后置双摄", "后置四摄",
+    "前置双摄", "前置三摄", "三防手机", "卫星通信", "无线充电", "光学防抖",
+    "2K屏幕", "AI手机", "Ai手机", "2.5D弧面屏", "自拍神器"
+  ];
+
+  function cleanPhoneType(value) {
+    if (!value) { return ""; }
+    return String(value).split(/[,，]/).map(function (t) { return t.trim(); })
+      .filter(function (t) {
+        return t && PHONE_TYPE_KEEP.indexOf(t) !== -1
+          && t.indexOf("查看所有") === -1 && t.indexOf("是什么") === -1;
+      })
+      .join(",");
+  }
+
   function appendCardMeta(container, row, fields) {
     fields.forEach(function (field) {
-      if (row[field] && row[field] !== "-") {
+      var value = row[field];
+      if (field === "手机类型") { value = cleanPhoneType(value); }
+      if (value && value !== "-") {
         var chip = document.createElement("span");
-        chip.textContent = field + ": " + row[field];
+        chip.textContent = field + ": " + value;
         container.appendChild(chip);
       }
     });
