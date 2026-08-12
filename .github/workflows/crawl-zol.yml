@@ -226,7 +226,11 @@ jobs:
         if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true'
         run: |
           python scripts/zol_search_models.py
-          python scripts/zol_search_supplement.py --models-file /tmp/zol_models.txt --max-per-model 3 --limit "${ZOL_SEARCH_LIMIT:-200}"
+          if [ -f /tmp/zol_models.txt ]; then
+            python scripts/zol_search_supplement.py --models-file /tmp/zol_models.txt --max-per-model 3 --limit "${ZOL_SEARCH_LIMIT:-200}"
+          else
+            echo "型号列表生成失败，跳过 ZOL 搜索补充"
+          fi
 
       - name: Upload crawl data (early, after step1)
         if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && github.event.inputs.debug_mode != 'true'

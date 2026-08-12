@@ -161,8 +161,8 @@ def is_future_release(row, today=None):
 
 
 # 发布准入最小年份：动态三年窗口 = 当前年份往前数 3 个年份（含当前年），
-# 与 Pages 前端 rowMatchesDefaultRowType 的 year >= (getFullYear()-4) 对齐。
-# 例：2026 年 -> 收录 2022-2026；2027 年 -> 收录 2023-2027。
+# 与 Pages 前端 rowMatchesDefaultRowType 的 year >= (getFullYear()-2) 对齐。
+# 例：2026 年 -> 收录 2024-2026；2027 年 -> 收录 2025-2027。
 # 数据/CSV/下载层同样只发布三年内型号，避免旧型号进入发布数据。
 MIN_PUBLISH_YEAR = date.today().year - 2  # 三年内发布准入（用户要求 2024+；老机型仅 CNMO 单源多源率低）
 

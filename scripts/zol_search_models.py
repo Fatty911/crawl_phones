@@ -8,6 +8,11 @@ import time
 import urllib.request
 
 URL = "https://phones.jiucai.eu.org/data/latest.json"
+
+# 极冷门/山寨品牌不搜（发布层已过滤，搜索浪费额度）
+SHANZHAI_BRANDS = {
+    "乐视", "金立", "水月雨", "Polestar", "蔚来", "Oukitel",
+}
 OUT = "/tmp/zol_models.txt"
 YEAR_RE = re.compile(r"(19|20)\d{2}")
 SPU_RE = re.compile(r"[（(].*?[)）]")
@@ -26,6 +31,9 @@ def main() -> int:
     for r in sorted(rows, key=lambda x: (len(str(x.get("数据来源") or "").split("+")))):
         t = str(r.get("型号") or "").strip()
         if not t:
+            continue
+        raw = " ".join(str(x) for x in (r.get("品牌"), t, r.get("name")) if x).lower()
+        if any(b.lower() in raw for b in SHANZHAI_BRANDS):
             continue
         m = YEAR_RE.search(str(r.get("上市时间") or ""))
         if m and int(m.group(0)) < 2024:
