@@ -219,18 +219,6 @@ jobs:
         if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true'
         run: |
           python scripts/zol_search_models.py
-          python scripts/pcl_search_supplement.py --models-file /tmp/zol_models.txt --max-per-model 3 --limit "${PCL_SEARCH_LIMIT:-200}"
-
-      - name: PCL 搜索补充（覆盖列表页未收录的主流型号）
-        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true'
-        run: |
-          python scripts/zol_search_models.py
-          python scripts/pcl_search_supplement.py --models-file /tmp/zol_models.txt --max-per-model 3 --limit "${PCL_SEARCH_LIMIT:-200}"
-
-      - name: PCL 搜索补充（覆盖列表页未收录的主流型号）
-        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true'
-        run: |
-          python scripts/zol_search_models.py
           if [ -f /tmp/zol_models.txt ]; then
             python scripts/pcl_search_supplement.py --models-file /tmp/zol_models.txt --max-per-model 3 --limit "${PCL_SEARCH_LIMIT:-200}"
           else
