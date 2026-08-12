@@ -222,7 +222,7 @@
 | Category | 主模型 | Fallback | 定位 |
 |---|---|---|---|
 | **ReviewGLM** | volcengine-coding/glm-5.2 | volcengine-agentplan/glm-5.2 | GLM-5.2 评审 |
-| **ReviewDeepseek** | deepseek/deepseek-v4-flash | volcengine-coding/deepseek-v4-flash | DeepSeek V4 Flash 评审 |
+| **ReviewDeepseek** | deepseek/deepseek-v4-pro | deepseek/deepseek-v4-flash, volcengine-coding/deepseek-v4-flash | DeepSeek V4 Pro 评审 |
 | **ReviewKimi** | volcengine-agentplan/kimi-k3 | volcengine-coding/kimi-k2.6 | Kimi K3 评审 |
 | **ReviewQwen** | alibaba-tokenplan/qwen3.8-max | — | Qwen 3.8 Max 评审（仅夜间 22:00-08:00） |
 | **ReviewMimo** | mimo-tokenplan/mimo-v2.5-pro | — | MiMo V2.5 评审 |
