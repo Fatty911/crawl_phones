@@ -187,77 +187,6 @@ setTimeout(() => {
         self.assertIn(str(len(rows)), metrics["dataMeta"])
 
 
-class CleanPhoneTypeTests(unittest.TestCase):
-    """手机类型白名单过滤：营销默认词滤掉，有区分度标签保留。"""
-
-    EXTRACT_NODE = r"""const fs = require("fs");
-const code = fs.readFileSync("docs/phones/app.js", "utf-8");
-function extractFunction(source, name) {
-  const marker = "function " + name + "(";
-  const start = source.indexOf(marker);
-  if (start === -1) throw new Error("function not found: " + name);
-  const braceIdx = source.indexOf("{", start);
-  let depth = 0, i = braceIdx;
-  for (; i < source.length; i++) {
-    if (source[i] === "{") depth++;
-    else if (source[i] === "}") { depth--; if (depth === 0) break; }
-  }
-  return source.slice(start, i + 1);
-}
-let harness = extractFunction(code, "cleanPhoneType") + "\n";
-const ptStart = code.indexOf("var PHONE_TYPE_KEEP");
-harness += code.slice(ptStart, code.indexOf("];", ptStart) + 2) + "\n";
-harness += "globalThis.__t = { cleanPhoneType };";
-const vm = require("vm");
-const sandbox = {};
-sandbox.globalThis = sandbox;
-vm.createContext(sandbox);
-vm.runInContext(harness, sandbox);
-const t = sandbox.globalThis.__t;
-const cases = {};
-cases.marketing = t.cleanPhoneType("5G手机,智能手机,快充手机,大容量电池,大屏手机,指纹识别,面部识别,支持NFC");
-cases.keep = t.cleanPhoneType("老人手机,折叠屏手机,游戏手机,后置三摄,无线充电,Ai手机");
-cases.anchored = t.cleanPhoneType("拍照手机,查看所有拍照手机vivo,智能手机,是什么");
-cases.empty = t.cleanPhoneType("");
-cases.none = t.cleanPhoneType("5G手机,快充手机");
-cases.mixed = t.cleanPhoneType("5G手机,折叠屏手机,快充手机,卫星通信");
-process.stdout.write(JSON.stringify(cases));
-"""
-
-    def _run(self) -> dict:
-        result = subprocess.run(
-            ["node", "-e", self.EXTRACT_NODE],
-            cwd=ROOT,
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        return json.loads(result.stdout)
-
-    def test_marketing_default_tags_dropped(self) -> None:
-        cases = self._run()
-        self.assertEqual(cases["marketing"], "")
-        self.assertEqual(cases["none"], "")
-
-    def test_distinctive_tags_kept(self) -> None:
-        cases = self._run()
-        self.assertEqual(cases["keep"], "老人手机,折叠屏手机,游戏手机,后置三摄,无线充电,Ai手机")
-
-    def test_anchor_text_excluded(self) -> None:
-        cases = self._run()
-        # 锚文本（查看所有…/…是什么）一律剔除，且营销词也剔除
-        self.assertEqual(cases["anchored"], "")
-
-    def test_empty_value(self) -> None:
-        cases = self._run()
-        self.assertEqual(cases["empty"], "")
-
-    def test_mixed_value_keeps_only_whitelist(self) -> None:
-        cases = self._run()
-        self.assertEqual(cases["mixed"], "折叠屏手机,卫星通信")
-
-
 class CnmoCrawlerTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -1538,15 +1467,12 @@ function extractFunction(source, name) {
 }
 const helpers = ["normalizeText", "atomicSources", "sourceCount", "isSingleSource",
   "releaseYear", "rowMatchesDefaultRowType", "parseCustomOrder", "customOrderIndex",
-  "firstNumber", "compareRowsByLevel", "activeSortLevels", "sortRows",
-  "cleanPhoneType"];
+  "firstNumber", "compareRowsByLevel", "activeSortLevels", "sortRows"];
 let harness = "";
 helpers.forEach(function (h) { harness += extractFunction(code, h) + "\n"; });
 const scfStart = code.indexOf("var SOURCE_COUNT_FIELD");
 harness += code.slice(scfStart, code.indexOf(";", scfStart) + 1) + "\n";
-const ptStart = code.indexOf("var PHONE_TYPE_KEEP");
-harness += code.slice(ptStart, code.indexOf("];", ptStart) + 2) + "\n";
-harness += "globalThis.__t = { atomicSources, sourceCount, compareRowsByLevel, sortRows, SOURCE_COUNT_FIELD, cleanPhoneType };";
+harness += "globalThis.__t = { atomicSources, sourceCount, compareRowsByLevel, sortRows, SOURCE_COUNT_FIELD };";
 const sandbox = { globalThis: {}, console, JSON, Math, Set, Array, Object, String, Number, RegExp, parseInt, parseFloat, isNaN, isFinite };
 sandbox.globalThis = sandbox;
 sandbox.state = { sortLevels: [], sortField: "" };

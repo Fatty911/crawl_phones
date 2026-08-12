@@ -983,29 +983,11 @@
     });
   }
 
-  var PHONE_TYPE_KEEP = [
-    "老人手机", "折叠屏手机", "游戏手机", "后置三摄", "后置双摄", "后置四摄",
-    "前置双摄", "前置三摄", "三防手机", "卫星通信", "无线充电", "光学防抖",
-    "2K屏幕", "AI手机", "Ai手机", "2.5D弧面屏", "自拍神器"
-  ];
-
-  function cleanPhoneType(value) {
-    if (!value) { return ""; }
-    return String(value).split(/[,，]/).map(function (t) { return t.trim(); })
-      .filter(function (t) {
-        return t && PHONE_TYPE_KEEP.indexOf(t) !== -1
-          && t.indexOf("查看所有") === -1 && t.indexOf("是什么") === -1;
-      })
-      .join(",");
-  }
-
   function appendCardMeta(container, row, fields) {
     fields.forEach(function (field) {
-      var value = row[field];
-      if (field === "手机类型") { value = cleanPhoneType(value); }
-      if (value && value !== "-") {
+      if (row[field] && row[field] !== "-") {
         var chip = document.createElement("span");
-        chip.textContent = field + ": " + value;
+        chip.textContent = field + ": " + row[field];
         container.appendChild(chip);
       }
     });
@@ -1058,8 +1040,8 @@
       meta.className = "card-meta";
       var metaRow = modelRow || group.representative;
       var metaFields = modelRow
-        ? ["上市时间", "手机类型", "处理器", "电池"]
-        : ["品牌", "手机类型", "价格", "处理器", "电池"];
+        ? ["上市时间", "处理器", "电池"]
+        : ["品牌", "价格", "处理器", "电池"];
       appendCardMeta(meta, metaRow, metaFields);
       card.appendChild(meta);
 
@@ -1074,7 +1056,7 @@
           modelTitle.textContent = row["型号"] || "未命名型号";
           var modelMeta = document.createElement("div");
           modelMeta.className = "card-meta";
-          appendCardMeta(modelMeta, row, ["上市时间", "手机类型", "价格", "处理器", "电池"]);
+          appendCardMeta(modelMeta, row, ["上市时间", "价格", "处理器", "电池"]);
           model.appendChild(modelTitle);
           model.appendChild(modelMeta);
           details.appendChild(model);
