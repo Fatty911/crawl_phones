@@ -171,6 +171,7 @@ jobs:
 
       - name: Run PConline crawler
         id: step1
+        timeout-minutes: 20
         if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true'
         run: |
           if [ "${STEP1_SKIP:-false}" = "true" ]; then
