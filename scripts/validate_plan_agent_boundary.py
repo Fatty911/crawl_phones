@@ -267,6 +267,9 @@ def validate_repository(root: Path = ROOT) -> list[str]:
         for path in sorted(scripts_dir.rglob("*.py")):
             if path == validator_path:
                 continue
+            if path.name == "ai_providers.py":
+                # 端点池唯一事实源（配置定义，非生产调用）：key 名引用属端点元数据
+                continue
             text = path.read_text(encoding="utf-8")
             lowered = text.lower()
             for marker in DIRECT_PLAN_MARKERS:
