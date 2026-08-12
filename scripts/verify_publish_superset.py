@@ -11,13 +11,13 @@ import unicodedata
 from pathlib import Path
 from typing import Any
 
-from merge_phones import MIN_PUBLISH_YEAR
+from merge_phones import MIN_PUBLISH_YEAR, SHANZHAI_BRANDS
 
 
 CNMO_SINGLE_SOURCE_ALLOWED_BRANDS = {
     "苹果", "三星", "华为", "荣耀", "OPPO", "vivo", "小米", "红米", "iQOO",
     "一加", "真我", "魅族", "中兴", "努比亚", "联想", "摩托罗拉",
-    "乐视", "金立", "蔚来", "鼎桥", "魅蓝", "酷派", "海信", "WIKO",
+    "鼎桥", "魅蓝", "酷派", "海信", "WIKO",
     "麦芒", "华硕", "黑鲨", "NZONE", "Hi nova", "天翼铂顿",
 }
 
@@ -92,6 +92,14 @@ def is_below_min_publish_year(row: dict[str, Any]) -> bool:
     # 无年份行不在此过滤，保持与前端一致。
     year = release_year(row)
     return year is not None and year < MIN_PUBLISH_YEAR
+
+
+def is_shanzhai_brand(row: dict[str, Any]) -> bool:
+    """极冷门/山寨品牌：任何来源都不在 Pages 保留（品牌+型号原文匹配）。"""
+    raw = " ".join(str(x) for x in (row.get("品牌"), row.get("型号"), row.get("name")) if x).lower()
+    if not raw:
+        return False
+    return any(b.lower() in raw for b in SHANZHAI_BRANDS)
 
 
 def is_out_of_scope_cnmo_single_source(row: dict[str, Any]) -> bool:
@@ -183,6 +191,7 @@ def verify_superset(
         row for row in baseline
         if not is_out_of_scope_cnmo_single_source(row)
         and not is_below_min_publish_year(row)
+        and not is_shanzhai_brand(row)
     ]
     baseline_ids = set()
     for row in scoped_baseline:

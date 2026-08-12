@@ -187,6 +187,31 @@ setTimeout(() => {
         self.assertIn(str(len(rows)), metrics["dataMeta"])
 
 
+class ShanzhaiBrandTests(unittest.TestCase):
+    """极冷门/山寨品牌：任何来源都不在 Pages 保留。"""
+
+    def test_guard_publish_rows_drops_shanzhai_brands(self) -> None:
+        merge_mod = load_script_module("merge_phones", ROOT / "scripts" / "merge_phones.py")
+        rows = [
+            {"型号": "乐视S3 Pro", "品牌": "乐视", "上市时间": "2025年", "价格": "999"},
+            {"型号": "金立X18promax(4GB/64GB)", "品牌": "金立", "上市时间": "2025年", "价格": "899"},
+            {"型号": "Oukitel WP63", "品牌": "传音", "上市时间": "2025年", "价格": "899"},
+            {"型号": "vivo X200", "品牌": "vivo", "上市时间": "2025年", "价格": "3999"},
+        ]
+        out = merge_mod.guard_publish_rows(rows)
+        self.assertEqual([r["型号"] for r in out], ["vivo X200"])
+
+    def test_shanzhai_brands_defined(self) -> None:
+        merge_mod = load_script_module("merge_phones", ROOT / "scripts" / "merge_phones.py")
+        self.assertTrue({"乐视", "金立", "蔚来", "Oukitel"} <= merge_mod.SHANZHAI_BRANDS)
+
+    def test_verify_scoped_baseline_excludes_shanzhai(self) -> None:
+        verify_mod = load_script_module("verify_publish_superset", ROOT / "scripts" / "verify_publish_superset.py")
+        self.assertTrue(verify_mod.is_shanzhai_brand({"品牌": "乐视", "型号": "乐视S3 Pro"}))
+        self.assertTrue(verify_mod.is_shanzhai_brand({"品牌": "传音", "型号": "Oukitel WP63"}))
+        self.assertFalse(verify_mod.is_shanzhai_brand({"品牌": "vivo", "型号": "vivo X200"}))
+
+
 class CnmoCrawlerTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:

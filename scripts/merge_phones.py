@@ -166,6 +166,11 @@ def is_future_release(row, today=None):
 # 数据/CSV/下载层同样只发布三年内型号，避免旧型号进入发布数据。
 MIN_PUBLISH_YEAR = date.today().year - 2  # 三年内发布准入（用户要求 2024+；老机型仅 CNMO 单源多源率低）
 
+# 极冷门/山寨品牌：不在 Pages 保留（任何来源）
+SHANZHAI_BRANDS = {
+    "乐视", "金立", "水月雨", "Polestar", "蔚来", "Oukitel",
+}
+
 
 def _release_year(row):
     for key in ['上市时间', '国内发布时间', '发布时间', '发布日期', '上市日期']:
@@ -186,6 +191,11 @@ def guard_publish_rows(rows, source=None, today=None):
             continue
         year = _release_year(row)
         if year is not None and year < MIN_PUBLISH_YEAR:
+            continue
+        brand_raw = ' '.join(str(x) for x in (
+            row.get('品牌'), row.get('型号'), row.get('name')) if x).strip()
+        brand_l = brand_raw.lower()
+        if any(b.lower() in brand_l for b in SHANZHAI_BRANDS):
             continue
         clean = dict(row)
         if source == 'CNMO':

@@ -19,7 +19,7 @@ from merge_phones import (
     normalize_brand,
     _strip_residue,
 )
-from verify_publish_superset import identity_key, identity_keys, is_below_min_publish_year, load_rows, verify_superset
+from verify_publish_superset import identity_key, identity_keys, is_below_min_publish_year, is_shanzhai_brand, load_rows, verify_superset
 
 
 _VARIANT_BRACKET_RE = re.compile(r"[（(]\s*\d+\s*(?:[+＋]\s*\d+\s*)*(?:[gGtT][bB]?)")
@@ -147,7 +147,10 @@ def preserve_baseline(
     _source_count = source_count
 
     # 五年内准入：旧年份行（<2022）不再向后保留（与 merge 的 MIN_PUBLISH_YEAR 对齐）
-    baseline = [row for row in baseline if not is_below_min_publish_year(row)]
+    baseline = [
+        row for row in baseline
+        if not is_below_min_publish_year(row) and not is_shanzhai_brand(row)
+    ]
 
     ranked_baseline = sorted(
         enumerate(baseline),
