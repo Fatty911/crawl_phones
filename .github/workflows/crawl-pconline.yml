@@ -217,6 +217,7 @@ jobs:
           echo "failed=false" >> "$GITHUB_OUTPUT"
 
       - name: PCL 搜索补充（覆盖列表页未收录的主流型号）
+        id: supplement
         if: always()
         run: |
           pip install -q requests beautifulsoup4 lxml PyYAML
@@ -226,6 +227,7 @@ jobs:
           else
             echo "型号列表生成失败，跳过 PCL 搜索补充"
           fi
+          echo "done=true" >> "$GITHUB_OUTPUT"
 
       - name: Upload crawl data (early, after step1)
         id: early_cache
@@ -249,11 +251,11 @@ jobs:
           GIT_SYNC_BRANCH="$GITHUB_REF_NAME" bash scripts/git_sync_progress.sh "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
 
       - name: Parse and merge data
-        if: always() && steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outcome != 'skipped'
+        if: always() && ((steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outcome != 'skipped') || steps.supplement.outputs.done == 'true')
         run: python scripts/crawl_pconline.py --step 2
 
       - name: Validate generated PConline data
-        if: always() && steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outcome != 'skipped'
+        if: always() && ((steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outcome != 'skipped') || steps.supplement.outputs.done == 'true')
         id: validate_data
         run: |
           TODAY=$(date +%Y%m%d)
@@ -283,7 +285,7 @@ jobs:
           fi
 
       - name: Generate summary
-        if: always() && steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outcome != 'skipped'
+        if: always() && ((steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outcome != 'skipped') || steps.supplement.outputs.done == 'true')
         run: python scripts/crawl_pconline.py --step 3
 
       - name: Mark crawl complete and commit
@@ -303,7 +305,7 @@ jobs:
           GIT_SYNC_BRANCH="$GITHUB_REF_NAME" bash scripts/git_sync_progress.sh "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
 
       - name: Upload crawl data
-        if: always() && steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outcome != 'skipped'
+        if: always() && ((steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outcome != 'skipped') || steps.supplement.outputs.done == 'true')
         id: upload_data
         uses: actions/upload-artifact@v4
         with:
@@ -315,7 +317,7 @@ jobs:
           if-no-files-found: error
 
       - name: 检测新增数据并触发合并分析
-        if: always() && steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outcome != 'skipped'
+        if: always() && ((steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outcome != 'skipped') || steps.supplement.outputs.done == 'true')
         id: check_new_data
         run: |
           echo "pconline_data_file=${{ steps.validate_data.outputs.pconline_data_file }}" >> "$GITHUB_OUTPUT"
