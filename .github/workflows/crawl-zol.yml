@@ -226,6 +226,7 @@ jobs:
       - name: ZOL 搜索补充（绕过 checking 墙，按型号搜站内详情）
         if: always() && steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true'
         run: |
+          pip install -q requests beautifulsoup4 lxml PyYAML
           python scripts/zol_search_models.py
           if [ -f /tmp/zol_models.txt ]; then
             python scripts/zol_search_supplement.py --models-file /tmp/zol_models.txt --max-per-model 5 --limit "${ZOL_SEARCH_LIMIT:-200}"

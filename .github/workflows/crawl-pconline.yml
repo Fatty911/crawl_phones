@@ -219,6 +219,7 @@ jobs:
       - name: PCL 搜索补充（覆盖列表页未收录的主流型号）
         if: always()
         run: |
+          pip install -q requests beautifulsoup4 lxml PyYAML
           python scripts/zol_search_models.py
           if [ -f /tmp/zol_models.txt ]; then
             python scripts/pcl_search_supplement.py --models-file /tmp/zol_models.txt --max-per-model 5 --limit "${PCL_SEARCH_LIMIT:-200}"
