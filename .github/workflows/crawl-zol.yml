@@ -224,7 +224,7 @@ jobs:
           echo "failed=false" >> "$GITHUB_OUTPUT"
 
       - name: ZOL 搜索补充（绕过 checking 墙，按型号搜站内详情）
-        if: steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true'
+        if: (steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true') || steps.step1.outcome == 'failure'
         run: |
           python scripts/zol_search_models.py
           if [ -f /tmp/zol_models.txt ]; then
