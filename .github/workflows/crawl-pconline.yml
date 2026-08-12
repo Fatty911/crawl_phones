@@ -217,7 +217,7 @@ jobs:
           echo "failed=false" >> "$GITHUB_OUTPUT"
 
       - name: PCL 搜索补充（覆盖列表页未收录的主流型号）
-        if: always() && steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true'
+        if: always()
         run: |
           python scripts/zol_search_models.py
           if [ -f /tmp/zol_models.txt ]; then
@@ -286,7 +286,7 @@ jobs:
         run: python scripts/crawl_pconline.py --step 3
 
       - name: Mark crawl complete and commit
-        if: always() && steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outcome != 'skipped' && github.event.inputs.debug_mode != 'true'
+        if: always() && steps.period.outputs.skip != 'true' && steps.window.outputs.skip != 'true' && steps.step1.outcome == 'success' && github.event.inputs.debug_mode != 'true'
         run: |
           # 仅当扫描完成（scan_complete=true）才标记半月周期；有待重试时数据照常产出但不打 .done
           if python3 -c "import json,sys; p=json.load(open('crawl_state/pconline/progress.json')); sys.exit(0 if p.get('scan_complete') else 1)"; then
