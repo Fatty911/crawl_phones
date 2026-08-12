@@ -111,13 +111,23 @@ def is_out_of_scope_cnmo_single_source(row: dict[str, Any]) -> bool:
 
 
 def spu_config_key(row: dict[str, Any]) -> str:
-    """SPU+配置 级身份键：model_key(品牌|型号剥离变体)|内存数字|存储数字。"""
+    """SPU+配置 级身份键：model_key(品牌|型号剥离变体)|内存数字|存储数字。
+
+    型号变体括号（如 iQOO 15(12GB/256GB)）的数字优先于 内存/存储 字段——
+    字段错位（型号 12GB 但内存字段 16GB）时仍能匹配同一配置。
+    """
     model = str(row.get("型号") or row.get("name") or "").strip().lower()
     model = re.sub(r"\s+", "", model)
-    model = re.sub(r"[（(]\s*\d+\s*[gG][bB][^）)]*[）)]", "", model)
-    mem = "|".join(sorted(set(re.findall(r"(\d+)\s*[GT]B", str(row.get("内存") or ""), re.IGNORECASE))))
-    sto = "|".join(sorted(set(re.findall(r"(\d+)\s*[GT]B", str(row.get("存储") or ""), re.IGNORECASE))))
-    return f"spu:{model}|{mem}|{sto}"
+    vm = re.search(r"[（(]\s*(\d+)\s*(?:[gGtT][bB])?\s*(?:[+＋/]\s*(\d+)\s*[gGtT][bB])?[^）)]*[）)]", model)
+    if vm:
+        mem = vm.group(1)
+        sto = vm.group(2) or ""
+        model_clean = model[: vm.start()] + model[vm.end():]
+    else:
+        model_clean = model
+        mem = "|".join(sorted(set(re.findall(r"(\d+)\s*[GT]B", str(row.get("内存") or ""), re.IGNORECASE))))
+        sto = "|".join(sorted(set(re.findall(r"(\d+)\s*[GT]B", str(row.get("存储") or ""), re.IGNORECASE))))
+    return f"spu:{model_clean}|{mem}|{sto}"
 
 
 _VARIANT_BRACKET_RE = re.compile(r"[（(]\s*\d+\s*(?:[+＋]\s*\d+\s*)*(?:[gGtT][bB]?)")

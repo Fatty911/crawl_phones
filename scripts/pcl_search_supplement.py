@@ -114,7 +114,7 @@ def crawl_one(session, brand: str, phone_id: str) -> bool:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--models-file", required=True)
-    parser.add_argument("--max-per-model", type=int, default=3)
+    parser.add_argument("--max-per-model", type=int, default=5)
     parser.add_argument("--limit", type=int, default=0)
     args = parser.parse_args()
 

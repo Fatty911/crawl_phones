@@ -212,6 +212,31 @@ class ShanzhaiBrandTests(unittest.TestCase):
         self.assertFalse(verify_mod.is_shanzhai_brand({"品牌": "vivo", "型号": "vivo X200"}))
 
 
+class SpuVariantBracketTests(unittest.TestCase):
+    """spu_config_key：型号变体括号数字优先于 内存/存储 字段（字段错位容错）。"""
+
+    def _key(self, row):
+        verify_mod = load_script_module("verify_publish_superset", ROOT / "scripts" / "verify_publish_superset.py")
+        return verify_mod.spu_config_key(row)
+
+    def test_variant_bracket_wins_over_field(self) -> None:
+        # 型号 12GB/256GB 但内存字段 16GB（旧数据错位）——仍按型号括号匹配
+        key = self._key({"型号": "iQOO 15(12GB/256GB)", "内存": "16GB", "存储": "256GB"})
+        self.assertEqual(key, "spu:iqoo15|12|256")
+
+    def test_plus_bracket_parsed(self) -> None:
+        key = self._key({"型号": "一加Ace 6T(12+512GB)", "内存": "12GB", "存储": "512GB"})
+        self.assertEqual(key, "spu:一加ace6t|12|512")
+
+    def test_no_bracket_falls_back_to_fields(self) -> None:
+        key = self._key({"型号": "vivo X200", "内存": "12GB", "存储": "256GB"})
+        self.assertEqual(key, "spu:vivox200|12|256")
+
+    def test_fullwidth_bracket(self) -> None:
+        key = self._key({"型号": "红米K80（16GB+512GB）", "内存": "16GB", "存储": "512GB"})
+        self.assertEqual(key, "spu:红米k80|16|512")
+
+
 class CnmoCrawlerTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:

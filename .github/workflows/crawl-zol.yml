@@ -227,7 +227,7 @@ jobs:
         run: |
           python scripts/zol_search_models.py
           if [ -f /tmp/zol_models.txt ]; then
-            python scripts/zol_search_supplement.py --models-file /tmp/zol_models.txt --max-per-model 3 --limit "${ZOL_SEARCH_LIMIT:-200}"
+            python scripts/zol_search_supplement.py --models-file /tmp/zol_models.txt --max-per-model 5 --limit "${ZOL_SEARCH_LIMIT:-200}"
           else
             echo "型号列表生成失败，跳过 ZOL 搜索补充"
           fi
