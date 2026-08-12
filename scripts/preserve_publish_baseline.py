@@ -141,6 +141,29 @@ def preserve_baseline(
                 related_values.add(bid[3:])
                 crow["关联手机ID"] = "|".join(sorted(related_values))
 
+    # pre-pass：主 ID 匹配的基线行，全部关联 ID 合并进 candidate 行关联手机ID。
+    # 基线行因主 ID 匹配被判定为"已覆盖"不保留时，关联 ID 历史不能丢，
+    # 否则 verify_superset 报"候选缺少基线身份"（相关 ID 历史断裂）。
+    baseline_by_primary: dict[str, dict[str, Any]] = {}
+    for brow in baseline:
+        bkeys = identity_keys(brow)
+        if bkeys and bkeys[0].startswith("id:"):
+            baseline_by_primary[bkeys[0]] = brow
+    for crow in candidate:
+        ckeys = identity_keys(crow)
+        if not ckeys or not ckeys[0].startswith("id:"):
+            continue
+        brow = baseline_by_primary.get(ckeys[0])
+        if not brow:
+            continue
+        bkeys = identity_keys(brow)
+        related = str(crow.get("关联手机ID") or "")
+        related_values = {v.strip() for v in re.split(r"[|,，\s]+", related) if v.strip()}
+        for key in bkeys:
+            if key.startswith("id:"):
+                related_values.add(key[3:])
+        crow["关联手机ID"] = "|".join(sorted(related_values))
+
     def source_count(row: dict[str, Any]) -> int:
         return len([part for part in str(row.get("数据来源", "")).split("+") if part.strip()])
 
@@ -238,9 +261,9 @@ def main() -> int:
         baseline = load_rows(args.baseline)
         candidate = load_rows(args.candidate_json)
         merged, missing = preserve_baseline(baseline, candidate)
-        if missing:
-            write_json(args.candidate_json, merged)
-            write_csv(args.candidate_csv, merged)
+        # 始终回写：即使没有缺失行，pre-pass 也可能合并了基线关联 ID 到候选行
+        write_json(args.candidate_json, merged)
+        write_csv(args.candidate_csv, merged)
         verify_superset(baseline, merged)
     except (OSError, ValueError) as exc:
         print(f"保留线上基线失败: {exc}", file=sys.stderr)
