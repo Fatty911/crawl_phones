@@ -139,6 +139,89 @@ class PreservePublishBaselineTests(unittest.TestCase):
         self.assertIn("Model 2", csv_text)
         self.assertIn("restored=1", result.stdout)
 
+    def test_primary_id_match_merges_all_baseline_related_ids(self) -> None:
+        """主 ID 匹配时，基线行全部关联 ID 合并进候选行（verify 不丢历史）。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            baseline = tmp_path / "baseline.json"
+            candidate = tmp_path / "candidate.json"
+            candidate_csv = tmp_path / "candidate.csv"
+            baseline.write_text(
+                json.dumps([{"手机ID": "100", "关联手机ID": "100|200|300",
+                             "品牌": "Test", "型号": "Model A(8+256GB)",
+                             "数据来源": "ZOL+CNMO"}]),
+                encoding="utf-8",
+            )
+            # Candidate has same primary ID but no related IDs
+            candidate.write_text(
+                json.dumps([{"手机ID": "100",
+                             "品牌": "Test", "型号": "Model A(8+256GB)",
+                             "数据来源": "ZOL+CNMO"}]),
+                encoding="utf-8",
+            )
+            candidate_csv.write_text("手机ID\n100\n", encoding="utf-8")
+
+            result = subprocess.run(
+                [sys.executable, str(PRESERVE_SCRIPT), str(baseline), str(candidate), str(candidate_csv)],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+
+            merged = json.loads(candidate.read_text(encoding="utf-8"))
+
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        # Baseline row is "covered" by primary ID match → not restored as missing row
+        self.assertIn("restored=0", result.stdout)
+        # But all baseline related IDs should be merged into candidate's 关联手机ID
+        related = merged[0].get("关联手机ID", "")
+        self.assertIn("200", related)
+        self.assertIn("300", related)
+
+    def test_same_primary_id_multiple_baseline_rows_merge_all_related_ids(self) -> None:
+        """同主 ID 多条基线行：全部关联 ID 都应合并进候选行（不覆盖丢失）。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            baseline = tmp_path / "baseline.json"
+            candidate = tmp_path / "candidate.json"
+            candidate_csv = tmp_path / "candidate.csv"
+            baseline.write_text(
+                json.dumps([
+                    {"手机ID": "100", "关联手机ID": "100|200",
+                     "品牌": "Test", "型号": "Model A(8+256GB)",
+                     "数据来源": "ZOL"},
+                    {"手机ID": "100", "关联手机ID": "100|300",
+                     "品牌": "Test", "型号": "Model A(8+256GB)",
+                     "数据来源": "CNMO"},
+                ]),
+                encoding="utf-8",
+            )
+            candidate.write_text(
+                json.dumps([{"手机ID": "100",
+                             "品牌": "Test", "型号": "Model A(8+256GB)",
+                             "数据来源": "ZOL+CNMO"}]),
+                encoding="utf-8",
+            )
+            candidate_csv.write_text("手机ID\n100\n", encoding="utf-8")
+
+            result = subprocess.run(
+                [sys.executable, str(PRESERVE_SCRIPT), str(baseline), str(candidate), str(candidate_csv)],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+
+            merged = json.loads(candidate.read_text(encoding="utf-8"))
+
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        related = merged[0].get("关联手机ID", "")
+        # Both 200 (from first baseline row) and 300 (from second) must be present
+        self.assertIn("200", related)
+        self.assertIn("300", related)
+        self.assertIn("100", related)
+
     def test_cli_normalizes_audited_baseline_headers_and_preserves_conflicts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)

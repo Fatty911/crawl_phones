@@ -144,24 +144,24 @@ def preserve_baseline(
     # pre-pass：主 ID 匹配的基线行，全部关联 ID 合并进 candidate 行关联手机ID。
     # 基线行因主 ID 匹配被判定为"已覆盖"不保留时，关联 ID 历史不能丢，
     # 否则 verify_superset 报"候选缺少基线身份"（相关 ID 历史断裂）。
-    baseline_by_primary: dict[str, dict[str, Any]] = {}
+    baseline_by_primary: dict[str, list[dict[str, Any]]] = {}
     for brow in baseline:
         bkeys = identity_keys(brow)
         if bkeys and bkeys[0].startswith("id:"):
-            baseline_by_primary[bkeys[0]] = brow
+            baseline_by_primary.setdefault(bkeys[0], []).append(brow)
     for crow in candidate:
         ckeys = identity_keys(crow)
         if not ckeys or not ckeys[0].startswith("id:"):
             continue
-        brow = baseline_by_primary.get(ckeys[0])
-        if not brow:
+        matching_baselines = baseline_by_primary.get(ckeys[0], [])
+        if not matching_baselines:
             continue
-        bkeys = identity_keys(brow)
         related = str(crow.get("关联手机ID") or "")
         related_values = {v.strip() for v in re.split(r"[|,，\s]+", related) if v.strip()}
-        for key in bkeys:
-            if key.startswith("id:"):
-                related_values.add(key[3:])
+        for brow in matching_baselines:
+            for key in identity_keys(brow):
+                if key.startswith("id:"):
+                    related_values.add(key[3:])
         crow["关联手机ID"] = "|".join(sorted(related_values))
 
     def source_count(row: dict[str, Any]) -> int:
