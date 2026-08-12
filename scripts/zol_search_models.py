@@ -15,6 +15,7 @@ SHANZHAI_BRANDS = {
 }
 OUT = "/tmp/zol_models.txt"
 YEAR_RE = re.compile(r"(19|20)\d{2}")
+from merge_phones import MIN_PUBLISH_YEAR
 SPU_RE = re.compile(r"[（(].*?[)）]")
 
 
@@ -24,6 +25,8 @@ def main() -> int:
         rows = json.load(urllib.request.urlopen(req, timeout=120))
     except Exception as e:
         print(f"下载线上数据失败: {e}", file=sys.stderr)
+        # 失败时仍生成空文件（workflow 守卫 + 下游脚本双保险，避免 FileNotFoundError）
+        open(OUT, "w", encoding="utf-8").close()
         return 0
     seen = set()
     spus = []
@@ -36,7 +39,7 @@ def main() -> int:
         if any(b.lower() in raw for b in SHANZHAI_BRANDS):
             continue
         m = YEAR_RE.search(str(r.get("上市时间") or ""))
-        if m and int(m.group(0)) < 2024:
+        if m and int(m.group(0)) < MIN_PUBLISH_YEAR:
             continue
         spu = SPU_RE.sub("", t).strip()
         if spu and spu not in seen:

@@ -94,12 +94,17 @@ def fast_crawl_param(session, phone_id: str, category_id: str = "2140") -> Optio
 def search_ids(session, model: str, max_ids: int) -> list:
     """搜索型号，返回详情 ID 列表（按搜索页出现顺序去重）。"""
     try:
-        time.sleep(SEARCH_DELAY)
-        resp = session.get(SEARCH_URL, params={"kword": model}, timeout=30)
-        resp.encoding = resp.apparent_encoding or "gbk"
-        if resp.status_code != 200:
-            print(f"  搜索失败 {model}: HTTP {resp.status_code}", flush=True)
-            return []
+        for attempt in range(4):
+            time.sleep(SEARCH_DELAY)
+            resp = session.get(SEARCH_URL, params={"kword": model}, timeout=30)
+            resp.encoding = resp.apparent_encoding or "gbk"
+            if resp.status_code == 503 and attempt < 3:
+                time.sleep(15 * (attempt + 1))
+                continue
+            if resp.status_code != 200:
+                print(f"  搜索失败 {model}: HTTP {resp.status_code}", flush=True)
+                return []
+            break
         ids = []
         for m in ID_RE.finditer(resp.text):
             pid = m.group(1)

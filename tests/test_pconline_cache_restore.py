@@ -355,11 +355,11 @@ class PconlineCacheRestoreTests(unittest.TestCase):
         ):
             step = next(item for item in steps if item.get("name") == step_name)
             self.assertIn(
-                "steps.step1.outputs.failed != 'true'", str(step.get("if", ""))
+                "steps.step1.outcome != 'skipped'", str(step.get("if", ""))
             )
 
         dispatch_block = text.split("- name: 触发合并分析工作流", 1)[1]
-        self.assertIn("steps.step1.outputs.failed != 'true'", dispatch_block)
+        self.assertIn("steps.upload_data.outcome == 'success'", dispatch_block)
 
         # 安全契约：.done marker 只在扫描完成（scan_complete）时打，exit 10 未完成不误标
         mark_step = next(item for item in steps if item.get("name") == "Mark crawl complete and commit")

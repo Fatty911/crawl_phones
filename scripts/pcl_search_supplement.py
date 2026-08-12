@@ -69,12 +69,17 @@ def fast_crawl_detail(session, phone_id: str, brand: str = "") -> Optional[dict]
 def search_models(session, model: str, max_ids: int) -> list:
     """搜索型号，返回 (brand, id) 列表（去重，按出现顺序）。"""
     try:
-        time.sleep(SEARCH_DELAY)
-        resp = session.get(SEARCH_URL, params={"q": model}, timeout=REQUEST_TIMEOUT,
-                           headers={"Referer": "http://ks.pconline.com.cn/"})
-        resp.encoding = "gbk"
-        if resp.status_code != 200:
-            return []
+        for attempt in range(4):
+            time.sleep(SEARCH_DELAY)
+            resp = session.get(SEARCH_URL, params={"q": model}, timeout=REQUEST_TIMEOUT,
+                               headers={"Referer": "http://ks.pconline.com.cn/"})
+            resp.encoding = "gbk"
+            if resp.status_code == 503 and attempt < 3:
+                time.sleep(15 * (attempt + 1))  # 限流退避
+                continue
+            if resp.status_code != 200:
+                return []
+            break
         seen = set()
         out = []
         for m in RESULT_RE.finditer(resp.text):
