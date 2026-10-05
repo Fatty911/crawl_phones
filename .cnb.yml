@@ -1,0 +1,432 @@
+# crawl_phones — CNB AI 自修复工作流（分阶段+缓存+有界重试）
+# 借鉴旧工作流：分阶段流水线、成功步骤缓存、从报错步骤恢复、有界重试、受保护文件备份
+# 模型: deepseek-v4-flash (免费 CodeBuddy V4.1 Flash)
+
+main:
+  push:
+    - docker:
+        image: python:3.11
+      env:
+        GITLAB_TOKEN: ${GITLAB_TOKEN}
+      imports:
+        - https://cnb.cool/xuerui911-mirror/crawl-secrets/-/blob/main/env.yml
+      stages:
+        - name: install-deps
+          script: pip install -r requirements.txt 2>/dev/null || true
+        - name: 推送代码到GitLab
+          script: |
+            if [ -z "$GITLAB_TOKEN" ]; then
+              echo "未配置 GITLAB_TOKEN：跳过 GitLab 镜像同步（多端镜像按仓配置，非必需）"
+            else
+              printf '#!/bin/sh\ncase "$1" in *sername*) echo oauth2;; *) printf "%%s" "$GITLAB_TOKEN";; esac\n' > /tmp/gl-askpass.sh
+              chmod +x /tmp/gl-askpass.sh
+              git remote remove gitlab 2>/dev/null || true
+              git remote add gitlab https://gitlab.com/xuerui911/crawl_phones.git
+              if GIT_ASKPASS=/tmp/gl-askpass.sh git push gitlab main --force-with-lease 2>&1 \
+                || GIT_ASKPASS=/tmp/gl-askpass.sh git push gitlab main 2>&1; then
+                echo "GITLAB_PUSH=done" >> _stage_context_.env
+              else
+                echo "⚠️ GitLab 镜像推送失败（不阻断主流水线；令牌无效或过期请在 GitLab 重新签发）"
+                echo "GITLAB_PUSH=failed" >> _stage_context_.env
+              fi
+              rm -f /tmp/gl-askpass.sh
+            fi
+        - name: pytest
+          script: |
+            python -m pytest tests/ -x --tb=short 2>&1 | tee _test_result_.txt
+            rc=${PIPESTATUS[0]}
+            echo "PYTEST_EXIT=$rc" >> _stage_context_.env
+            # 此前退出码取 tee 的 0，测试失败从不使流水线变红（结构性假绿），现诚实穿透
+            exit "$rc"
+        - name: 语法校验
+          script: |
+            if python -m py_compile scripts/*.py; then
+              echo "SYNTAX=PASS" >> _stage_context_.env
+            else
+              echo "SYNTAX=FAIL" >> _stage_context_.env
+              echo "❌ SYNTAX 未通过：原写法 A && echo PASS || echo FAIL 的退出码恒为 0，属结构性假绿，现改为硬失败"
+              exit 1
+            fi
+        - name: 治理校验
+          script: |
+            python scripts/validate_workflow_expectations.py || echo "WARN: workflow expectations 未通过"
+            python scripts/validate_plan_agent_boundary.py || echo "WARN: plan/agent 边界未通过"
+            python scripts/validate_storage_policy.py || echo "WARN: 存储策略未通过"
+      failStages:
+        - name: 诊断-收集失败上下文
+          script: |
+            {
+              echo "## 失败概览"
+              echo "| 项目 | 内容 |"
+              echo "| --- | --- |"
+              echo "| 失败阶段 | $CNB_BUILD_FAILED_STAGE_NAME |"
+              echo "| 失败原因 | \`$CNB_BUILD_FAILED_MSG\` |"
+              echo "| 触发分支 | $CNB_BRANCH |"
+              echo "| 提交 | $CNB_COMMIT_SHORT |"
+              echo "| 构建日志 | $CNB_BUILD_WEB_URL |"
+              echo ""
+              echo "## 测试输出（最后50行）"
+              echo '```'
+              tail -50 _test_result_.txt 2>/dev/null || echo "(无)"
+              echo '```'
+              echo ""
+              echo "## 阶段上下文"
+              cat _stage_context_.env 2>/dev/null || echo "(无)"
+            } > _fail_context_.md
+        - name: 备份受保护文件
+          script: |
+            for f in AGENTS.md ai_tools/opencode/opencode.json ai_tools/opencode/oh-my-openagent.json; do
+              [ -f "$f" ] && cp "$f" "${f}.protected_backup"
+            done
+        - name: AI-修复-第1轮
+          type: npc:go
+          env:  # Agent 型 stage 有 shell 能力：发布类凭据与代理订阅不下容器，平台令牌保留以免破坏 npc 自身鉴权
+            GITLAB_TOKEN: ""
+            CODEBERG_TOKEN: ""
+            CLOUDFLARE_API_TOKEN: ""
+            PROXY_SUBSCRIPTIONS: ""
+          options:
+            model: deepseek-v4-flash
+            thinkingLevel: max
+            maxTurns: 40
+            contextWindow: 256k
+            systemPrompt: |
+              你是手机爬虫修复专家。阅读 _fail_context_.md 中的失败上下文。
+              这是第1轮修复（最多2轮）。分析根因后修改代码。
+              规则：不伪造数据、不折叠真冲突、不删校验、不降防护。
+              归并前必须逐对检查年款、版本层级、CPU具体型号。
+              修复后写报告到 _fix_report_.md。
+            userPrompt: |
+              读取 _fail_context_.md，分析失败并修复。修复后写报告到 _fix_report_.md。
+        - name: 恢复受保护文件
+          script: |
+            for f in AGENTS.md ai_tools/opencode/opencode.json ai_tools/opencode/oh-my-openagent.json; do
+              if [ -f "${f}.protected_backup" ] && ! cmp -s "$f" "${f}.protected_backup" 2>/dev/null; then
+                echo "⚠️ 恢复受保护文件 $f"
+                cp "${f}.protected_backup" "$f"
+              fi
+            done
+            find . -name '*.protected_backup' -delete
+        - name: 验证-语法校验
+          script: |
+            python -m py_compile scripts/*.py 2>/dev/null && echo "SYNTAX_VALIDATE=PASS" >> _fix_report_.md || { echo "SYNTAX_VALIDATE=FAIL" >> _fix_report_.md; exit 1; }
+        - name: 验证-pytest
+          script: |
+            python -m pytest tests/ -x --tb=short 2>&1 | tee _test_after_fix_.txt
+            rc=${PIPESTATUS[0]}
+            if [ "$rc" -eq 0 ]; then echo "PYTEST_VALIDATE=PASS" >> _fix_report_.md; else echo "PYTEST_VALIDATE=FAIL" >> _fix_report_.md; fi
+            echo "PYTEST_EXIT_AFTER=$rc" >> _stage_context_.env
+        - name: 审查-NPC代码审查
+          type: npc:go
+          env:  # Agent 型 stage 有 shell 能力：发布类凭据与代理订阅不下容器，平台令牌保留以免破坏 npc 自身鉴权
+            GITLAB_TOKEN: ""
+            CODEBERG_TOKEN: ""
+            CLOUDFLARE_API_TOKEN: ""
+            PROXY_SUBSCRIPTIONS: ""
+          options:
+            model: deepseek-v4-flash
+            thinkingLevel: high
+            maxTurns: 15
+            contextWindow: 128k
+            systemPrompt: |
+              你是代码审查员。读取 _fail_context_.md、_fix_report_.md、_test_after_fix_.txt。
+              检查：归并规则安全、SPU/SKU结构、测试断言同步、跨文件消费方同步。
+              写审查结果到 _review_result_.md，第一行 VERDICT: PASS 或 VERDICT: FAIL。
+            userPrompt: |
+              审查修复结果，输出到 _review_result_.md。
+        - name: 最终判定
+          script: |
+            # 反篡改闸：自修复不得改动断言或流水线配置（为变绿改测试属禁止项，改为机器强制）
+            if ! git diff --quiet -- tests .cnb.yml 2>/dev/null; then
+              echo "X 自修复改动了 tests/ 或 .cnb.yml，判定为篡改门禁，硬失败"
+              git diff --stat -- tests .cnb.yml || true
+              exit 1
+            fi
+            AFTERRC=$(grep -o 'PYTEST_EXIT_AFTER=[0-9]*' _stage_context_.env 2>/dev/null | tail -1)
+            if [ "${AFTERRC#PYTEST_EXIT_AFTER=}" != "0" ]; then
+              echo "X 修复后 pytest 仍非零退出（$AFTERRC），修复未真正通过"
+              exit 1
+            fi
+            VERDICT=$(head -1 _review_result_.md 2>/dev/null | grep -o 'PASS\|FAIL' || echo "UNKNOWN")
+            echo "审查结果: $VERDICT"
+            [ "$VERDICT" = "PASS" ] && echo "✅ 修复通过" || { echo "❌ 修复未通过"; exit 1; }
+
+  "crontab: 0 3 2,17 * *":
+    # 半月增量爬取（每月 2/17 日 03:00 Asia/Shanghai）
+    # 增量闭环：--incremental 只爬新增 + crawl_state 断点随每轮提交回本仓，下轮续爬
+    # 代理：PROXY_SUBSCRIPTIONS 走 CNB 仓库环境变量，缺失即失败，禁止直连裸爬
+    - runner:
+        cpus: 2
+      docker:
+        image: python:3.12
+      imports:
+        - https://cnb.cool/xuerui911-mirror/crawl-secrets/-/blob/main/env.yml
+      timeout: 4h  # CNB Job 无输出默认 10min 即强杀（实测联通源被砍），显式放宽
+      stages:
+        - name: 检查代理配置
+          script: |
+            if [ -z "$PROXY_SUBSCRIPTIONS" ]; then
+              echo "❌ 未注入 PROXY_SUBSCRIPTIONS：本流水线经 imports 引用 xuerui911-mirror/crawl-secrets env.yml，请检查该私仓。防反爬必须走 Mihomo 代理。"
+              exit 1
+            fi
+        - name: install-deps
+          script: python -m pip install -r requirements.txt
+        - name: 启动Mihomo代理
+          script: |
+            set -e
+            # 本仓 setup_proxy_runtime.py 只支持 --github-env（无 --clear），且代理不可用时降级直连并 return 0
+            # （scripts/setup_proxy_runtime.py:260-275），CNB 无 $GITHUB_ENV，故写文件后 source 并硬校验 PROXY_ENABLED
+            : > /tmp/proxy.env
+            python scripts/setup_proxy_runtime.py --github-env /tmp/proxy.env --test-url "https://product.cnmo.com/all/product_t1_p1.html"
+            sed 's/^\([A-Za-z_][A-Za-z0-9_]*\)=/export \1=/' /tmp/proxy.env > /tmp/proxy.sh
+            . /tmp/proxy.sh
+            if [ "${PROXY_ENABLED:-false}" != "true" ]; then
+              echo "❌ 代理未启用（PROXY_ENABLED!=true），防反爬要求禁止直连裸爬，终止本轮"
+              exit 1
+            fi
+            echo "代理就绪：$HTTP_PROXY"
+        - name: 获取线上发布基线
+          script: |
+            set -e
+            # 对齐 GitHub merge-and-deploy.yml:480-485：基线=线上已发布数据，拉不到即硬失败，
+            # 禁止退化为空基线（空基线会让 preserve/superset 校验假绿、发布行数塌陷）
+            curl --fail --show-error --silent --location --retry 4 --retry-all-errors \
+              --retry-delay 5 --connect-timeout 20 --max-time 300 \
+              https://phones.jiucai.eu.org/data/latest.json --output /tmp/phones-pages-baseline.json
+            python -c "import json;print('线上基线行数:', len(json.load(open('/tmp/phones-pages-baseline.json', encoding='utf-8'))))"
+        - name: 爬取-三源并行
+          script: |
+            . /tmp/proxy.sh
+            # 时段分档（用户裁定 2026-10-01）：夜间（23:00-08:00，容器时区 Asia/Shanghai）
+            # 自动小批量——step1 时长 2700s→600s、max-phones 0（不限）→30，让全链夜里也能
+            # 完整推进；日间恢复全量。增量合并下两种量级的数据都入库。
+            HOUR=$(date +%H)
+            if [ "$HOUR" -ge 23 ] || [ "$HOUR" -lt 8 ]; then
+              MODE="夜间小批量"; TL=600; MP=30
+            else
+              MODE="日间全量";   TL=2700; MP=0
+            fi
+            echo "爬取模式：$MODE（hour=$HOUR，time-limit=$TL，max-phones=$MP）"
+            # 三源并行（用户裁定 2026-10-01：源间并行、单源任何形态失败不影响其它源与下游）。
+            # 源内 step1→2→3 保持串行（步骤间有数据依赖）；源间互为后台任务组（POSIX 花括号组 &），
+            # `|| echo` 兜底每一步，进程级失败（强杀/挂死）也只影响自身源；wait 后照常进入
+            # 清理代理→合并→发布。三源均为 requests 类采集（无 playwright），并发无内存压力；
+            # 并发输出轮流到达，天然规避 CNB「连续 10 分钟无输出强杀」。
+            {
+              python scripts/crawl_budget.py configure || true
+              python scripts/crawl_cnmo.py --step 1 --time-limit "$TL" --max-phones "$MP" --auto --incremental \
+                || echo "⚠️ CNMO step1 失败"
+              python scripts/crawl_cnmo.py --step 2 || echo "⚠️ CNMO step2 失败"
+              python scripts/crawl_cnmo.py --step 3 || echo "⚠️ CNMO step3 失败"
+            } &
+            {
+              python scripts/crawl_budget.py configure || true
+              python scripts/crawl_pconline.py --step 1 --time-limit "$TL" --max-phones "$MP" --auto --incremental \
+                || echo "⚠️ PConline step1 失败"
+              python scripts/crawl_pconline.py --step 2 || echo "⚠️ PConline step2 失败"
+              python scripts/crawl_pconline.py --step 3 || echo "⚠️ PConline step3 失败"
+            } &
+            {
+              python scripts/crawl_budget.py configure || true
+              python scripts/crawl_zol.py --step 1 --time-limit "$TL" --max-pages 0 --max-phones "$MP" --auto --incremental \
+                || echo "⚠️ ZOL step1 失败"
+              python scripts/crawl_zol.py --step 2 || echo "⚠️ ZOL step2 失败"
+            } &
+            wait
+            echo "三源并行结束（$MODE），data 产物："
+            ls -la data/raw/*/latest.json 2>/dev/null || find data -name "*.json" 2>/dev/null | head -10 || echo "（无 json 产物）"
+        - name: 清理代理环境
+          script: pkill -f mihomo || true
+        - name: 合并-增量保留基线
+          script: |
+            set -e
+            shopt -s nullglob
+            set -- data/zol_phones_*.json data/pconline_phones_*.json data/cnmo_phones_*.json
+            [ $# -gt 0 ] || { echo "❌ 三个源均无数据文件，无法合并"; exit 1; }
+            python scripts/merge_phones.py
+            CANDIDATE_JSON=$(ls -t data/merged_phones_*.json 2>/dev/null | head -1)
+            CANDIDATE_CSV=$(ls -t data/merged_phones_*.csv 2>/dev/null | head -1)
+            [ -n "$CANDIDATE_JSON" ] && [ -n "$CANDIDATE_CSV" ] \
+              || { echo "❌ merge_phones.py 未产出合并文件"; exit 1; }
+            DATE=$(basename "$CANDIDATE_JSON" .json)
+            DATE=${DATE#merged_phones_}
+            echo "export MERGE_DATE=$DATE" > /tmp/cnb-date
+            python scripts/preserve_publish_baseline.py \
+              /tmp/phones-pages-baseline.json "$CANDIDATE_JSON" "$CANDIDATE_CSV"
+            ROWS=$(python -c "import json; print(len(json.load(open('$CANDIDATE_JSON', encoding='utf-8'))))")
+            if [ "$ROWS" -lt 10 ]; then
+              echo "❌ 合并数据少于 10 行（当前 $ROWS），疑似爬虫数据不完整，拒绝发布"
+              exit 1
+            fi
+            python scripts/verify_publish_superset.py \
+              /tmp/phones-pages-baseline.json "$CANDIDATE_JSON"
+            # 对齐 GitHub merge-and-deploy.yml:524-525：本仓前端根是 docs/phones/，基线数据落在 docs/phones/data/
+            mkdir -p docs/phones/data
+            cp "$CANDIDATE_JSON" docs/phones/data/latest.json
+        - name: 组装发布站点
+          script: |
+            set -e
+            . /tmp/cnb-date
+            DATE=$MERGE_DATE
+            # 对齐 GitHub merge-and-deploy.yml:704-706,711,719：前端根 docs/phones/ 组装进 site/，数据写 site/data/
+            rm -rf site
+            mkdir -p site/data
+            cp -R docs/phones/. site/
+            cp "$(ls -t data/merged_phones_*.json | head -1)" site/data/latest.json
+            cp "$(ls -t data/merged_phones_*.csv | head -1)" "site/data/merged_phones_${DATE}.csv"
+            if [ -f "data/merge_evidence_report_${DATE}.json" ]; then
+              cp "data/merge_evidence_report_${DATE}.json" site/data/merge_evidence_report.json
+            fi
+            touch site/.nojekyll
+            # 对齐 GitHub merge-and-deploy.yml:726-758：前端按 data/manifest.json 取数，缺失即白屏或读旧文件
+            python - "$DATE" <<'PY'
+            import json
+            import os
+            import sys
+            from datetime import datetime, timezone
+
+            date = sys.argv[1]
+            with open("site/data/latest.json", "r", encoding="utf-8") as f:
+                latest = json.load(f)
+
+            # 计算各数据源数量
+            source_counts = {"中关村在线": 0, "太平洋电脑网": 0, "CNMO": 0, "双源一致": 0}
+            for row in latest:
+                src = row.get("数据来源", "")
+                for key in ["中关村在线", "太平洋电脑网", "CNMO"]:
+                    if key in src:
+                        source_counts[key] += 1
+                if row.get("验证状态", "") == "双源一致":
+                    source_counts["双源一致"] += 1
+
+            manifest = {
+                "date": date,
+                "updatedAt": datetime.now(timezone.utc).isoformat(),
+                "rowCount": len(latest),
+                "sourceCounts": source_counts,
+                "files": {
+                    "latestJson": "data/latest.json",
+                    "latestCsv": f"data/merged_phones_{date}.csv",
+                },
+            }
+            if os.path.exists("site/data/merge_evidence_report.json"):
+                manifest["files"]["mergeEvidenceReport"] = "data/merge_evidence_report.json"
+            with open("site/data/manifest.json", "w", encoding="utf-8") as f:
+                json.dump(manifest, f, ensure_ascii=False, indent=2)
+            print(manifest)
+            PY
+        - name: 发布到Cloudflare Pages
+          image: node:22
+          script: |
+            if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+              echo "❌ 未注入 CLOUDFLARE_API_TOKEN：本流水线经 imports 引用 xuerui911-mirror/crawl-secrets env.yml，请检查该私仓。"
+              exit 1
+            fi
+            npx -y wrangler@latest pages deploy site --project-name crawl-phones --commit-dirty=true
+        - name: 发布到Codeberg Pages
+          script: |
+            if [ -z "$CODEBERG_TOKEN" ]; then
+              echo "未注入 CODEBERG_TOKEN：本流水线经 imports 引用 xuerui911-mirror/crawl-secrets env.yml，请检查该私仓。"
+              exit 1
+            fi
+            set -e
+            W=$(mktemp -d)
+            cp -R site/. "$W/"
+            printf '%s\n' 'phones3.jiucai.eu.org' > "$W/.domains"
+            cd "$W"
+            git init -q -b pages
+            git config user.email "xuerui911@gmail.com"
+            git config user.name "Fatty911"
+            git add -A
+            git commit -qm "pages: crawl publish $(date +%Y%m%d%H%M%S)"
+            printf '#!/bin/sh\ncase "$1" in *sername*) echo xuerui911;; *) printf "%%s" "$CODEBERG_TOKEN";; esac\n' > /tmp/cb-askpass.sh
+            chmod +x /tmp/cb-askpass.sh
+            GIT_ASKPASS=/tmp/cb-askpass.sh git push -q --force "https://codeberg.org/xuerui911/crawl-phones.git" pages:pages
+            rm -f /tmp/cb-askpass.sh
+
+        - name: 线上验收
+          script: |
+            set -e
+            python - <<'PY'
+            import json, time, urllib.request
+            UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0 Safari/537.36'
+            def poll(url, attempts, hard):
+                err = 'not attempted'
+                for i in range(attempts):
+                    try:
+                        req = urllib.request.Request(url, headers={'Cache-Control': 'no-cache', 'User-Agent': UA})
+                        with urllib.request.urlopen(req, timeout=20) as r:
+                            m = json.load(r)
+                        print('线上验收通过: %s date=%s rowCount=%s' % (url, m.get('date'), m.get('rowCount')))
+                        return True
+                    except Exception as e:
+                        err = repr(e)
+                    time.sleep(10)
+                print(('❌ ' if hard else '⚠️ ') + '线上验收未通过: ' + url + ' ' + err)
+                return False
+            # 权威入口＝CF Pages 自定义域（国内直连可达）；pages.dev 境内被墙且对非浏览器 UA 返回 403，只作信息位
+            ok = poll('https://phones2.jiucai.eu.org/data/manifest.json', 12, True)
+            poll('https://crawl-phones.pages.dev/data/manifest.json', 3, False)
+            poll('https://phones3.jiucai.eu.org/data/manifest.json', 2, False)
+            if not ok:
+                raise SystemExit(1)
+            PY
+        - name: 回推增量状态
+          script: |
+            set -e
+            git config user.email "xuerui911@gmail.com"
+            git config user.name "Fatty911"
+            # 只回断点与前端基线数据（对齐 merge-and-deploy.yml:527）；data/ 下 100MB 级合并产物
+            # 是 gitignore 的运行期工作目录（.gitignore:43 /data/*），禁止再入仓
+            for d in crawl_state; do [ -d "$d" ] && git add "$d" || true; done
+            git add docs/phones/data/latest.json
+            if git diff --cached --quiet; then
+              echo "无增量变更"
+            else
+              git commit -m "chore: 半月增量爬取+合并 [skip ci]"
+              git push "https://${CNB_TOKEN_USER_NAME:-cnb}:${CNB_TOKEN}@cnb.cool/xuerui911-mirror/crawl_phones.git" HEAD:main
+            fi
+      failStages:
+        - name: 清理代理
+          script: pkill -f mihomo || true
+  pull_request:
+    - stages:
+        - name: NPC-PR审查
+          type: npc:go
+          env:  # Agent 型 stage 有 shell 能力：发布类凭据与代理订阅不下容器，平台令牌保留以免破坏 npc 自身鉴权
+            GITLAB_TOKEN: ""
+            CODEBERG_TOKEN: ""
+            CLOUDFLARE_API_TOKEN: ""
+            PROXY_SUBSCRIPTIONS: ""
+          options:
+            model: deepseek-v4-flash
+            thinkingLevel: high
+            maxTurns: 20
+            systemPrompt: |
+              你是代码审查员。审查PR：归并规则安全（年款/版本/CPU型号/配置冲突）、SPU/SKU结构、测试断言同步。
+              给出 PASS 或 FAIL 及理由。
+            userPrompt: 审查本次 PR 的代码变更。
+
+$:
+  issue.open:
+    - stages:
+        - name: 检查fix标签
+          script: echo "$CNB_ISSUE_LABELS" | grep -q 'fix' || exit 0
+        - name: AI-Issue驱动修复
+          type: npc:go
+          env:  # Agent 型 stage 有 shell 能力：发布类凭据与代理订阅不下容器，平台令牌保留以免破坏 npc 自身鉴权
+            GITLAB_TOKEN: ""
+            CODEBERG_TOKEN: ""
+            CLOUDFLARE_API_TOKEN: ""
+            PROXY_SUBSCRIPTIONS: ""
+          options:
+            model: deepseek-v4-flash
+            thinkingLevel: max
+            maxTurns: 50
+            contextWindow: 256k
+            systemPrompt: |
+              你是自动化修复 Agent。读取 Issue，理解需求，读代码定位，修改，运行 pytest，创建 PR。
+              规则：不伪造数据、不折叠真冲突、不删校验、不降防护
+            userPrompt: |
+              Issue 标题: $CNB_ISSUE_TITLE
+              Issue 描述: $CNB_ISSUE_DESCRIPTION

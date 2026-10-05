@@ -19,8 +19,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
-import subprocess
 import sys
 import urllib.request
 from pathlib import Path
@@ -29,6 +27,24 @@ from pathlib import Path
 # AA 50+ models ranked by Intelligence Index, with API config
 AA_MODELS = [
     {
+        "name": "Claude Opus 5 (max)",
+        "aa_index": 61,
+        "provider": "anthropic",
+        "model": "claude-opus-5-20250115",
+        "max_tokens": 16000,
+        "env_keys": ["ANTHROPIC_API_KEY"],
+        "endpoint": "https://api.anthropic.com/v1/messages",
+    },
+    {
+        "name": "GPT-5.6 Sol (max)",
+        "aa_index": 59,
+        "provider": "openai",
+        "model": "gpt-5.6-sol",
+        "max_tokens": 16000,
+        "env_keys": ["OPENAI_API_KEY", "DEEPSEEK_API_KEY", "ZEN_API_KEY"],
+        "endpoint": "https://api.openai.com/v1/chat/completions",
+    },
+    {
         "name": "DeepSeek V4 Flash 0731 (max)",
         "aa_index": 50,
         "provider": "nvidia-nim",
@@ -36,6 +52,33 @@ AA_MODELS = [
         "max_tokens": 4000,
         "env_keys": ["NVIDIA_NIM_API_KEY"],
         "endpoint": "https://integrate.api.nvidia.com/v1/chat/completions",
+    },
+    {
+        "name": "Kimi K3",
+        "aa_index": 57,
+        "provider": "kimi",
+        "model": "k3",
+        "max_tokens": 12000,
+        "env_keys": ["KIMI_API_KEY", "MOONSHOT_API_KEY"],
+        "endpoint": "https://api.moonshot.cn/v1/chat/completions",
+    },
+    {
+        "name": "GPT-5.6 Sol (high)",
+        "aa_index": 56,
+        "provider": "openai",
+        "model": "gpt-5.6-sol",
+        "max_tokens": 8000,
+        "env_keys": ["OPENAI_API_KEY", "DEEPSEEK_API_KEY", "ZEN_API_KEY"],
+        "endpoint": "https://api.openai.com/v1/chat/completions",
+    },
+    {
+        "name": "Grok 4.5 (high)",
+        "aa_index": 54,
+        "provider": "xai",
+        "model": "grok-4.5",
+        "max_tokens": 8000,
+        "env_keys": ["XAI_API_KEY"],
+        "endpoint": "https://api.x.ai/v1/chat/completions",
     },
 ]
 
@@ -114,82 +157,62 @@ def _first_key(model: dict) -> str | None:
     return None
 
 
-def _call_via_opencode(model: dict, prompt: str) -> str | None:
-    """通过 OpenCode CLI（Agent 工具）调用模型，禁止直连模型 API。
-
-    The provider key is consumed only by the OpenCode process; this function
-    never issues HTTP requests to a model endpoint.
-    """
+def call_openai_compatible(model: dict, prompt: str) -> str | None:
+    """Call OpenAI-compatible API (OpenAI, Kimi, xAI)."""
     key = _first_key(model)
     if not key:
         return None
-    endpoint = str(model.get("endpoint") or "").rstrip("/")
-    if endpoint.endswith("/chat/completions"):
-        endpoint = endpoint[: -len("/chat/completions")]
-    if endpoint.endswith("/v1/messages"):
-        endpoint = endpoint[: -len("/v1/messages")]
-    provider_label = re.sub(r"[^A-Za-z0-9_-]", "-", str(model.get("name") or "provider").lower())[:60]
-    is_anthropic = str(model.get("provider") or "").lower() == "anthropic"
-    read_only = {
-        "*": "deny",
-        "read": "allow",
-        "edit": "deny",
-        "bash": "deny",
-        "webfetch": "deny",
-        "task": "deny",
-        "question": "deny",
-        "external_directory": "deny",
-    }
-    config = {
-        "provider": {
-            provider_label: {
-                "npm": "@ai-sdk/anthropic" if is_anthropic else "@ai-sdk/openai-compatible",
-                "name": provider_label,
-                "options": {"baseURL": endpoint, "apiKey": f"{{env:{model['env_keys'][0]}}}"},
-                "models": {model["model"]: {"limit": {"context": 131072, "output": int(model.get("max_tokens") or 8000)}}},
-            }
+    body = json.dumps({
+        "model": model["model"],
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": model["max_tokens"],
+        "temperature": 0.7,
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        model["endpoint"],
+        data=body,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {key}",
         },
-        "agent": {"plan": {"permission": read_only}},
-        "permission": read_only,
-    }
-    env = dict(os.environ)
-    env["OPENCODE_CONFIG_CONTENT"] = json.dumps(config, ensure_ascii=False)
-    env["OPENCODE_DISABLE_AUTOUPDATE"] = "1"
-    env["OPENCODE_DISABLE_TELEMETRY"] = "1"
-    opencode_bin = os.environ.get("OPENCODE_BIN", "opencode")
-    import tempfile
+        method="POST",
+    )
     try:
-        with tempfile.TemporaryDirectory(prefix="audit-llm-") as tmpdir:
-            prompt_path = os.path.join(tmpdir, "prompt.md")
-            with open(prompt_path, "w", encoding="utf-8") as handle:
-                handle.write(prompt)
-            cmd = [
-                opencode_bin, "run", "--pure", "--agent", "plan",
-                "--model", f"{provider_label}/{model['model']}",
-                "--format", "default",
-                "--dir", tmpdir,
-                "--file", "prompt.md",
-                "Answer the attached prompt directly. Do not call tools or modify files. Return only the requested analysis.",
-            ]
-            completed = subprocess.run(cmd, capture_output=True, text=True, timeout=300, env=env)
+        with urllib.request.urlopen(req, timeout=180) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+            return result["choices"][0]["message"]["content"]
     except Exception as exc:
-        print(f"  {model['name']} opencode call failed: {type(exc).__name__}", file=sys.stderr)
+        print(f"  {model['name']} failed: {exc}", file=sys.stderr)
         return None
-    if completed.returncode != 0:
-        print(f"  {model['name']} opencode exit {completed.returncode}: {(completed.stderr or '')[:200]}", file=sys.stderr)
-        return None
-    content = (completed.stdout or "").strip()
-    return content or None
-
-
-def call_openai_compatible(model: dict, prompt: str) -> str | None:
-    """通过 OpenCode CLI（Agent 工具）调用 OpenAI-compatible 端点。"""
-    return _call_via_opencode(model, prompt)
 
 
 def call_anthropic(model: dict, prompt: str) -> str | None:
-    """通过 OpenCode CLI（Agent 工具）调用 Anthropic 端点。"""
-    return _call_via_opencode(model, prompt)
+    """Call Anthropic API."""
+    key = _first_key(model)
+    if not key:
+        return None
+    body = json.dumps({
+        "model": model["model"],
+        "max_tokens": model["max_tokens"],
+        "messages": [{"role": "user", "content": prompt}],
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        model["endpoint"],
+        data=body,
+        headers={
+            "Content-Type": "application/json",
+            "x-api-key": key,
+            "anthropic-version": "2023-06-01",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=180) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+            return result["content"][0]["text"]
+    except Exception as exc:
+        print(f"  {model['name']} failed: {exc}", file=sys.stderr)
+        return None
 
 
 def main():
