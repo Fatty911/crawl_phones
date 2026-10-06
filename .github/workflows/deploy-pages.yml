@@ -1,0 +1,142 @@
+# Pages 部署工作流（独立）——只做部署，数据由 CNB 推到 GitHub Release
+# 对齐用户裁定：Pages 与爬取/合并分离；Pages 读 GitHub Release，CNB 负责推数据
+name: Deploy Pages
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+  push:
+    branches: [main]
+    paths:
+      - 'docs/phones/**'
+      - '.github/workflows/deploy-pages.yml'
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy-pages:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: success()
+    permissions:
+      contents: read
+      actions: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@main
+
+      - name: 下载合并产物
+        uses: actions/download-artifact@main
+        with:
+          name: phone-data-latest
+          path: release-files
+
+      - name: 尝试下载搜索结果
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p release-files
+          if gh run download "$GITHUB_RUN_ID" \
+            --repo "${{ github.repository }}" \
+            --name "phone-root-info-${{ needs.merge-data.outputs.crawl_date }}" \
+            --dir release-files 2>/tmp/root_info_download.log; then
+            echo "已下载 Root 信息搜索结果"
+          else
+            echo "未找到 Root 信息搜索结果，继续部署基础合并数据"
+          fi
+
+      - name: 准备 Pages 静态站点
+        run: |
+          set -euo pipefail
+          DATE="${{ needs.merge-data.outputs.crawl_date }}"
+          rm -rf site
+          mkdir -p site/data
+          cp -R docs/phones/. site/
+
+          if [ -f "release-files/phones_with_root_info.json" ]; then
+            cp "release-files/phones_with_root_info.json" site/data/latest.json
+          elif [ -f "release-files/merged_phones_${DATE}.json" ]; then
+            cp "release-files/merged_phones_${DATE}.json" site/data/latest.json
+          else
+            echo "错误: 未找到合并数据文件"
+            ls -la release-files/ 2>/dev/null || true
+            exit 1
+          fi
+
+          if [ -f "release-files/merged_phones_${DATE}.csv" ]; then
+            cp "release-files/merged_phones_${DATE}.csv" "site/data/merged_phones_${DATE}.csv"
+          fi
+          if [ -f "release-files/merge_evidence_report_${DATE}.json" ]; then
+            cp "release-files/merge_evidence_report_${DATE}.json" site/data/merge_evidence_report.json
+          fi
+
+          touch site/.nojekyll
+          python - <<'PY'
+          import json
+          import os
+          from datetime import datetime, timezone
+
+          date = os.environ["DATE"]
+          with open("site/data/latest.json", "r", encoding="utf-8") as f:
+              latest = json.load(f)
+
+          # 计算各数据源数量
+          source_counts = {"中关村在线": 0, "太平洋电脑网": 0, "CNMO": 0, "双源一致": 0}
+          for row in latest:
+              src = row.get("数据来源", "")
+              for key in ["中关村在线", "太平洋电脑网", "CNMO"]:
+                  if key in src:
+                      source_counts[key] += 1
+              if row.get("验证状态", "") == "双源一致":
+                  source_counts["双源一致"] += 1
+
+          manifest = {
+              "date": date,
+              "updatedAt": datetime.now(timezone.utc).isoformat(),
+              "rowCount": len(latest),
+              "sourceCounts": source_counts,
+              "files": {
+                  "latestJson": "data/latest.json",
+                  "latestCsv": f"data/merged_phones_{date}.csv",
+              },
+          }
+          if os.path.exists("site/data/merge_evidence_report.json"):
+              manifest["files"]["mergeEvidenceReport"] = "data/merge_evidence_report.json"
+          with open("site/data/manifest.json", "w", encoding="utf-8") as f:
+              json.dump(manifest, f, ensure_ascii=False, indent=2)
+          PY
+        env:
+          DATE: ${{ needs.merge-data.outputs.crawl_date }}
+
+      - name: 配置 GitHub Pages
+        uses: actions/configure-pages@v6
+
+      - name: 部署前再次校验线上基线超集
+        run: |
+          set -euo pipefail
+          curl --fail --show-error --silent --location --retry 3 --max-time 120 \
+            https://phones.jiucai.eu.org/data/latest.json --output /tmp/phones-pages-baseline.json
+          python3 scripts/verify_publish_superset.py \
+            /tmp/phones-pages-baseline.json site/data/latest.json
+
+      - name: 上传 Pages artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: site
+
+      - name: 部署到 GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5
