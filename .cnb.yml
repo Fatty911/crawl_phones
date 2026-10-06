@@ -198,6 +198,14 @@ main:
           script: |
             . /tmp/proxy.sh
             # 时段分档（用户裁定 2026-10-01）：夜间（23:00-08:00，容器时区 Asia/Shanghai）
+            # debug_mode（对齐 GitHub workflow_dispatch inputs.debug_mode）：
+            # DEBUG_MODE=true 强制小批量，过作息窗口也能跑通全链并刷新 Pages 日期
+            if [ "${DEBUG_MODE:-false}" = "true" ]; then
+              MODE="debug小批量"
+              MR=20; BN_MR=20; MO_MR=20; TE_MR=20; UN_MR=20; UN_SL=240
+              TB=300; TB_B=300; TB_Z=300
+              echo "DEBUG_MODE=true: 强制小批量（每源约 20 条）"
+            fi
             # 自动小批量——step1 时长 2700s→600s、max-phones 0（不限）→30，让全链夜里也能
             # 完整推进；日间恢复全量。增量合并下两种量级的数据都入库。
             HOUR=$(date +%H)
