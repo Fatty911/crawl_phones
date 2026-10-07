@@ -177,7 +177,21 @@ main:
             # 本仓 setup_proxy_runtime.py 只支持 --github-env（无 --clear），且代理不可用时降级直连并 return 0
             # （scripts/setup_proxy_runtime.py:260-275），CNB 无 $GITHUB_ENV，故写文件后 source 并硬校验 PROXY_ENABLED
             : > /tmp/proxy.env
-            python scripts/setup_proxy_runtime.py --github-env /tmp/proxy.env --test-url "https://product.cnmo.com/all/product_t1_p1.html"
+            # 调优（2026-10-07）：~100s 失败根因=代理订阅/mihomo 启动/测试单点，网络间歇抖动
+            # 加 3 次重试 + 进度输出（防 CNB 10 分钟无输出强杀）
+            OK=0
+            for ATTEMPT in 1 2 3; do
+              echo "[proxy] attempt $ATTEMPT/3 $(date -u +%H:%M:%S)"
+              : > /tmp/proxy.env
+              if python scripts/setup_proxy_runtime.py --github-env /tmp/proxy.env --test-url "https://product.cnmo.com/all/product_t1_p1.html"; then
+                OK=1; break
+              fi
+              echo "[proxy] attempt $ATTEMPT failed, retry in 15s"
+              sleep 15
+            done
+            if [ "$OK" != "1" ]; then
+              echo "FAIL_STAGE=启动Mihomo代理 reason=3-attempts-exhausted"; exit 1
+            fi
             sed 's/^\([A-Za-z_][A-Za-z0-9_]*\)=/export \1=/' /tmp/proxy.env > /tmp/proxy.sh
             . /tmp/proxy.sh
             if [ "${PROXY_ENABLED:-false}" != "true" ]; then
