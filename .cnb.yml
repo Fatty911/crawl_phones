@@ -485,6 +485,71 @@ main:
         - name: 清理代理
           script: pkill -f mihomo || true
 
+
+      failStages:
+        - name: 诊断-收集失败上下文
+          script: |
+            {
+              echo "## 流水线失败诊断"
+              echo "| 项目 | 内容 |"
+              echo "| --- | --- |"
+              echo "| 失败阶段 | $CNB_BUILD_FAILED_STAGE_NAME |"
+              echo "| 失败原因 | `$CNB_BUILD_FAILED_MSG` |"
+              echo "| 触发分支 | $CNB_BRANCH |"
+              echo "| 提交 | $CNB_COMMIT_SHORT |"
+              echo "| 构建日志 | $CNB_BUILD_WEB_URL |"
+              echo "| DEBUG_MODE | ${DEBUG_MODE:-unset} |"
+              echo ""
+              echo "## 阶段上下文"
+              cat _stage_context_.env 2>/dev/null || echo "(无)"
+              echo ""
+              echo "## 最近文件"
+              ls -la data/ dist/ site/ 2>/dev/null || echo "(无产物)"
+            } > _fail_context_.md
+            echo "诊断已写入 _fail_context_.md"
+        - name: NPC-自动调优
+          type: npc:go
+          options:
+            model: deepseek-v4-flash
+            thinkingLevel: max
+            maxTurns: 30
+            contextWindow: 256k
+            systemPrompt: |
+              你是 CNB 流水线调优专家。阅读 _fail_context_.md 中的失败上下文。
+              目标：让流水线下次跑通并刷新 Pages 数据日期。
+              调优原则：
+              1. 网络抖动/超时 → 加重试、放宽 timeout、换测试 URL
+              2. 代理失败 → 检查 PROXY_SUBSCRIPTIONS、重试次数、降级策略
+              3. 爬取 0 行 → 检查 min-records、选择器、反爬
+              4. 发布失败 → 检查 token、网络、产物路径
+              5. 不伪造数据、不删校验、不降防护
+              修改后写报告到 _tune_report_.md。
+            userPrompt: |
+              读取 _fail_context_.md，分析失败根因，调优 .cnb.yml 或相关脚本让下次跑通。
+              修改后写报告到 _tune_report_.md。
+        - name: 验证-语法校验
+          script: |
+            python -m py_compile scripts/*.py 2>/dev/null && echo "SYNTAX_OK" >> _tune_report_.md || { echo "SYNTAX_FAIL" >> _tune_report_.md; exit 1; }
+        - name: 重触发-自动重跑
+          script: |
+            # 自动重触发：调优后重新跑一轮（最多重试 2 次，由 RETRY_COUNT 控制）
+            RETRY_COUNT="${RETRY_COUNT:-0}"
+            if [ "$RETRY_COUNT" -ge 2 ]; then
+              echo "已达最大重试次数 2，停止自动重试"
+              exit 0
+            fi
+            NEXT=$((RETRY_COUNT + 1))
+            echo "自动重触发第 $NEXT 次"
+            if [ -n "$CNB_TOKEN" ]; then
+              curl -sS -X POST \
+                -H "Authorization: Bearer $CNB_TOKEN" \
+                -H "Content-Type: application/json" \
+                "https://api.cnb.cool/xuerui911-mirror/crawl_phones/-/build/start" \
+                -d "{\"branch\":\"$CNB_BRANCH\",\"event\":\"api_trigger\",\"DEBUG_MODE\":\"${DEBUG_MODE:-false}\",\"RETRY_COUNT\":\"$NEXT\"}" \
+                || echo "WARN 重触发失败，请手动触发"
+            else
+              echo "WARN 无 CNB_TOKEN，无法自动重触发"
+            fi
   "crontab: 0 3 2,17 * *":
     # 半月增量爬取（每月 2/17 日 03:00 Asia/Shanghai）
     # 增量闭环：--incremental 只爬新增 + crawl_state 断点随每轮提交回本仓，下轮续爬
