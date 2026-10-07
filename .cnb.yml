@@ -387,7 +387,6 @@ main:
           script: pkill -f mihomo || true
 
 
-      failStages:
         - name: 诊断-收集失败上下文
           script: |
             {
