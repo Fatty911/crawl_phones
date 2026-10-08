@@ -411,6 +411,27 @@ main:
               ls -la data/ dist/ site/ 2>/dev/null || echo "(无产物)"
             } > _fail_context_.md
             echo "诊断已写入 _fail_context_.md"
+        - name: 重触发-自动重跑
+          script: |
+            # 自动重触发：调优后重新跑一轮（最多重试 2 次，由 RETRY_COUNT 控制）
+            RETRY_COUNT="${RETRY_COUNT:-0}"
+            if [ "$RETRY_COUNT" -ge 2 ]; then
+              echo "已达最大重试次数 2，停止自动重试"
+              exit 0
+            fi
+            NEXT=$((RETRY_COUNT + 1))
+            echo "自动重触发第 $NEXT 次"
+            if [ -n "$CNB_TOKEN" ]; then
+              curl -sS -X POST \
+                -H "Authorization: Bearer $CNB_TOKEN" \
+                -H "Content-Type: application/json" \
+                "https://api.cnb.cool/xuerui911-mirror/crawl_phones/-/build/start" \
+                -d "{\"branch\":\"$CNB_BRANCH\",\"event\":\"api_trigger\",\"DEBUG_MODE\":\"${DEBUG_MODE:-false}\",\"RETRY_COUNT\":\"$NEXT\"}" \
+                || echo "WARN 重触发失败，请手动触发"
+            else
+              echo "WARN 无 CNB_TOKEN，无法自动重触发"
+            fi
+
         - name: NPC-自动调优
           type: npc:go
           options:
@@ -434,26 +455,6 @@ main:
         - name: 验证-语法校验
           script: |
             python -m py_compile scripts/*.py 2>/dev/null && echo "SYNTAX_OK" >> _tune_report_.md || { echo "SYNTAX_FAIL" >> _tune_report_.md; exit 1; }
-        - name: 重触发-自动重跑
-          script: |
-            # 自动重触发：调优后重新跑一轮（最多重试 2 次，由 RETRY_COUNT 控制）
-            RETRY_COUNT="${RETRY_COUNT:-0}"
-            if [ "$RETRY_COUNT" -ge 2 ]; then
-              echo "已达最大重试次数 2，停止自动重试"
-              exit 0
-            fi
-            NEXT=$((RETRY_COUNT + 1))
-            echo "自动重触发第 $NEXT 次"
-            if [ -n "$CNB_TOKEN" ]; then
-              curl -sS -X POST \
-                -H "Authorization: Bearer $CNB_TOKEN" \
-                -H "Content-Type: application/json" \
-                "https://api.cnb.cool/xuerui911-mirror/crawl_phones/-/build/start" \
-                -d "{\"branch\":\"$CNB_BRANCH\",\"event\":\"api_trigger\",\"DEBUG_MODE\":\"${DEBUG_MODE:-false}\",\"RETRY_COUNT\":\"$NEXT\"}" \
-                || echo "WARN 重触发失败，请手动触发"
-            else
-              echo "WARN 无 CNB_TOKEN，无法自动重触发"
-            fi
         - name: 备份受保护文件
           script: |
             for f in AGENTS.md ai_tools/opencode/opencode.json ai_tools/opencode/oh-my-openagent.json; do
