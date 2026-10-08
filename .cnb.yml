@@ -159,7 +159,7 @@ main:
             echo "三源并行结束（$MODE），data 产物："
             ls -la data/raw/*/latest.json 2>/dev/null || find data -name "*.json" 2>/dev/null | head -10 || echo "（无 json 产物）"
         - name: 清理代理环境
-          script: pkill -f mihomo || true
+          script: pkill -x mihomo || true
         - name: 合并-增量保留基线
           script: |
             set -e
@@ -384,7 +384,7 @@ main:
             fi
       failStages:
         - name: 清理代理
-          script: pkill -f mihomo || true
+          script: pkill -x mihomo || true
 
 
         - name: 诊断-收集失败上下文
@@ -610,7 +610,7 @@ main:
             echo "三源并行结束（$MODE），data 产物："
             ls -la data/raw/*/latest.json 2>/dev/null || find data -name "*.json" 2>/dev/null | head -10 || echo "（无 json 产物）"
         - name: 清理代理环境
-          script: pkill -f mihomo || true
+          script: pkill -x mihomo || true
         - name: 合并-增量保留基线
           script: |
             set -e
@@ -762,7 +762,7 @@ main:
             fi
       failStages:
         - name: 清理代理
-          script: pkill -f mihomo || true
+          script: pkill -x mihomo || true
   pull_request:
     - stages:
         - name: NPC-PR审查
