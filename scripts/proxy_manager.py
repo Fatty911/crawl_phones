@@ -160,7 +160,9 @@ class ProxyManager:
         """解析V2Ray订阅链接"""
         try:
             print(f"正在获取订阅: {redact_url(subscription_url)}")
-            resp = requests.get(subscription_url, timeout=30)
+            # 订阅源 sub.jiucai.eu.org 生成 collection 实测 26-40s（CNB 出口更慢），
+            # 30s 读取超时正好卡在边缘，间歇性 ReadTimeout 直接拖垮整轮；放宽到 120s
+            resp = requests.get(subscription_url, timeout=120)
             if resp.status_code != 200:
                 print(f"获取订阅失败: HTTP {resp.status_code}")
                 return []
