@@ -163,8 +163,12 @@ main:
         - name: 合并-增量保留基线
           script: |
             set -e
-            shopt -s nullglob
-            set -- data/zol_phones_*.json data/pconline_phones_*.json data/cnmo_phones_*.json
+            # POSIX 版：shopt 是 bash 内建，CNB runner 用 sh(dash) 执行会 127 挂掉（实证）
+            # 用循环收集存在的文件模拟 nullglob，零产出时 $# 仍为 0
+            set --
+            for f in data/zol_phones_*.json data/pconline_phones_*.json data/cnmo_phones_*.json; do
+              [ -f "$f" ] && set -- "$@" "$f"
+            done
             [ $# -gt 0 ] || { echo "❌ 三个源均无数据文件，无法合并"; exit 1; }
             python scripts/merge_phones.py
             CANDIDATE_JSON=$(ls -t data/merged_phones_*.json 2>/dev/null | head -1)
@@ -614,8 +618,12 @@ main:
         - name: 合并-增量保留基线
           script: |
             set -e
-            shopt -s nullglob
-            set -- data/zol_phones_*.json data/pconline_phones_*.json data/cnmo_phones_*.json
+            # POSIX 版：shopt 是 bash 内建，CNB runner 用 sh(dash) 执行会 127 挂掉（实证）
+            # 用循环收集存在的文件模拟 nullglob，零产出时 $# 仍为 0
+            set --
+            for f in data/zol_phones_*.json data/pconline_phones_*.json data/cnmo_phones_*.json; do
+              [ -f "$f" ] && set -- "$@" "$f"
+            done
             [ $# -gt 0 ] || { echo "❌ 三个源均无数据文件，无法合并"; exit 1; }
             python scripts/merge_phones.py
             CANDIDATE_JSON=$(ls -t data/merged_phones_*.json 2>/dev/null | head -1)
