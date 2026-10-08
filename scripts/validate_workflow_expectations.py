@@ -247,12 +247,14 @@ def check_merge_workflow(path: Path, errors: list[str]) -> None:
         "debug merge can commit merged output",
         errors,
     )
+    # 拆分前本文件里 verify_publish_superset.py 出现 2 次（产物前一次 + Pages 部署前一次）。
+    # Pages 部署拆走后，本文件保留"产物/Release 前"这一次，"Pages 部署前"那一次由
+    # check_release_to_pages_contract 在 deploy-pages.yml 里校验，合起来仍是两道闸。
     assert_condition(
-        text.count("scripts/verify_publish_superset.py") == 2
+        text.count("scripts/verify_publish_superset.py") >= 1
         and text.count("https://phones.jiucai.eu.org/data/latest.json") >= 3
-        and "if: steps.validate.outputs.ready == 'true'\n        env:" in text
-        and "if: github.event.inputs.debug_mode == 'true'" not in text[text.index("- name: 部署前再次校验线上基线超集"):],
-        "publish superset guard must run for every release before artifact and before Pages deploy",
+        and "if: steps.validate.outputs.ready == 'true'\n        env:" in text,
+        "publish superset guard must run for every release before artifact upload",
         errors,
     )
     publish_guard_position = text.index("- name: 发布前校验线上基线超集")
@@ -266,15 +268,63 @@ def check_merge_workflow(path: Path, errors: list[str]) -> None:
         errors,
     )
     release = data["jobs"]["create-release"]
-    deploy = data["jobs"]["deploy-pages"]
     assert_condition("github.run_id" in text[text.index("tag_name:"):text.index("name: 手机数据")], "release tag missing merge run_id", errors)
-    assert_condition("create-release" in deploy.get("needs", []), "deploy-pages does not need create-release", errors)
-    assert_condition("needs.create-release.result == 'success'" in str(deploy.get("if", "")), "deploy-pages does not require successful release", errors)
     assert_condition(
-        text.index("- name: 上传合并产物") < text.index("  create-release:") < text.index("  deploy-pages:"),
-        "publish order must be merge artifact -> Release -> Pages",
+        text.index("- name: 上传合并产物") < text.index("  create-release:"),
+        "publish order must be merge artifact -> Release",
         errors,
     )
+    # Pages 部署已按裁定拆成独立工作流（Pages 与爬取/合并分离，数据经 GitHub Release 传递）。
+    # 拆分后 deploy-pages 与 create-release 不再同处一个文件，job 级 needs 无从表达，
+    # 发布顺序改由 release:published 事件保证，跨工作流契约在下面单独校验。
+    check_release_to_pages_contract(ROOT / ".github/workflows/deploy-pages.yml", errors)
+
+
+def check_release_to_pages_contract(path: Path, errors: list[str]) -> None:
+    """Pages 独立工作流与 Release 的跨工作流契约。
+
+    拆分前 deploy-pages 与 create-release 同文件，靠 `needs` + `needs.*.result == 'success'`
+    表达"先 Release 成功再部署 Pages"。拆分后该约束只能靠事件表达：
+    pages 工作流必须只在 Release published 之后被触发，且部署前必须跑线上基线超集校验。
+    """
+    assert_condition(path.exists(), "missing split pages workflow deploy-pages.yml", errors)
+    if not path.exists():
+        return
+    text = path.read_text(encoding="utf-8")
+    data = load_yaml(path)
+    on = data.get(True) or data.get("on") or {}
+    release_types: list[str] = []
+    if isinstance(on, dict) and isinstance(on.get("release"), dict):
+        release_types = list((on["release"] or {}).get("types") or [])
+    assert_condition(
+        "published" in release_types,
+        "deploy-pages.yml must deploy only after a published release (on.release.types: [published])",
+        errors,
+    )
+    jobs = data.get("jobs") or {}
+    assert_condition("deploy-pages" in jobs, "deploy-pages.yml missing deploy-pages job", errors)
+    assert_condition(
+        "scripts/verify_publish_superset.py" in text
+        and "/tmp/phones-pages-baseline.json site/data/latest.json" in text,
+        "deploy-pages.yml must verify candidate latest.json is a superset of current Pages data",
+        errors,
+    )
+    for marker in ("部署前再次校验线上基线超集", "上传 Pages artifact", "部署到 GitHub Pages"):
+        assert_condition(marker in text, f"deploy-pages.yml missing step: {marker}", errors)
+    assert_condition(
+        "跳过超集校验" not in text
+        and "github.event.inputs.debug_mode" not in text,
+        "deploy-pages.yml must never skip the superset guard (no debug-mode bypass)",
+        errors,
+    )
+    if all(m in text for m in ("部署前再次校验线上基线超集", "上传 Pages artifact", "部署到 GitHub Pages")):
+        assert_condition(
+            text.index("部署前再次校验线上基线超集")
+            < text.index("上传 Pages artifact")
+            < text.index("部署到 GitHub Pages"),
+            "superset guard must run before Pages artifact upload and deploy",
+            errors,
+        )
 
 
 def check_deploy_pages_workflow(path: Path, errors: list[str]) -> None:

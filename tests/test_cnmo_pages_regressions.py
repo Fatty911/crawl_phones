@@ -1487,11 +1487,15 @@ class CnmoWorkflowTests(unittest.TestCase):
         self.assertIn("scripts/verify_publish_superset.py", text)
         self.assertIn("/tmp/phones-pages-baseline.json", text)
         self.assertIn('"data/merged_phones_${DATE}.json"', text)
-        deploy_job = text.split("  deploy-pages:", 1)[1]
+        # Pages 部署已拆分为独立工作流（与 Release 经 release:published 事件衔接），
+        # deploy-pages job 不再写在 merge-and-deploy.yml 里，改从拆分后的文件取部署段。
+        deploy_text = (ROOT / ".github/workflows/deploy-pages.yml").read_text(encoding="utf-8")
+        deploy_job = deploy_text.split("  deploy-pages:", 1)[1]
         self.assertIn('cp "release-files/merged_phones_${DATE}.csv"', deploy_job)
         self.assertIn("scripts/verify_publish_superset.py", deploy_job)
         self.assertIn("/tmp/phones-pages-baseline.json site/data/latest.json", deploy_job)
         self.assertNotIn("跳过超集校验", text)
+        self.assertNotIn("跳过超集校验", deploy_text)
 
 
 
