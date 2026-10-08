@@ -63,7 +63,9 @@ class ClashConfigGenerator:
             # 不使用代理获取订阅（因为此时代理还没启动）
             session = requests.Session()
             session.trust_env = False  # 忽略环境变量中的代理设置
-            resp = session.get(url, headers=headers, timeout=30)
+            # 订阅源 sub.jiucai.eu.org 生成 collection 实测 26-40s（CNB 出口更慢），
+            # 30s 读取超时正好卡在边缘，间歇性 ReadTimeout 直接拖垮整轮；放宽到 120s
+            resp = session.get(url, headers=headers, timeout=120)
             if resp.status_code == 200:
                 content = resp.text.strip()
                 print(f"获取订阅成功: {redact_url(url)} 状态码: {resp.status_code} 内容长度: {len(content)}")
