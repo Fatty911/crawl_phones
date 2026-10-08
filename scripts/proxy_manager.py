@@ -161,8 +161,8 @@ class ProxyManager:
         try:
             print(f"正在获取订阅: {redact_url(subscription_url)}")
             # 订阅源 sub.jiucai.eu.org 生成 collection 实测 26-40s（CNB 出口更慢），
-            # 30s 读取超时正好卡在边缘，间歇性 ReadTimeout 直接拖垮整轮；放宽到 120s
-            resp = requests.get(subscription_url, timeout=120)
+            # 30s 读取超时正好卡在边缘，间歇性 ReadTimeout 直接拖垮整轮；放宽到 300s（国际线路拥塞实测 CNB 出口 >120s，服务器本地生成仅 0.2s）
+            resp = requests.get(subscription_url, timeout=300)
             if resp.status_code != 200:
                 print(f"获取订阅失败: HTTP {resp.status_code}")
                 return []
