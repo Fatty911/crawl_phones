@@ -275,6 +275,18 @@ main:
               exit 1
             fi
             set -e
+            # Codeberg blocks shared CNB egress; validate a fresh proxy before push.
+            pkill -x mihomo || true
+            unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
+            : > /tmp/codeberg-proxy.env
+            python scripts/setup_proxy_runtime.py --github-env /tmp/codeberg-proxy.env --test-url https://codeberg.org
+            sed 's/^\([A-Za-z_][A-Za-z0-9_]*\)=/export \1=/' /tmp/codeberg-proxy.env > /tmp/codeberg-proxy.sh
+            . /tmp/codeberg-proxy.sh
+            if [ "${PROXY_ENABLED:-false}" != "true" ] || [ -z "${HTTPS_PROXY:-}" ]; then
+              echo "Codeberg proxy unavailable; refusing direct push"
+              exit 1
+            fi
+            curl --fail --silent --show-error --location --proxy "$HTTPS_PROXY" --connect-timeout 20 --max-time 60 https://codeberg.org -o /dev/null
             W=$(mktemp -d)
             cp -R site/. "$W/"
             printf '%s\n' 'phones3.jiucai.eu.org' > "$W/.domains"
@@ -665,6 +677,18 @@ main:
               exit 1
             fi
             set -e
+            # Codeberg blocks shared CNB egress; validate a fresh proxy before push.
+            pkill -x mihomo || true
+            unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
+            : > /tmp/codeberg-proxy.env
+            python scripts/setup_proxy_runtime.py --github-env /tmp/codeberg-proxy.env --test-url https://codeberg.org
+            sed 's/^\([A-Za-z_][A-Za-z0-9_]*\)=/export \1=/' /tmp/codeberg-proxy.env > /tmp/codeberg-proxy.sh
+            . /tmp/codeberg-proxy.sh
+            if [ "${PROXY_ENABLED:-false}" != "true" ] || [ -z "${HTTPS_PROXY:-}" ]; then
+              echo "Codeberg proxy unavailable; refusing direct push"
+              exit 1
+            fi
+            curl --fail --silent --show-error --location --proxy "$HTTPS_PROXY" --connect-timeout 20 --max-time 60 https://codeberg.org -o /dev/null
             W=$(mktemp -d)
             cp -R site/. "$W/"
             printf '%s\n' 'phones3.jiucai.eu.org' > "$W/.domains"
