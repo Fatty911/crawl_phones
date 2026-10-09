@@ -23,6 +23,7 @@ concurrency:
 
 jobs:
   deploy-frontend:
+    if: ${{ github.event_name != 'release' || (github.event.release.tag_name != 'data-latest' && !startsWith(github.event.release.tag_name, 'cnb-data-')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment:

@@ -15,6 +15,7 @@ from merge_phones import (
     clean_spec_value,
     derive_brand_from_name,
     model_key,
+    model_storage_signature,
     normalize_audited_published_headers,
     normalize_brand,
     _strip_residue,
@@ -76,6 +77,7 @@ def preserve_baseline(
         keys = identity_keys(row)
         if keys:
             covered_ids.add(keys[0])
+    candidate_primary_ids = set(covered_ids)
     covered_ids.update(spu_config_key(row) for row in candidate)
     # 型号级覆盖键只来自候选的型号级行——变体行（含容量括号）是具体 SKU，不能替代
     # 型号级聚合行（X90 Pro+(12+256GB) 替代 X90 Pro+ 会丢多配置信息）。变体行的
@@ -89,11 +91,8 @@ def preserve_baseline(
         kept = rows_map.get(mlk)
         if kept is None or not keys:
             return
-        bid = keys[0]
-        if bid.startswith("id:"):
-            related = str(kept.get("关联手机ID") or "")
-            values = {v.strip() for v in re.split(r"[|,，\s]+", related) if v.strip()}
-            values.add(bid[3:])
+        values = {key[3:] for key in [*identity_keys(kept), *keys] if key.startswith("id:")}
+        if values:
             kept["关联手机ID"] = "|".join(sorted(values))
 
     # pre-pass：spu 匹配的基线行 id 合并进 candidate 行关联手机ID——id 漂移行
@@ -191,7 +190,20 @@ def preserve_baseline(
         # 有同 id 行，用 all 会把三源型号级行误判为已覆盖而丢弃（线上 92 型号丢失根因）。
         primary = keys[0] if keys else ""
         if primary and primary in covered_ids:
-            continue
+            if primary in candidate_primary_ids:
+                continue
+            owners = [kept for _, kept in selected if primary in identity_keys(kept)]
+            if not owners:
+                continue
+            equivalent = next((kept for kept in owners
+                               if model_level_key(kept) == model_level_key(row)
+                               and is_model_level_row(kept) == is_model_level_row(row)
+                               and (is_model_level_row(row)
+                                    or model_storage_signature(kept) == model_storage_signature(row))), None)
+            if equivalent is not None:
+                _merge_deduped_ids({primary: equivalent}, primary, keys)
+                covered_ids.update(keys)
+                continue
         if cover_key in covered_ids:
             # 源数保护：候选行源数不足（ZOL 缺失时单源变体 vs 基线三源型号级）→
             # 保留基线行（信息更全），且不加 spu 到 covered（同 spu 其他基线行也保留）。

@@ -1,0 +1,55 @@
+name: Deploy verified CNB Pages
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout deployment helpers
+        uses: actions/checkout@main
+
+      - name: Set up Python
+        uses: actions/setup-python@main
+        with:
+          python-version: "3.12"
+
+      - name: Download exact verified CNB site
+        run: |
+          gh release download data-latest --repo "$GITHUB_REPOSITORY" --pattern verified-site.zip --pattern manifest.json --dir release
+
+      - name: Validate and extract verified payload
+        run: python scripts/prepare_cnb_pages.py --archive release/verified-site.zip --manifest release/manifest.json --site cnb-site
+
+      - name: Configure Pages
+        uses: actions/configure-pages@main
+
+      - name: Upload verified Pages artifact
+        uses: actions/upload-pages-artifact@main
+        with:
+          path: cnb-site
+
+      - name: Deploy Pages
+        id: deployment
+        uses: actions/deploy-pages@main
+
+      - name: Verify deployed manifest
+        env:
+          PAGE_URL: ${{ steps.deployment.outputs.page_url }}
+        run: python scripts/prepare_cnb_pages.py --site cnb-site --verify-url "$PAGE_URL"
