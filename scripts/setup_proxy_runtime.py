@@ -14,6 +14,11 @@ import subprocess
 import sys
 import time
 import urllib.request
+
+try:
+    from scripts.download_verified_release import SafeRedirect
+except ModuleNotFoundError:
+    from download_verified_release import SafeRedirect
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -50,7 +55,7 @@ def append_github_env(path: str, values: dict[str, str]) -> None:
 
 
 def mask(value: str) -> None:
-    if value:
+    if value and os.environ.get("GITHUB_ACTIONS") == "true":
         print(f"::add-mask::{value}")
 
 
@@ -145,8 +150,12 @@ def download_mihomo(bin_dir: Path) -> Path | None:
 
     try:
         print("下载 mihomo 最新 Linux amd64 运行文件...")
-        req = urllib.request.Request(MIHOMO_API, headers={"User-Agent": "crawl-cars-actions"})
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        headers = {"User-Agent": "crawl-cars-actions"}
+        token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+        if token:
+            headers["Authorization"] = "Bearer " + token
+        req = urllib.request.Request(MIHOMO_API, headers=headers)
+        with urllib.request.build_opener(SafeRedirect()).open(req, timeout=30) as resp:
             release = json.loads(resp.read().decode("utf-8"))
         asset_url = choose_mihomo_asset(release)
         if not asset_url:
