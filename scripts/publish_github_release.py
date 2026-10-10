@@ -135,27 +135,17 @@ class GitHub:
 
 
 def publish(api, assets, tag, ref, workflow=None):
-    if not tag.startswith('cnb-data-'):
-        raise ValueError('version tag must start with cnb-data-')
+    if not re.fullmatch(r'cnb-data-[A-Za-z0-9][A-Za-z0-9._-]*', tag):
+        raise ValueError('version tag must be a safe cnb-data-* build tag')
     if api.get_release(tag) is not None:
         raise ValueError('version tag already exists; use a new build tag')
     version = api.request('POST', '/releases', {'tag_name': tag, 'target_commitish': ref,
                           'name': tag, 'draft': True, 'make_latest': 'false'})
     for name, path in assets.items(): api.upload(version, name, path)
-    api.request('PATCH', f'/releases/{version["id"]}', {'draft': False, 'make_latest': 'false'})
-    stable = api.get_release('data-latest')
-    if stable is None:
-        stable = api.request('POST', '/releases', {'tag_name': 'data-latest', 'target_commitish': ref,
-                             'name': 'Latest verified CNB data', 'draft': True, 'make_latest': 'false'})
-    # Existing stable Releases cannot atomically swap all assets. Dispatch only after
-    # every replacement succeeds; the immutable version remains the recovery source.
-    for asset in api.assets(stable):
-        api.request('DELETE', f'/releases/assets/{asset["id"]}')
-    for name, path in assets.items(): api.upload(stable, name, path)
-    api.request('PATCH', f'/releases/{stable["id"]}', {'draft': False, 'make_latest': 'false',
-                'body': f'Exact verified site from immutable build {tag}'})
+    api.request('PATCH', f'/releases/{version["id"]}', {'draft': False, 'make_latest': 'true'})
     if workflow:
-        api.request('POST', '/actions/workflows/' + urllib.parse.quote(workflow, safe='') + '/dispatches', {'ref': ref})
+        api.request('POST', '/actions/workflows/' + urllib.parse.quote(workflow, safe='') + '/dispatches',
+                    {'ref': ref, 'inputs': {'release_tag': tag}})
 
 
 def main(argv=None):
@@ -176,7 +166,7 @@ def main(argv=None):
         bundle_site(args.site_dir, archive)
         assets['verified-site.zip'] = archive
         publish(GitHub(args.repo, token), assets, args.tag, args.ref, args.workflow)
-    print(f'Published {args.repo} {args.tag} and data-latest: {", ".join(assets)}')
+    print(f'Published verified immutable build {args.repo} {args.tag}: {", ".join(assets)}')
 
 
 if __name__ == '__main__':

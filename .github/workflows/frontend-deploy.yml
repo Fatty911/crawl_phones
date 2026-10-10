@@ -18,7 +18,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pages-deploy-frontend-${{ github.ref }}
+  group: pages
   cancel-in-progress: false
 
 jobs:
@@ -34,33 +34,31 @@ jobs:
         uses: actions/checkout@main
 
       - name: 下载线上已发布数据（不重新合并，数据与处理逻辑解耦）
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          mkdir -p site/data
-          curl --fail --show-error --silent --location --retry 3 --max-time 120 \
-            "https://phones.jiucai.eu.org/data/latest.json?t=$(date +%s)" \
-            --output site/data/latest.json
-          curl --fail --show-error --silent --location --retry 3 --max-time 120 \
-            "https://phones.jiucai.eu.org/data/manifest.json?t=$(date +%s)" \
-            --output site/data/manifest.json
+          python scripts/download_verified_release.py --repo "$GITHUB_REPOSITORY" --dir release-files
+          python scripts/prepare_cnb_pages.py --archive release-files/verified-site.zip --manifest release-files/manifest.json --site site
           echo "最新线上数据行数: $(python3 -c "import json;print(len(json.load(open('site/data/latest.json'))))")"
 
       - name: 准备 Pages 静态站点
         run: |
           set -euo pipefail
-          cp -R docs/phones/. site/
           touch site/.nojekyll
           python - <<'PY'
-          import json
-          from datetime import datetime, timezone
-          with open("site/data/manifest.json", "r", encoding="utf-8") as f:
-              manifest = json.load(f)
-          # 仅刷新 updatedAt（前端 CDN 缓存绕过依赖它）——数据本身未变
-          manifest["updatedAt"] = datetime.now(timezone.utc).isoformat()
-          with open("site/data/manifest.json", "w", encoding="utf-8") as f:
-              json.dump(manifest, f, ensure_ascii=False, indent=2)
-          print("manifest updatedAt 已刷新:", manifest["updatedAt"])
+          from pathlib import Path
+          import shutil
+          for source in Path("docs/phones").rglob("*"):
+              relative = source.relative_to("docs/phones")
+              if relative.parts[0] == "data" or relative.as_posix() == "manifest.json":
+                  continue
+              if source.is_file():
+                  target = Path("site") / relative
+                  target.parent.mkdir(parents=True, exist_ok=True)
+                  shutil.copyfile(source, target)
           PY
+          cmp release-files/manifest.json site/data/manifest.json
 
       - name: 配置 GitHub Pages
         uses: actions/configure-pages@v6

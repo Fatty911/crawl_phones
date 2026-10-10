@@ -73,6 +73,8 @@ class ReleasePublisherTests(unittest.TestCase):
                 return {'id': 2, 'assets': [{'id': 9, 'name': 'manifest.json'}]} if tag == 'data-latest' else None
             def request(self, method, path, body=None):
                 events.append((method, path))
+                if path.endswith('/dispatches'): self.dispatch_body = body
+                if method == 'DELETE': raise RuntimeError('immutable asset cannot be deleted')
                 return {'id': 1, 'assets': []}
             def upload(self, release, name, path):
                 events.append(('upload', release['id'], name))
@@ -80,12 +82,13 @@ class ReleasePublisherTests(unittest.TestCase):
             def assets(self, release): return release['assets']
         return Fake(), events
 
-    def test_version_completes_before_stable_delete_and_dispatch(self):
+    def test_immutable_version_dispatches_exact_tag_without_stable_mutation(self):
         api, events = self.fake_api()
         publisher.publish(api, {'manifest.json': self.site / 'data/manifest.json'}, 'cnb-data-test', 'main', 'cnb-pages.yml')
-        self.assertLess(events.index(('PATCH', '/releases/1')), events.index(('DELETE', '/releases/assets/9')))
-        self.assertLess(events.index(('DELETE', '/releases/assets/9')), events.index(('upload', 2, 'manifest.json')))
+        self.assertNotIn(('get', 'data-latest'), events)
+        self.assertLess(events.index(('upload', 1, 'manifest.json')), events.index(('PATCH', '/releases/1')))
         self.assertEqual(events[-1], ('POST', '/actions/workflows/cnb-pages.yml/dispatches'))
+        self.assertEqual(api.dispatch_body, {'ref': 'main', 'inputs': {'release_tag': 'cnb-data-test'}})
 
     def test_version_failure_never_touches_stable(self):
         api, events = self.fake_api(True)
@@ -98,13 +101,13 @@ class ReleasePublisherTests(unittest.TestCase):
             with self.assertRaises(ValueError): publisher.main(['--site-dir', str(self.site), '--repo', 'Fatty911/crawl-sim'])
             opened.assert_not_called()
 
-    def test_stable_failure_does_not_dispatch(self):
+    def test_publish_failure_does_not_dispatch(self):
         api, events = self.fake_api()
-        original = api.upload
-        def upload(release, name, path):
-            if release['id'] == 2: raise RuntimeError('stable failed')
-            return original(release, name, path)
-        api.upload = upload
+        original = api.request
+        def request(method, path, body=None):
+            if method == 'PATCH': raise RuntimeError('publish failed')
+            return original(method, path, body)
+        api.request = request
         with self.assertRaises(RuntimeError):
             publisher.publish(api, {'manifest.json': self.site / 'data/manifest.json'}, 'cnb-data-test', 'main', 'cnb-pages.yml')
         self.assertNotIn(('POST', '/actions/workflows/cnb-pages.yml/dispatches'), events)
