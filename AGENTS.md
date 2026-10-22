@@ -1,5 +1,7 @@
 # 全局规则
 
+> **公开文档隐私候选（不可直接作为操作手册）**：下文 `<…>` 均为文档占位符，不是已存在的环境变量、配置文件或已验证的部署清单；它们指向原文同一身份/设备/路径/集合/计划，不得猜测或另选目标。实际映射尚待在获准环境核对；未能确认时停止相关操作并询问用户。涉及占位符的示例不是可直接执行命令，也不代表对应操作已完成。此版本仅去除个人信息，原模型/审阅/同步等规则矛盾未在本候选中修复。
+
 ## 项目规则：工作流监控必须检查 Pages（最高优先级）
 
 - **每次用户要求"监控工作流是否符合预期"时，必须同时检查：**
@@ -160,7 +162,7 @@
 - **全局要求必须同步**：AGENTS.md 中的全局要求修改后，立即同步到所有设备家目录 + GitHub 仓库
 - **仓库内配置必须对齐**：涉及 AI 调用的 git 仓库内如果有自己的 opencode.json/oh-my-openagent.json，必须与全局配置保持一致
 - **同步全局配置后必须同步所有项目目录**：如果某个项目目录有独立的 opencode.json，同步全局时必须一并更新，避免出现 TUI 中已禁用的 Provider 又出现
-- **同步全局 AGENTS.md 后必须同步所有项目目录**：`/root/crawl_cars`、`/root/.hermes` 等项目目录如果有自己的 AGENTS.md，用全局最新版本覆盖。同理 E:\Codes 下的所有 repo 也要同步
+- **同步全局 AGENTS.md 后必须同步所有项目目录**：原同步范围内的 `<LINUX_USER_HOME>/crawl_cars`、`<LINUX_USER_HOME>/.hermes` 等项目目录如果有自己的 AGENTS.md，用全局最新版本覆盖。同理 `<WINDOWS_PROJECTS_ROOT>` 下原同步范围内的所有 repo 也要同步。
 
 ## 提交推送与运行监测（关键）
 
@@ -271,7 +273,7 @@
 > - **M=2**（3 中至少 2 票通过即放行）
 > - 无需再次询问用户，直接并行启动评审
 >
-> ⚠️ **服务器资源限制**：当前生产服务器为 2核4G，3 个 Oracle 并行评审峰值额外内存消耗约 90-240MB。
+> ⚠️ **服务器资源限制**：保留原生产服务器的资源约束与 3 个 Oracle 并行评审的内存预算；具体 CPU/RAM 与峰值内存值属于待核对的私有运行参数，不能由本占位说明推断资源足够。
 
 ### 评审结果模型标注（强制）
 
@@ -285,7 +287,7 @@
 
 > **除了提示词层面的规则，Git 层面也强制要求评审：**
 
-**Hook 位置**: `C:\Users\Administrator\.git-hooks\pre-commit`
+**Hook 位置**: `<WINDOWS_USER_HOME>\.git-hooks\pre-commit`
 
 **工作机制**：
 1. 每次 `git commit` 前，hook 检查是否有代码修改（排除 `.md`/`.txt`/`.json` 纯文档）
@@ -308,17 +310,17 @@ SKIP_REVIEW=1 git commit -m "emergency fix"
 > ⚠️ **这是底层强制机制，即使模型忘记提示词规则，Git 也会阻止未评审的代码提交。**
 
 **适用范围**：
-- **Windows (E:\Codes\)**: AI_XR_Relay_familyai, aider, Auto_add_notes_to_WeChat_group_members, AutoBuild_OpenWrt_for_XiaoMi_R4, Badminton-court-management-system, billiards_tqt, crawl_cars, LibreChat, lobe-chat, opencode-stock, Personal_commonly_used, tabby, zbpack_tmp
-- **Windows (C:\Users\)**: Personal_commonly_used, hermes-agent
-- **racknerd**: hermes-agent, AutoBuild_OpenWrt, crawl_cars, LibreChat, lobe-chat, Badminton-court, opencode-stock, /root 主 repo
-- **jstq**: AutoBuild_OpenWrt, billiards_tqt
-- **dmit**: 无 repo，仅安装 mark-review-passed 到 PATH
+- **Windows 项目目录集合 A**：原文此行所列的全部项目 checkout；根目录用 `<WINDOWS_PROJECTS_ROOT>` 表示，项目集合与实际路径映射尚待在授权环境确认，不得缩减原适用范围。
+- **Windows 用户目录集合 B**：原文此行所列的全部项目 checkout；根目录用 `<WINDOWS_USER_HOME>` 表示，项目集合与实际路径映射尚待在授权环境确认，不得缩减原适用范围。
+- **<SERVER_A>**：原文此行所列的全部项目 checkout 与用户主目录主 repo；具体集合及 `<LINUX_USER_HOME>` 映射尚待确认，不得缩减原适用范围。
+- **<SERVER_B>**：原文此行所列的全部项目 checkout；具体集合映射尚待确认，不得缩减原适用范围。
+- **<SERVER_C>**：无 repo，仅安装 mark-review-passed 到 PATH。
 
 ### Git Pre-push Hook 强制单元测试（底层强制）
 
 > **除了评审，Git 层面也强制要求单元测试通过：**
 
-**Hook 位置**: `C:\Users\Administrator\.git-hooks\pre-push`
+**Hook 位置**: `<WINDOWS_USER_HOME>\.git-hooks\pre-push`
 
 **工作机制**：
 1. 每次 `git push` 前，hook 检测项目类型（Node.js/Python/Go/Java）
@@ -355,10 +357,10 @@ SKIP_TESTS=1 git push
 
 | 防线 | 位置 | 强制内容 |
 |------|------|---------|
-| **OMO edit/write/multiedit 评审拦截** | `C:\Users\Administrator\node_modules\oh-my-openagent\dist\index.js` 本地补丁 | 代码文件修改前必须存在 10 分钟内的 `/tmp/.review_passed_*` 标记；`.md/.txt/.json` 豁免 |
+| **OMO edit/write/multiedit 评审拦截** | `<WINDOWS_USER_HOME>\node_modules\oh-my-openagent\dist\index.js` 本地补丁 | 代码文件修改前必须存在 10 分钟内的 `/tmp/.review_passed_*` 标记；`.md/.txt/.json` 豁免 |
 | **runtime_fallback 静默成功检测** | `oh-my-openagent` 本地补丁 + `oh-my-openagent.json` | DeepSeek 类 provider 如果 `finish=stop` 但无可见输出/0 output token，则转成 retryable failure 进入 fallback |
-| **pre-commit** | `C:\Users\Administrator\.git-hooks\pre-commit` | 代码提交前必须存在 5 分钟内的评审标记 |
-| **pre-push** | `C:\Users\Administrator\.git-hooks\pre-push` | 推送前运行项目测试 |
+| **pre-commit** | `<WINDOWS_USER_HOME>\.git-hooks\pre-commit` | 代码提交前必须存在 5 分钟内的评审标记 |
+| **pre-push** | `<WINDOWS_USER_HOME>\.git-hooks\pre-push` | 推送前运行项目测试 |
 
 ### 评审强制机制（edit/write 前硬阻断）
 
@@ -425,35 +427,35 @@ pre-commit hook 检查流程:
 
 只要涉及到配置模型，以下所有位置必须同步改写，无一例外：
 
-> ⚠️ **盘符规则**：Windows10 和 Windows11 双系统，各自启动后自己的系统盘都是 C:，另一个系统盘都是 D:。同步时始终用 C: → D:（当前系统推送到另一系统），无需关心当前是哪个系统。
+> ⚠️ **系统根目录规则**：保留原双 Windows 系统配置同步关系；使用 `<ACTIVE_WINDOWS_SYSTEM_ROOT>` → `<OTHER_WINDOWS_SYSTEM_ROOT>` 表示“当前启动系统推送到另一系统”。必须先在授权环境确认实际挂载与用户目录映射，不能根据公开占位符猜测目标。
 >
-> ⚠️ **使用习惯**：用户习惯右键点击开始菜单运行终端，终端默认运行在用户家目录（`C:\Users\Administrator`）。因此用户可能在任意一个 Windows 系统的 Administrator 目录下运行 OpenCode、配置 OpenCode+OMO。配置文件实际位置取决于当前启动的系统盘符。
+> ⚠️ **工作目录条件**：不能假定终端或 OpenCode 从项目目录启动；应兼容在任一 Windows 系统的当前用户家目录启动或配置 OpenCode+OMO。配置实际位置取决于当前启动系统与用户家目录，公开文档不记录个人终端启动习惯。
 
-1. **本机 opencode 配置**: `C:\Users\Administrator\.config\opencode\opencode.json`
-2. **本机 OMO 插件配置**: `C:\Users\Administrator\.config\opencode\oh-my-openagent.json`
-3. **本机 auth 配置**: `C:\Users\Administrator\.local\share\opencode\auth.json`
-4. **另一系统 opencode 配置**: `D:\Users\Administrator\.config\opencode\opencode.json`
-5. **另一系统 OMO 插件配置**: `D:\Users\Administrator\.config\opencode\oh-my-openagent.json`
-6. **另一系统 auth 配置**: `D:\Users\Administrator\.local\share\opencode\auth.json`
-7. **本机 KiloCode 配置**: `C:\Users\Administrator\AppData\Roaming\kilo\kilo.json`
+1. **本机 opencode 配置**: `<WINDOWS_USER_HOME>\.config\opencode\opencode.json`
+2. **本机 OMO 插件配置**: `<WINDOWS_USER_HOME>\.config\opencode\oh-my-openagent.json`
+3. **本机 auth 配置**: `<WINDOWS_USER_HOME>\.local\share\opencode\auth.json`
+4. **另一系统 opencode 配置**: `<OTHER_WINDOWS_USER_HOME>\.config\opencode\opencode.json`
+5. **另一系统 OMO 插件配置**: `<OTHER_WINDOWS_USER_HOME>\.config\opencode\oh-my-openagent.json`
+6. **另一系统 auth 配置**: `<OTHER_WINDOWS_USER_HOME>\.local\share\opencode\auth.json`
+7. **本机 KiloCode 配置**: `<WINDOWS_USER_HOME>\AppData\Roaming\kilo\kilo.json`
 8. **GitHub 所有涉及 AI 调用的仓库**:
-   - `Fatty911/Personal_commonly_used/ai_tools/opencode/`
-   - `Fatty911/Personal_commonly_used/ai_tools/KiloCode/`
-   - `Fatty911/hermes-agent`
-9. **远程服务器 root@racknerd.jiucai.eu.org**:
-   - `/root/.config/opencode/opencode.json`
-   - `/root/.config/opencode/oh-my-openagent.json`
-   - `/root/.local/share/opencode/auth.json`
-   - `/root/.hermes/config.yaml`
-   - `/root/.hermes/auth.json`
-10. **远程服务器 root@jstq.com.cn**:
-    - `/root/.config/opencode/opencode.json`
-    - `/root/.config/opencode/oh-my-openagent.json`
-    - `/root/.local/share/opencode/auth.json`
-11. **远程服务器 root@dmit.jiucai.eu.org**:
-    - `/root/.config/opencode/opencode.json`
-    - `/root/.config/opencode/oh-my-openagent.json`
-    - `/root/.local/share/opencode/auth.json`
+   - `<EXISTING_OPENCODE_CONFIG_TARGET>`：原文同一 OpenCode 配置同步目标，身份与子目录映射待确认，不另选目标。
+   - `<EXISTING_KILOCODE_CONFIG_TARGET>`：原文同一 KiloCode 配置同步目标，身份与子目录映射待确认，不另选目标。
+   - `<EXISTING_HERMES_SYNC_TARGET>`：原文同一 Hermes 同步目标，映射待确认；此占位符不证明该目标为私有仓库或适合存放个人配置，也不授权上传。
+9. **远程服务器 <SERVER_A>**：连接身份与家目录映射待在授权环境确认：
+   - `<LINUX_USER_HOME>/.config/opencode/opencode.json`
+   - `<LINUX_USER_HOME>/.config/opencode/oh-my-openagent.json`
+   - `<LINUX_USER_HOME>/.local/share/opencode/auth.json`
+   - `<LINUX_USER_HOME>/.hermes/config.yaml`
+   - `<LINUX_USER_HOME>/.hermes/auth.json`
+10. **远程服务器 <SERVER_B>**：连接身份与家目录映射待在授权环境确认：
+    - `<LINUX_USER_HOME>/.config/opencode/opencode.json`
+    - `<LINUX_USER_HOME>/.config/opencode/oh-my-openagent.json`
+    - `<LINUX_USER_HOME>/.local/share/opencode/auth.json`
+11. **远程服务器 <SERVER_C>**：连接身份与家目录映射待在授权环境确认：
+    - `<LINUX_USER_HOME>/.config/opencode/opencode.json`
+    - `<LINUX_USER_HOME>/.config/opencode/oh-my-openagent.json`
+    - `<LINUX_USER_HOME>/.local/share/opencode/auth.json`
 
 改写时统一遵循以下原则：
 - 只保留最新代模型（如 DeepSeek V4、Kimi K2.6、GLM-5.1、Qwen 3.7）
@@ -464,7 +466,7 @@ pre-commit hook 检查流程:
 ## ⚠️ plugin 字段跨端差异（关键）
 
 - **Windows**：需要 `plugin: ["oh-my-openagent@latest"]` 手动声明（npm 自动检测不生效）
-- **Linux**（racknerd/jstq/dmit）：npm 自动检测 + 手动声明**都用 `oh-my-openagent@latest`** 格式，两者一致不会重复
+- **Linux**（<SERVER_A>/<SERVER_B>/<SERVER_C>）：npm 自动检测 + 手动声明**都用 `oh-my-openagent@latest`** 格式，两者一致不会重复
 - **同步后无需特殊处理**：`oh-my-openagent@latest` 在 Windows 和 Linux 端通用，不再需要同步后清空 plugin 字段
 - **禁止**：使用 `oh-my-openagent`（不带 `@latest`），会导致 Linux 端 OMO 重复注入被禁用
 
@@ -476,12 +478,12 @@ OpenCode 和 Hermes-Agent 的自动升级脚本分开管理，互不影响：
 
 | 脚本 | 位置 | 升级内容 | cron |
 |---|---|---|---|
-| **auto-upgrade-all.sh** | `/root/.config/opencode/scripts/` | OpenCode + OMO 插件 | `0 0,10,20 * * *` |
-| **auto-upgrade-hermes.sh** | `/root/.hermes/` | Hermes-Agent + Gateway | `0 0,10,20 * * *` |
+| **auto-upgrade-all.sh** | `<LINUX_USER_HOME>/.config/opencode/scripts/` | OpenCode + OMO 插件 | `<ORIGINAL_UPGRADE_CRON>`（原计划表达式，待授权环境核对） |
+| **auto-upgrade-hermes.sh** | `<LINUX_USER_HOME>/.hermes/` | Hermes-Agent + Gateway | `<ORIGINAL_UPGRADE_CRON>`（原计划表达式，待授权环境核对） |
 
 - 删除 Hermes-Agent 不会影响 OpenCode 升级
 - 日志分别存储在各自目录下
-- 脚本已同步到 racknerd 和 jstq
+- 脚本已同步到 <SERVER_A> 和 <SERVER_B>
 
 ### 1. OMO 重复注入被禁用
 - **现象**：OpenCode 启动时显示 "Duplicate OMO plugin entries detected"，TUI 只显示 Build 和 Plan
@@ -493,10 +495,10 @@ OpenCode 和 Hermes-Agent 的自动升级脚本分开管理，互不影响：
 - **现象**：自动升级脚本执行 `npm install -g oh-my-openagent@latest` 报 `ENOTEMPTY: directory not empty, rename`
 - **根因**：npm 升级时旧目录残留 `.oh-my-openagent-*` 临时目录，阻止重命名
 - **解决**：在 npm install 前加 `rm -rf /usr/lib/node_modules/.oh-my-openagent-*`
-- **已修复**：2026-06-12（racknerd + jstq 升级脚本已更新）
+- **已修复**：2026-06-12（<SERVER_A> + <SERVER_B> 升级脚本已更新）
 
 ### 3. OpenCode 版本过旧导致 OMO 不识别
-- **现象**：racknerd 上 OpenCode 1.14.41，OMO Agent 不显示
+- **现象**：<SERVER_A> 上 OpenCode 1.14.41，OMO Agent 不显示
 - **根因**：自动升级脚本用 `curl https://opencode.ai/install.sh`（URL 多了 `.sh`），404 静默失败
 - **解决**：修正为 `curl https://opencode.ai/install`，并加 npm 三重保险
 - **已修复**：2026-06-02
@@ -521,11 +523,12 @@ OpenCode 和 Hermes-Agent 的自动升级脚本分开管理，互不影响：
 // test review config - 06/02/2026 19:08:15
 
 
-## Git 提交作者身份规则（Fatty911 全局要求，2026-08-04）
+## Git 提交作者身份规则（用户全局要求，2026-08-04）
 
 本仓库所有 Git 提交必须遵守以下作者命名规则：
 
-1. **全局兜底身份**：`Fatty911 <xuerui911@gmail.com>`。禁止使用 `bot@users.noreply.github.com` 邮箱（该邮箱关联 GitHub 用户名 `bot`，网页端会显示纯 `bot`）。
+1. **全局兜底身份**：沿用原来由用户批准的 Git 作者姓名和邮箱；公开文档不记录其值，未经用户批准不得改为其他身份。禁止使用关联 GitHub 用户名 `bot`、会在网页端显示纯 `bot` 的邮箱身份。
 2. **Agent 工具显式提交**：使用动态格式 `<实际工具名>-<实际模型>`。工具名 = 实际执行提交的 Agent 工具（如 hermes-agent / codex / opencode / openclaw / mimocode / qoder）。模型名 = 本次实际处理会话的模型 ID 的小写紧凑写法（如 GLM-5.2 → `glm5.2`、GPT-5.6-Sol → `gpt5.6sol`、Kimi-K3 → `kimi-k3`、DeepSeek-V4-Flash → `deepseek-v4-flash`）。示例：`opencode-kimi-k3`、`hermes-agent-glm5.2`、`codex-gpt5.5`。
 3. 禁止纯 `bot` 名称或系统 bot 身份冒充源码/文档提交；`github-actions[bot]` 仅限数据/进度自动提交。
-4. 邮箱一律使用 `xuerui911@gmail.com`。
+4. 邮箱一律沿用原来由用户批准的同一个 Git 身份邮箱；从获准的私有身份配置核对，不在公开文档披露，未经用户批准不得替换。
+
