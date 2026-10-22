@@ -1,0 +1,28 @@
+name: Markdown privacy (candidate)
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  markdown-privacy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      # actions/checkout v6.0.3; verified from the official tag, not a moving ref.
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Test only the reviewed gate fixtures
+        run: |
+          python3 -B -I tests/test_privacy_gate.py
+          python3 -B -I gate_fixtures/markdown_privacy_cases.py
+      - name: Check all tracked Markdown at the immutable event revision
+        shell: bash
+        run: |
+          python3 -B -I scripts/markdown_privacy_gate.py --repo . --revision "$GITHUB_SHA" --allowlist privacy-allowlist.json
